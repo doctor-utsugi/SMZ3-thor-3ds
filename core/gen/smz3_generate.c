@@ -82,6 +82,26 @@ static int build_rom(uint8_t *rom, SmzSeed *seed, const uint8_t *sm, const uint8
         }
 #undef Z3A
     }
+    if (cfg->sm_default_controls) {
+        /* Four places of the Super Metroid code load the default button bindings ($81:B31A, $82:F22C, $8B:BC4A and
+         * $91:8845 of the combined ROM): swap X/A/B/Y so shot is Y, jump B, dash A and item cancel X. */
+        static const uint32_t SITES[4] = {0x01B31A, 0x02F22C, 0x0BBC4A, 0x118845};
+        for (int k = 0; k < 4; k++) {
+            for (uint32_t i = SITES[k]; i < SITES[k] + 0x50; i++) {
+                if (rom[i] != 0xA9 || rom[i + 3] != 0x8D || rom[i + 5] != 0x09) continue;   /* LDA #imm16 ; STA $09xx */
+                uint16_t v = (uint16_t)(rom[i + 1] | rom[i + 2] << 8);
+                switch (rom[i + 4]) {
+                case 0xB2: v = 0x4000; break;   /* shot */
+                case 0xB4: v = 0x8000; break;   /* jump */
+                case 0xB6: v = 0x0080; break;   /* dash */
+                case 0xB8: v = 0x0040; break;   /* item cancel */
+                default: continue;
+                }
+                rom[i + 1] = (uint8_t)v;
+                rom[i + 2] = (uint8_t)(v >> 8);
+            }
+        }
+    }
     smz_rom_checksum(rom);
     return 0;
 }

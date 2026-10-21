@@ -157,6 +157,7 @@ static void fill_settings(JNIEnv *env, jintArray params, jobjectArray logicNames
         cfg->hint_tiles = p[9];
         cfg->etecoons_jingle = p[10];
         cfg->nerfed_charge = p[11];
+        cfg->sm_default_controls = 1;
     }
 }
 

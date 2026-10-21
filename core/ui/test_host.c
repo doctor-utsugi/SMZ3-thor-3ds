@@ -35,6 +35,7 @@ int main(int argc, char **argv)
     if (smz_host_generate(&ui, 777, sm, z3, NULL, 0, NULL, 0, ips, NULL, a, json, sizeof json, seedText, sizeof seedText, NULL)) return 2;
     SmzSettings s; smz_settings_defaults(&s); s.seed = 777;
     SmzPatchCfg cfg; smz_patch_cfg_defaults(&cfg, &s);
+    cfg.sm_default_controls = 1;   /* what ui_settings sets: Super Metroid starts with shot Y, jump B, dash A, cancel X */
     static SmzSeed seed;
     if (smz_generate(b, &seed, sm, z3, &s, &cfg, ips, NULL, NULL, NULL)) return 3;
     int bad = memcmp(a, b, sizeof a) != 0;
@@ -45,13 +46,20 @@ int main(int argc, char **argv)
         ui.value[UIO_JINGLE] = 3;
         if (smz_host_generate(&ui, 777, sm, z3, NULL, 0, NULL, 0, ips, NULL, j, json, sizeof json, seedText, sizeof seedText, NULL)) return 7;
         cfg.etecoons_jingle = 3;
-        smz_patch_cfg_defaults(&cfg, &s); cfg.etecoons_jingle = 3;
+        smz_patch_cfg_defaults(&cfg, &s); cfg.etecoons_jingle = 3; cfg.sm_default_controls = 1;
         if (smz_generate(b, &seed, sm, z3, &s, &cfg, ips, NULL, NULL, NULL)) return 8;
         int jbad = memcmp(j, b, sizeof j) != 0;
         printf(jbad ? "jingle DIFFERENT\n" : "jingle row reaches the ROM\n");
         if (!jbad && !memcmp(j, a, sizeof j)) { printf("jingle changed nothing\n"); jbad = 1; }
         bad |= jbad;
         ui.value[UIO_JINGLE] = 0;
+    }
+    {   /* the default controller bindings of the four Super Metroid sites: shot Y, jump B, dash A, cancel X */
+        static const uint8_t WANT[24] = {0xA9, 0x00, 0x40, 0x8D, 0xB2, 0x09, 0xA9, 0x00, 0x80, 0x8D, 0xB4, 0x09,
+                                         0xA9, 0x80, 0x00, 0x8D, 0xB6, 0x09, 0xA9, 0x40, 0x00, 0x8D, 0xB8, 0x09};
+        int cbad = memcmp(a + 0x2F22C, WANT, 24) != 0 || memcmp(a + 0x0BBC4A, WANT, 24) != 0 || memcmp(a + 0x118845, WANT, 24) != 0;
+        printf(cbad ? "default controls DIFFERENT\n" : "default controls: shot Y, jump B, dash A, cancel X at the three straight sites\n");
+        bad |= cbad;
     }
     {   /* the "Nerfed charge" row: off by default (as on the web), on applies nerfed_charge.ips at $90:B81E */
         static const uint8_t VANILLA[5] = {0x89, 0x00, 0x10, 0xD0, 0x0A}, NERFED[5] = {0x89, 0x00, 0x00, 0x80, 0x0A};

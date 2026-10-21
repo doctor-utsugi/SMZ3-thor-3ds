@@ -52,6 +52,7 @@ int main(int argc, char **argv)
     for (int i = 11; i < argc; i++) if (!strncmp(argv[i], "jingle=", 7)) cfg.etecoons_jingle = atoi(argv[i] + 7);
     for (int i = 11; i < argc; i++) if (!strncmp(argv[i], "dark=", 5)) cfg.light_dark_rooms = atoi(argv[i] + 5);
     for (int i = 11; i < argc; i++) if (!strncmp(argv[i], "nerf=", 5)) cfg.nerfed_charge = atoi(argv[i] + 5);
+    for (int i = 11; i < argc; i++) if (!strncmp(argv[i], "smctl=", 6)) cfg.sm_default_controls = atoi(argv[i] + 6);
     size_t ll, sl;
     const char *lp = getenv("SMZ_LINK"), *sp = getenv("SMZ_SAMUS");
     if (lp) { cfg.link_rdc = slurp(lp, &ll); cfg.link_rdc_len = ll; }

@@ -120,6 +120,7 @@ void ui_settings(const SmzUi *u, int32_t seed_if_random, SmzSettings *s, SmzPatc
     pc->pyramid_open = pc->pyramid_open != 0;
     pc->light_dark_rooms = u->value[O_DARK];
     pc->nerfed_charge = u->value[O_NERF];
+    pc->sm_default_controls = 1;   /* the app's Super Metroid layout; the C# oracle and gen_rom leave it off */
     pc->etecoons_jingle = u->value[O_JINGLE];
     pc->hint_tiles = u->value[O_HELP] == 0 ? 15 : 0;   /* hint tiles are part of "all helps" only */
     int li = u->value[O_LINK], si = u->value[O_SAMUS];

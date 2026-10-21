@@ -1353,18 +1353,9 @@ index 8f91e6c..06340fb 100644
 +    }
  }
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/GameViewModelInput.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/GameViewModelInput.kt
-index 998ae22..adce94b 100644
+index 998ae22..bff4b3f 100644
 --- a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/GameViewModelInput.kt
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/GameViewModelInput.kt
-@@ -303,7 +303,7 @@ class GameViewModelInput(
-             .safeCollect { (shortcuts, ports, bindings, event) ->
-                 val (device, action, keyCode) = event
-                 val port = ports(device)
--                val bindKeyCode = bindings(device)[InputKey(keyCode)]?.keyCode ?: keyCode
-+                val bindKeyCode = Smz3Tracker.remap(bindings(device)[InputKey(keyCode)]?.keyCode ?: keyCode)
- 
-                 if (port == 0) {
-                     if (bindKeyCode == KeyEvent.KEYCODE_BUTTON_MODE && action == KeyEvent.ACTION_DOWN) {
 @@ -330,6 +330,7 @@ class GameViewModelInput(
                      }
                  }
@@ -2548,7 +2539,7 @@ index 0000000..fb5fd89
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Presentation.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Presentation.kt
 new file mode 100644
-index 0000000..0ab473c
+index 0000000..e2bd3c2
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Presentation.kt
 @@ -0,0 +1,561 @@
@@ -2745,7 +2736,7 @@ index 0000000..0ab473c
 +        recentShown = list
 +        recentBox.removeAllViews()
 +        if (list.isEmpty()) return
-+        recentBox.addView(label(12f, Role.DIM).apply { text = "RECENT ITEMS" })
++        recentBox.addView(TextView(context).apply { textSize = 12f; text = "RECENT ITEMS"; setTextColor(Color.parseColor("#C8D0D8")) })
 +        for (index in list) {
 +            val info = Smz3Native.inventoryInfo(index).split("|")
 +            val row = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
@@ -2760,7 +2751,7 @@ index 0000000..0ab473c
 +                },
 +                LinearLayout.LayoutParams(dp(24), dp(24)),
 +            )
-+            row.addView(label(14f, Role.TEXT).apply { text = info[1]; isSingleLine = true; ellipsize = android.text.TextUtils.TruncateAt.END; setPadding(dp(6), 0, 0, 0) })
++            row.addView(TextView(context).apply { textSize = 14f; setTextColor(Color.WHITE); setShadowLayer(3f, 0f, 0f, Color.BLACK); text = info[1]; isSingleLine = true; ellipsize = android.text.TextUtils.TruncateAt.END; setPadding(dp(6), 0, 0, 0) })
 +            recentBox.addView(row)
 +        }
 +    }
@@ -3303,10 +3294,10 @@ index 0000000..378f91a
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Tracker.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Tracker.kt
 new file mode 100644
-index 0000000..3725d6e
+index 0000000..1a5ff26
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Tracker.kt
-@@ -0,0 +1,284 @@
+@@ -0,0 +1,269 @@
 +package com.swordfish.lemuroid.app.shared.game.viewmodel
 +
 +import android.app.Presentation
@@ -3379,21 +3370,6 @@ index 0000000..3725d6e
 +    @Volatile var currentGame = 0
 +    private var scaledElapsedMs = 0L
 +    private var finishedSaved = false
-+
-+    /**
-+     * Super Metroid's layout: Y shoots, B jumps, A dashes and X cancels the item. The game keeps its stock settings
-+     * (X shot, A jump, B dash, Y cancel), so the pad's buttons are crossed before they reach the core.
-+     */
-+    fun remap(keyCode: Int): Int {
-+        if (currentGame != 2) return keyCode
-+        return when (keyCode) {
-+            KeyEvent.KEYCODE_BUTTON_A -> KeyEvent.KEYCODE_BUTTON_B
-+            KeyEvent.KEYCODE_BUTTON_B -> KeyEvent.KEYCODE_BUTTON_A
-+            KeyEvent.KEYCODE_BUTTON_X -> KeyEvent.KEYCODE_BUTTON_Y
-+            KeyEvent.KEYCODE_BUTTON_Y -> KeyEvent.KEYCODE_BUTTON_X
-+            else -> keyCode
-+        }
-+    }
 +    private var lastPad = 0
 +    private var lastSmState = -1
 +
@@ -3592,7 +3568,7 @@ index 0000000..3725d6e
 +    }
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/input/lemuroiddevice/LemuroidInputDeviceGamePad.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/input/lemuroiddevice/LemuroidInputDeviceGamePad.kt
-index 72c909f..ca028bc 100644
+index 72c909f..ec85862 100644
 --- a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/input/lemuroiddevice/LemuroidInputDeviceGamePad.kt
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/input/lemuroiddevice/LemuroidInputDeviceGamePad.kt
 @@ -21,13 +21,21 @@ class LemuroidInputDeviceGamePad(private val device: InputDevice) : LemuroidInpu
@@ -3600,8 +3576,8 @@ index 72c909f..ca028bc 100644
                  }
  
 +        // The AYN Odin controller reports the physical north button as Android X (BTN_NORTH, 307) and west as Y, and
-+        // its labels already match the console's: keep every button straight (Super Metroid's own layout is applied
-+        // in GameViewModelInput through Smz3Tracker.remap).
++        // its labels already match the console's: keep every button straight (Super Metroid's own layout is set in the
++        // ROM by the generator, see sm_default_controls).
 +        val isOdin = device.name.contains("Odin", ignoreCase = true)
          val defaultOverride =
 -            bindingsOf(
