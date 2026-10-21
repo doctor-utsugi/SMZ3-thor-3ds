@@ -1,9 +1,9 @@
 """Key injection for the Lemuroid build on the AYN Thor (adb sendevent on the Odin controller) and the game state
-the tracker logs ("SMZ3 game=..." lines: room, Samus x/y, ALttP module/room/x/y). Android mapping: SNES A=305, B=304, X=307, Y=308."""
+the tracker logs ("SMZ3 game=..." lines: room, Samus x/y, ALttP module/room/x/y). Android mapping on the Thor: jump=305, dash=304, shoot=308, cancel=307 (Super Metroid layout: Y shoots, B jumps, A dashes, X cancels; see Smz3Tracker.remap)."""
 import subprocess, time, re
 A = ["adb", "-s", "5d1ee37e"]; D = "/dev/input/event9"
 HAT = {"left": (3, 16, -1), "right": (3, 16, 1), "up": (3, 17, -1), "down": (3, 17, 1)}
-KEY = {"jump": 305, "dash": 304, "shoot": 307, "cancel": 308, "L": 310, "R": 311, "select": 314, "start": 315}
+KEY = {"jump": 305, "dash": 304, "shoot": 308, "cancel": 307, "L": 310, "R": 311, "select": 314, "start": 315}
 def sh(s): subprocess.run(A + ["shell", s])
 def ev(t, c, v): return "sendevent %s %d %d %d; sendevent %s 0 0 0" % (D, t, c, v, D)
 def code(n, v):

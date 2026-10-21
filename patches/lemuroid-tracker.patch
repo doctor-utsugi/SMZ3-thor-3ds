@@ -375,6 +375,61 @@ index b4a1df8..3811237 100644
      HOME(MainRoute.HOME, R.string.title_home, Icons.Filled.Home, Icons.Outlined.Home),
      FAVORITES(MainRoute.FAVORITES, R.string.favorites, Icons.Filled.Favorite, Icons.Filled.FavoriteBorder),
      SYSTEMS(MainRoute.SYSTEMS, R.string.title_systems, Icons.Filled.VideogameAsset, Icons.Outlined.VideogameAsset),
+diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/Leaderboard.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/Leaderboard.kt
+new file mode 100644
+index 0000000..c830243
+--- /dev/null
++++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/Leaderboard.kt
+@@ -0,0 +1,49 @@
++package com.swordfish.lemuroid.app.mobile.feature.runs
++
++import android.content.Context
++import org.json.JSONArray
++import org.json.JSONObject
++import java.io.File
++
++/** One finished run: [isDefault] tells which of the two ladders it belongs to (default rules or custom rules). */
++data class LeaderboardEntry(val name: String, val seed: String, val timeMs: Long, val finishedAt: Long, val isDefault: Boolean)
++
++/** Finished runs ranked by play time, one ladder for runs with the default rules and another for custom ones. */
++object Leaderboard {
++    private const val MAX_PER_LADDER = 50
++
++    private fun file(context: Context) = File(File(context.filesDir, "runs").apply { mkdirs() }, "leaderboard.json")
++
++    fun all(context: Context): List<LeaderboardEntry> {
++        val f = file(context)
++        if (!f.exists()) return emptyList()
++        return runCatching {
++            val a = JSONArray(f.readText())
++            List(a.length()) { i ->
++                a.getJSONObject(i).let {
++                    LeaderboardEntry(it.getString("name"), it.optString("seed"), it.getLong("timeMs"), it.optLong("finishedAt"), it.optBoolean("default"))
++                }
++            }
++        }.getOrDefault(emptyList())
++    }
++
++    /** The fastest [limit] entries of one ladder, best first. */
++    fun top(context: Context, isDefault: Boolean, limit: Int = 5): List<LeaderboardEntry> =
++        all(context).filter { it.isDefault == isDefault }.sortedBy { it.timeMs }.take(limit)
++
++    @Synchronized
++    fun add(context: Context, entry: LeaderboardEntry) {
++        val kept = all(context).filter { !(it.finishedAt == entry.finishedAt && it.name == entry.name) } + entry
++        val trimmed = listOf(true, false).flatMap { d -> kept.filter { it.isDefault == d }.sortedBy { it.timeMs }.take(MAX_PER_LADDER) }
++        val json = JSONArray()
++        for (e in trimmed) {
++            json.put(JSONObject().put("name", e.name).put("seed", e.seed).put("timeMs", e.timeMs).put("finishedAt", e.finishedAt).put("default", e.isDefault))
++        }
++        file(context).writeText(json.toString())
++    }
++
++    fun format(ms: Long): String {
++        val s = ms / 1000
++        return "%d:%02d:%02d".format(s / 3600, s / 60 % 60, s % 60)
++    }
++}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/NativeMenuScreen.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/NativeMenuScreen.kt
 new file mode 100644
 index 0000000..4f06e9b
@@ -974,10 +1029,10 @@ index 0000000..91f0bba
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/RunStore.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/RunStore.kt
 new file mode 100644
-index 0000000..574642f
+index 0000000..988ef52
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/RunStore.kt
-@@ -0,0 +1,107 @@
+@@ -0,0 +1,110 @@
 +package com.swordfish.lemuroid.app.mobile.feature.runs
 +
 +import android.content.Context
@@ -1004,6 +1059,8 @@ index 0000000..574642f
 +    val settings: String = "{}",
 +    /** "all": the whole map is shown with the missing items; "discovered": only the parts and items found so far. */
 +    val mapMode: String = "all",
++    /** When the credits were reached (0 while the run is unfinished); the play time is then final and on the leaderboard. */
++    val completedAt: Long = 0,
 +)
 +
 +/** Four run slots, each a small JSON file in the app's private storage. */
@@ -1044,6 +1101,7 @@ index 0000000..574642f
 +                    seed = it.optString("seed"),
 +                    settings = it.optString("settings", "{}"),
 +                    mapMode = it.optString("mapMode", "all"),
++                    completedAt = it.optLong("completedAt"),
 +                )
 +            }
 +        }.getOrNull()
@@ -1059,7 +1117,7 @@ index 0000000..574642f
 +            .put("zeldaCleared", run.zeldaCleared).put("zeldaTotal", run.zeldaTotal)
 +            .put("metroidCleared", run.metroidCleared).put("metroidTotal", run.metroidTotal)
 +            .put("logic", run.logic).put("keysanity", run.keysanity)
-+            .put("romPath", run.romPath).put("seed", run.seed).put("settings", run.settings).put("mapMode", run.mapMode)
++            .put("romPath", run.romPath).put("seed", run.seed).put("settings", run.settings).put("mapMode", run.mapMode).put("completedAt", run.completedAt)
 +        file(context, run.slot).writeText(json.toString())
 +    }
 +
@@ -1087,10 +1145,10 @@ index 0000000..574642f
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/RunSummary.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/RunSummary.kt
 new file mode 100644
-index 0000000..68f22ff
+index 0000000..dd88da1
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/RunSummary.kt
-@@ -0,0 +1,19 @@
+@@ -0,0 +1,20 @@
 +package com.swordfish.lemuroid.app.mobile.feature.runs
 +
 +import android.content.Context
@@ -1105,6 +1163,7 @@ index 0000000..68f22ff
 +    val game = when (run.game) {
 +        1 -> "in A Link to the Past"
 +        2 -> "in Super Metroid"
++        3 -> "finished"
 +        else -> "not started"
 +    }
 +    return "Zelda ${run.zeldaCleared}/${run.zeldaTotal} · Metroid ${run.metroidCleared}/${run.metroidTotal}\n" +
@@ -1123,20 +1182,102 @@ index 7985ccc..df2281c 100644
          )
  
      suspend fun hdMode() = booleanPreference(R.string.pref_key_hd_mode, false)
+diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/BaseGameActivity.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/BaseGameActivity.kt
+index 6d06420..1ab1ea2 100644
+--- a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/BaseGameActivity.kt
++++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/BaseGameActivity.kt
+@@ -244,7 +244,7 @@ abstract class BaseGameActivity : ImmersiveActivity() {
+                             it.currentTiltConfiguration,
+                             it.tiltConfigurations,
+                         )
+-                    is GameViewModelSideEffects.UiEffect.ShowToast -> displayToast(it.message)
++                    is GameViewModelSideEffects.UiEffect.ShowToast -> showCornerNote(it.message)
+                     is GameViewModelSideEffects.UiEffect.SuccessfulFinish -> performSuccessfulActivityFinish()
+                     is GameViewModelSideEffects.UiEffect.FailureFinish -> performErrorFinish(it.message)
+                     is GameViewModelSideEffects.UiEffect.SaveQuickSave -> performSaveQuickSave()
+@@ -262,6 +262,34 @@ abstract class BaseGameActivity : ImmersiveActivity() {
+         baseGameScreenViewModel.loadQuickSave()
+     }
+ 
++    private var cornerNote: android.widget.TextView? = null
++
++    /** Small white text in the bottom right corner that fades out: replaces the system toasts (saves, slots...). */
++    private fun showCornerNote(message: String) {
++        val view =
++            cornerNote ?: android.widget.TextView(this).apply {
++                setTextColor(android.graphics.Color.WHITE)
++                textSize = 12f
++                setShadowLayer(4f, 0f, 0f, android.graphics.Color.BLACK)
++                alpha = 0f
++                val pad = (8 * resources.displayMetrics.density).toInt()
++                setPadding(pad, pad, pad, pad)
++                addContentView(
++                    this,
++                    android.widget.FrameLayout.LayoutParams(
++                        android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
++                        android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
++                        android.view.Gravity.BOTTOM or android.view.Gravity.END,
++                    ),
++                )
++                cornerNote = this
++            }
++        view.text = message
++        view.animate().cancel()
++        view.alpha = 1f
++        view.animate().alpha(0f).setStartDelay(1800).setDuration(500).start()
++    }
++
+     private fun performToggleFastForward() {
+         baseGameScreenViewModel.toggleFastForward()
+     }
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/BaseGameScreenViewModel.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/BaseGameScreenViewModel.kt
-index 8f91e6c..1113110 100644
+index 8f91e6c..06340fb 100644
 --- a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/BaseGameScreenViewModel.kt
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/BaseGameScreenViewModel.kt
-@@ -16,6 +16,8 @@ import com.swordfish.lemuroid.app.mobile.feature.settings.SettingsManager
+@@ -16,6 +16,9 @@ import com.swordfish.lemuroid.app.mobile.feature.settings.SettingsManager
  import com.swordfish.lemuroid.app.shared.game.viewmodel.GameViewModelInput
  import com.swordfish.lemuroid.app.shared.game.viewmodel.GameViewModelRetroGameView
  import com.swordfish.lemuroid.app.shared.game.viewmodel.GameViewModelSaves
 +import com.swordfish.lemuroid.app.shared.game.viewmodel.Smz3HotkeyHost
 +import com.swordfish.lemuroid.app.shared.game.viewmodel.Smz3Hotkeys
++import com.swordfish.lemuroid.app.shared.game.viewmodel.Smz3Tracker
  import com.swordfish.lemuroid.app.shared.game.viewmodel.GameViewModelSideEffects
  import com.swordfish.lemuroid.app.shared.game.viewmodel.GameViewModelTilt
  import com.swordfish.lemuroid.app.shared.game.viewmodel.GameViewModelTouchControls
-@@ -267,10 +269,30 @@ class BaseGameScreenViewModel(
+@@ -238,14 +241,14 @@ class BaseGameScreenViewModel(
+     }
+ 
+     suspend fun saveSlot(index: Int) {
+-        if (loadingState.value) return
++        if (loadingState.value || !Smz3Hotkeys.saveStatesAllowed(appContext)) return
+         withLoading {
+             saves.saveSlot(index)
+         }
+     }
+ 
+     suspend fun loadSlot(index: Int) {
+-        if (loadingState.value) return
++        if (loadingState.value || !Smz3Hotkeys.saveStatesAllowed(appContext)) return
+         withLoading {
+             saves.loadSlot(index)
+         }
+@@ -253,7 +256,7 @@ class BaseGameScreenViewModel(
+ 
+     fun saveQuickSave() {
+         Timber.d("Saving quick save")
+-        if (loadingState.value) return
++        if (loadingState.value || !Smz3Hotkeys.saveStatesAllowed(appContext)) return
+         withLoading {
+             saves.saveQuickSave()
+         }
+@@ -261,16 +264,39 @@ class BaseGameScreenViewModel(
+ 
+     fun loadQuickSave() {
+         Timber.d("Loading quick save")
+-        if (loadingState.value) return
++        if (loadingState.value || !Smz3Hotkeys.saveStatesAllowed(appContext)) return
+         withLoading {
+             saves.loadQuickSave()
          }
      }
  
@@ -1161,7 +1302,10 @@ index 8f91e6c..1113110 100644
 +            viewModelScope.launch { loadSlot(slot - 1) }
 +        }
 +
-+        override fun hotkeyFastForward(speed: Int) = toggleFastForward(speed)
++        override fun hotkeyFastForward(speed: Int) {
++            retroGameView.retroGameView?.frameSpeed = speed
++            Smz3Tracker.speed = speed
++        }
 +
 +        override fun hotkeyToast(message: String) = sideEffects.showToast(message)
 +
@@ -1170,7 +1314,7 @@ index 8f91e6c..1113110 100644
          }
      }
  
-@@ -309,21 +331,37 @@ class BaseGameScreenViewModel(
+@@ -309,21 +335,37 @@ class BaseGameScreenViewModel(
  
      override fun onCreate(owner: LifecycleOwner) {
          super.onCreate(owner)
@@ -1209,9 +1353,18 @@ index 8f91e6c..1113110 100644
 +    }
  }
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/GameViewModelInput.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/GameViewModelInput.kt
-index 998ae22..bff4b3f 100644
+index 998ae22..adce94b 100644
 --- a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/GameViewModelInput.kt
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/GameViewModelInput.kt
+@@ -303,7 +303,7 @@ class GameViewModelInput(
+             .safeCollect { (shortcuts, ports, bindings, event) ->
+                 val (device, action, keyCode) = event
+                 val port = ports(device)
+-                val bindKeyCode = bindings(device)[InputKey(keyCode)]?.keyCode ?: keyCode
++                val bindKeyCode = Smz3Tracker.remap(bindings(device)[InputKey(keyCode)]?.keyCode ?: keyCode)
+ 
+                 if (port == 0) {
+                     if (bindKeyCode == KeyEvent.KEYCODE_BUTTON_MODE && action == KeyEvent.ACTION_DOWN) {
 @@ -330,6 +330,7 @@ class GameViewModelInput(
                      }
                  }
@@ -1576,14 +1729,15 @@ index 0000000..b50ef12
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Hotkeys.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Hotkeys.kt
 new file mode 100644
-index 0000000..e0f5cca
+index 0000000..629f951
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Hotkeys.kt
-@@ -0,0 +1,139 @@
+@@ -0,0 +1,157 @@
 +package com.swordfish.lemuroid.app.shared.game.viewmodel
 +
 +import android.content.Context
 +import android.view.KeyEvent
++import com.swordfish.lemuroid.app.mobile.feature.runs.RunStore
 +
 +/** What the hotkeys can do in game; implemented by the game view model. */
 +interface Smz3HotkeyHost {
@@ -1591,6 +1745,7 @@ index 0000000..e0f5cca
 +
 +    fun hotkeyLoadState(slot: Int)
 +
++    /** [speed] is the factor while the fast-forward keys are held, 1 once they are released. */
 +    fun hotkeyFastForward(speed: Int)
 +
 +    fun hotkeyToast(message: String)
@@ -1626,6 +1781,7 @@ index 0000000..e0f5cca
 +    @Volatile var host: Smz3HotkeyHost? = null
 +    private val pressed = HashSet<Int>()
 +    private val consumed = HashSet<Int>()
++    private var fastForwarding = false
 +
 +    private fun prefs(context: Context) = context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
 +
@@ -1684,15 +1840,25 @@ index 0000000..e0f5cca
 +        else -> "Original 4:3"
 +    }
 +
++    /** Save states are a per-run option ("Save states" in the QoL tab), off unless the run was created with it on. */
++    fun saveStatesAllowed(context: Context): Boolean {
++        val run = RunStore.activeSlot(context)?.let { RunStore.load(context, it) } ?: return true
++        return runCatching { org.json.JSONObject(run.settings).optBoolean("saveStates", false) }.getOrDefault(false)
++    }
++
 +    fun resetAll(context: Context) = prefs(context).edit().clear().apply()
 +
 +    fun run(context: Context, action: Smz3HotkeyAction) {
 +        timber.log.Timber.i("SMZ3 hotkey ${action.name} slot=${slot(context)}")
 +        val h = host ?: return
++        if ((action == Smz3HotkeyAction.SAVE_STATE || action == Smz3HotkeyAction.LOAD_STATE) && !saveStatesAllowed(context)) {
++            h.hotkeyToast("Save states are off in this run")
++            return
++        }
 +        when (action) {
 +            Smz3HotkeyAction.SAVE_STATE -> { h.hotkeySaveState(slot(context)); h.hotkeyToast("State saved in slot ${slot(context)}") }
 +            Smz3HotkeyAction.LOAD_STATE -> { h.hotkeyLoadState(slot(context)); h.hotkeyToast("State loaded from slot ${slot(context)}") }
-+            Smz3HotkeyAction.FAST_FORWARD -> h.hotkeyFastForward(speed(context))
++            Smz3HotkeyAction.FAST_FORWARD -> h.hotkeyFastForward(speed(context))   // held: released in onKey
 +            Smz3HotkeyAction.NEXT_SLOT -> {
 +                val next = slot(context) % SLOTS + 1
 +                setSlot(context, next)
@@ -1706,6 +1872,10 @@ index 0000000..e0f5cca
 +        val code = event.keyCode
 +        if (event.action == KeyEvent.ACTION_UP) {
 +            pressed.remove(code)
++            if (fastForwarding && code in keys(context, Smz3HotkeyAction.FAST_FORWARD)) {
++                fastForwarding = false
++                host?.hotkeyFastForward(1)
++            }
 +            return consumed.remove(code)
 +        }
 +        if (event.action != KeyEvent.ACTION_DOWN || event.repeatCount > 0) return code in consumed
@@ -1715,6 +1885,7 @@ index 0000000..e0f5cca
 +            .filter { (_, keys) -> code in keys && pressed.containsAll(keys) }
 +            .maxByOrNull { (_, keys) -> keys.size } ?: return false
 +        consumed.add(code)
++        if (match.first == Smz3HotkeyAction.FAST_FORWARD) fastForwarding = true
 +        run(context, match.first)
 +        return true
 +    }
@@ -1878,10 +2049,10 @@ index 0000000..3d11f48
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3IdlePresentation.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3IdlePresentation.kt
 new file mode 100644
-index 0000000..35e8b55
+index 0000000..79c2c3e
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3IdlePresentation.kt
-@@ -0,0 +1,97 @@
+@@ -0,0 +1,120 @@
 +package com.swordfish.lemuroid.app.shared.game.viewmodel
 +
 +import android.animation.ValueAnimator
@@ -1898,6 +2069,8 @@ index 0000000..35e8b55
 +import android.view.View
 +import android.view.ViewGroup
 +import android.view.animation.LinearInterpolator
++import com.swordfish.lemuroid.app.mobile.feature.runs.Leaderboard
++import com.swordfish.lemuroid.app.mobile.feature.runs.LeaderboardEntry
 +import kotlin.math.PI
 +import kotlin.math.sin
 +import kotlin.random.Random
@@ -1932,6 +2105,8 @@ index 0000000..35e8b55
 +        private val stars = List(90) { floatArrayOf(rnd.nextFloat(), rnd.nextFloat(), 0.3f + rnd.nextFloat() * 0.7f) }
 +        private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
 +        private val density = context.resources.displayMetrics.density
++        private val defaultLadder = Leaderboard.top(context, true)
++        private val customLadder = Leaderboard.top(context, false)
 +
 +        override fun onDraw(canvas: Canvas) {
 +            val w = width.toFloat()
@@ -1949,16 +2124,35 @@ index 0000000..35e8b55
 +            paint.textAlign = Paint.Align.CENTER
 +            paint.color = Color.parseColor("#E8C14A")
 +            paint.typeface = android.graphics.Typeface.create(android.graphics.Typeface.SERIF, android.graphics.Typeface.BOLD)
-+            paint.textSize = 44f * density
-+            canvas.drawText("SMZ3", w / 2f, h * 0.45f, paint)
++            paint.textSize = 34f * density
++            canvas.drawText("SMZ3", w / 2f, h * 0.14f, paint)
 +            paint.color = Color.parseColor("#FF9A1F")
-+            paint.textSize = 15f * density
-+            canvas.drawText("A LINK TO THE PAST  ·  SUPER METROID", w / 2f, h * 0.45f + 30f * density, paint)
-+            val pulse = 0.45f + 0.55f * (0.5f + 0.5f * sin(phase * 6f * 2f * PI.toFloat()))
-+            paint.color = Color.argb((255 * pulse).toInt(), 216, 246, 255)
++            paint.textSize = 12f * density
++            canvas.drawText("A LINK TO THE PAST  ·  SUPER METROID", w / 2f, h * 0.14f + 22f * density, paint)
 +            paint.typeface = android.graphics.Typeface.DEFAULT
-+            paint.textSize = 16f * density
-+            canvas.drawText("Waiting for a game...", w / 2f, h * 0.75f, paint)
++            drawLadder(canvas, "DEFAULT RULES", defaultLadder, w * 0.25f, h * 0.36f)
++            drawLadder(canvas, "CUSTOM RULES", customLadder, w * 0.75f, h * 0.36f)
++        }
++
++        private fun drawLadder(canvas: Canvas, title: String, entries: List<LeaderboardEntry>, cx: Float, top: Float) {
++            paint.textAlign = Paint.Align.CENTER
++            paint.color = Color.parseColor("#E8C14A")
++            paint.textSize = 13f * density
++            canvas.drawText(title, cx, top, paint)
++            paint.textSize = 12f * density
++            if (entries.isEmpty()) {
++                paint.color = Color.parseColor("#8FA0A8")
++                canvas.drawText("No finished runs yet", cx, top + 26f * density, paint)
++                return
++            }
++            for ((i, e) in entries.withIndex()) {
++                val y = top + (26f + 22f * i) * density
++                paint.color = if (i == 0) Color.parseColor("#FFE08A") else Color.parseColor("#D8F6FF")
++                paint.textAlign = Paint.Align.LEFT
++                canvas.drawText("${i + 1}. ${e.name.take(12)}", cx - 100f * density, y, paint)
++                paint.textAlign = Paint.Align.RIGHT
++                canvas.drawText(Leaderboard.format(e.timeMs), cx + 100f * density, y, paint)
++            }
 +        }
 +    }
 +}
@@ -1981,10 +2175,10 @@ index 0000000..35e8b55
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3MapView.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3MapView.kt
 new file mode 100644
-index 0000000..d66ee20
+index 0000000..fd41e49
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3MapView.kt
-@@ -0,0 +1,265 @@
+@@ -0,0 +1,276 @@
 +package com.swordfish.lemuroid.app.shared.game.viewmodel
 +
 +import android.content.Context
@@ -2141,6 +2335,12 @@ index 0000000..d66ee20
 +        matrix.postTranslate(width / 2f - pos.x * s, height / 2f - pos.y * s)
 +    }
 +
++    /** The [CENTER] button: puts the player in the middle of the view at a readable zoom (the whole map when unknown). */
++    fun centerOnPlayerNow() {
++        centerOnPlayer()
++        invalidate()
++    }
++
 +    /** Fits a part of the map (half-size map pixels) in the view, e.g. the Super Metroid area Samus is in. */
 +    fun fitRect(r: RectF) {
 +        if (width == 0 || height == 0) { pendingFit = r; return }
@@ -2238,9 +2438,14 @@ index 0000000..d66ee20
 +            pts[0] = it.x; pts[1] = it.y
 +            matrix.mapPoints(pts)
 +            val pr = (6f + 2f * zoom).coerceIn(7f, 14f)
-+            canvas.drawCircle(pts[0], pts[1], pr * (1.1f + 0.3f * pulse), ring)
-+            canvas.drawCircle(pts[0], pts[1], pr, me)
-+            canvas.drawCircle(pts[0], pts[1], pr, ring)
++            // the player's dot blinks so it stands out among the check dots
++            if ((android.os.SystemClock.uptimeMillis() / 350) % 2 == 0L) {
++                canvas.drawCircle(pts[0], pts[1], pr * 1.5f, ring)
++                canvas.drawCircle(pts[0], pts[1], pr, me)
++                canvas.drawCircle(pts[0], pts[1], pr, ring)
++            } else {
++                canvas.drawCircle(pts[0], pts[1], pr * 0.45f, me)
++            }
 +        }
 +    }
 +
@@ -2322,10 +2527,10 @@ index 0000000..fb5fd89
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Presentation.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Presentation.kt
 new file mode 100644
-index 0000000..ae90492
+index 0000000..281da97
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Presentation.kt
-@@ -0,0 +1,515 @@
+@@ -0,0 +1,531 @@
 +package com.swordfish.lemuroid.app.shared.game.viewmodel
 +
 +import android.app.Presentation
@@ -2546,7 +2751,23 @@ index 0000000..ae90492
 +        return ScrollView(context).apply { addView(column) }
 +    }
 +
-+    private fun buildMapPage(): View = Smz3MapView(context).also { map = it }
++    private fun buildMapPage(): View {
++        val view = Smz3MapView(context).also { map = it }
++        val center = label(14f, Role.ACCENT).apply {
++            text = "[CENTER]"
++            setPadding(dp(14), dp(10), dp(14), dp(10))
++            setBackgroundColor(Color.argb(170, 0, 0, 0))
++            setOnClickListener { view.centerOnPlayerNow() }
++        }
++        return FrameLayout(context).apply {
++            addView(view, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
++            addView(
++                center,
++                FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM or Gravity.END)
++                    .apply { setMargins(0, 0, dp(10), dp(10)) },
++            )
++        }
++    }
 +
 +    private val configButtons = mutableListOf<() -> Unit>()
 +
@@ -2932,10 +3153,10 @@ index 0000000..378f91a
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Tracker.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Tracker.kt
 new file mode 100644
-index 0000000..e618586
+index 0000000..234d3d3
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Tracker.kt
-@@ -0,0 +1,225 @@
+@@ -0,0 +1,265 @@
 +package com.swordfish.lemuroid.app.shared.game.viewmodel
 +
 +import android.app.Presentation
@@ -2946,6 +3167,7 @@ index 0000000..e618586
 +import android.os.Handler
 +import android.os.Looper
 +import android.os.SystemClock
++import android.view.KeyEvent
 +import android.view.Display
 +import android.view.Gravity
 +import android.view.ViewGroup
@@ -2955,6 +3177,8 @@ index 0000000..e618586
 +import com.swordfish.lemuroid.app.mobile.feature.runs.RunGenerator
 +import com.swordfish.lemuroid.app.mobile.feature.runs.RunKeys
 +import com.swordfish.lemuroid.app.mobile.feature.runs.RunLogic
++import com.swordfish.lemuroid.app.mobile.feature.runs.Leaderboard
++import com.swordfish.lemuroid.app.mobile.feature.runs.LeaderboardEntry
 +import com.swordfish.lemuroid.app.mobile.feature.runs.RunStore
 +import com.swordfish.libretrodroid.GLRetroView
 +import kotlinx.coroutines.CoroutineScope
@@ -2993,6 +3217,29 @@ index 0000000..e618586
 +    private val main = Handler(Looper.getMainLooper())
 +    private var presentation: Smz3Presentation? = null
 +    private var pendingPlayTime = 0L
++
++    /** 1 for 1x speed, otherwise the fast-forward speed being held; play time and the clock advance by it. */
++    @Volatile var speed = 1
++
++    /** 0 until the game is known, then 1 for A Link to the Past, 2 for Super Metroid and 3 for the credits. */
++    @Volatile var currentGame = 0
++    private var scaledElapsedMs = 0L
++    private var finishedSaved = false
++
++    /**
++     * Super Metroid's layout: Y shoots, B jumps, A dashes and X cancels the item. The game keeps its stock settings
++     * (X shot, A jump, B dash, Y cancel), so the pad's buttons are crossed before they reach the core.
++     */
++    fun remap(keyCode: Int): Int {
++        if (currentGame != 2) return keyCode
++        return when (keyCode) {
++            KeyEvent.KEYCODE_BUTTON_A -> KeyEvent.KEYCODE_BUTTON_B
++            KeyEvent.KEYCODE_BUTTON_B -> KeyEvent.KEYCODE_BUTTON_A
++            KeyEvent.KEYCODE_BUTTON_X -> KeyEvent.KEYCODE_BUTTON_Y
++            KeyEvent.KEYCODE_BUTTON_Y -> KeyEvent.KEYCODE_BUTTON_X
++            else -> keyCode
++        }
++    }
 +    private var lastPad = 0
 +    private var lastSmState = -1
 +
@@ -3103,7 +3350,7 @@ index 0000000..e618586
 +                    zeldaCleared = s[2], zeldaTotal = s[3],
 +                    metroidCleared = s[4], metroidTotal = s[5],
 +                    recent = recent.toList(),
-+                    elapsedMs = if (startedAt == 0L) 0 else SystemClock.elapsedRealtime() - startedAt,
++                    elapsedMs = if (startedAt == 0L) 0 else scaledElapsedMs,
 +                    cleared = cleared,
 +                    inventory = inventoryCache.copyOf(),
 +                    inLogic = if (help.mode == "all") inLogic else null,   // which checks are in logic is a help too
@@ -3114,21 +3361,35 @@ index 0000000..e618586
 +                    discoveredOnly = discoveredOnly,
 +                    bosses = if (started && slotNow != null) Smz3Bosses.marks(wram, discovery) else emptyList(),
 +                )
++                currentGame = if (started) s[0] else 0
 +                main.post { presentation?.render(snapshot) }
 +
 +                val now = SystemClock.elapsedRealtime()
 +                val delta = now - lastTick
 +                lastTick = now
 +                RunStore.activeSlot(context)?.let { slot ->
-+                    if (started && running) pendingPlayTime += delta
-+                    if (--saveCountdown <= 0) {
++                    if (started && running) {
++                        val scaled = delta * speed
++                        pendingPlayTime += scaled
++                        scaledElapsedMs += scaled
++                    }
++                    val finishing = s[0] == 3 && !finishedSaved
++                    if (--saveCountdown <= 0 || finishing) {
 +                        saveCountdown = 10
 +                        RunStore.load(context, slot)?.let { run ->
++                            val finished = run.completedAt == 0L && s[0] == 3
++                            val totalMs = run.playTimeMs + pendingPlayTime
++                            if (s[0] == 3) finishedSaved = true
++                            if (finished) {
++                                val isDefault = runCatching { org.json.JSONObject(run.settings).optBoolean("defaultRules", false) }.getOrDefault(false)
++                                Leaderboard.add(context, LeaderboardEntry(run.name, run.seed, totalMs, System.currentTimeMillis(), isDefault))
++                            }
 +                            RunStore.save(
 +                                context,
 +                                run.copy(
++                                    completedAt = if (finished) System.currentTimeMillis() else run.completedAt,
 +                                    lastPlayedAt = System.currentTimeMillis(),
-+                                    playTimeMs = run.playTimeMs + pendingPlayTime,
++                                    playTimeMs = if (run.completedAt != 0L) run.playTimeMs else totalMs,
 +                                    game = if (started) s[0] else run.game,
 +                                    zeldaCleared = if (started) s[2] else run.zeldaCleared,
 +                                    zeldaTotal = s[3],
@@ -3162,15 +3423,16 @@ index 0000000..e618586
 +    }
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/input/lemuroiddevice/LemuroidInputDeviceGamePad.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/input/lemuroiddevice/LemuroidInputDeviceGamePad.kt
-index 72c909f..4e0b8ec 100644
+index 72c909f..ca028bc 100644
 --- a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/input/lemuroiddevice/LemuroidInputDeviceGamePad.kt
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/input/lemuroiddevice/LemuroidInputDeviceGamePad.kt
-@@ -21,13 +21,23 @@ class LemuroidInputDeviceGamePad(private val device: InputDevice) : LemuroidInpu
+@@ -21,13 +21,21 @@ class LemuroidInputDeviceGamePad(private val device: InputDevice) : LemuroidInpu
                      InputKey(it.keyCode) to getDefaultBindingForKey(device, it)
                  }
  
-+        // The AYN Odin controller reports the physical north button as Android X (BTN_NORTH, 307)
-+        // and west as Y, so the Xbox-style X/Y swap would put north on SNES Y. Keep X/Y straight there.
++        // The AYN Odin controller reports the physical north button as Android X (BTN_NORTH, 307) and west as Y, and
++        // its labels already match the console's: keep every button straight (Super Metroid's own layout is applied
++        // in GameViewModelInput through Smz3Tracker.remap).
 +        val isOdin = device.name.contains("Odin", ignoreCase = true)
          val defaultOverride =
 -            bindingsOf(
@@ -3180,10 +3442,7 @@ index 72c909f..4e0b8ec 100644
 -                KeyEvent.KEYCODE_BUTTON_Y to KeyEvent.KEYCODE_BUTTON_X,
 -            )
 +            if (isOdin) {
-+                bindingsOf(
-+                    KeyEvent.KEYCODE_BUTTON_A to KeyEvent.KEYCODE_BUTTON_B,
-+                    KeyEvent.KEYCODE_BUTTON_B to KeyEvent.KEYCODE_BUTTON_A,
-+                )
++                bindingsOf()
 +            } else {
 +                bindingsOf(
 +                    KeyEvent.KEYCODE_BUTTON_A to KeyEvent.KEYCODE_BUTTON_B,

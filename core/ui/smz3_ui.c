@@ -257,6 +257,13 @@ void ui_draw(SmzUi *u)
             value_text(u, idx[row], val, sizeof val);
             text(u, 10, y + 4, C_TEXT, 0, UI_OPTS[idx[row]].label);
             text(u, UI_W - 46, y + 4, C_ACCENT, 2, val);
+            if ((idx[row] == UIO_LINK || idx[row] == UIO_SAMUS) && u->value[idx[row]] > 0 && u->value[idx[row]] < u->sprite_count[idx[row] == UIO_SAMUS]) {
+                /* the chosen sprite beside its row, not only in the picker */
+                char key[64];
+                int g = idx[row] == UIO_SAMUS;
+                snprintf(key, sizeof key, "%s/%s", g ? "samus" : "link", u->sprites[g][u->value[idx[row]]]);
+                put(u, 2, 150, y, ROW_H - 2, ROW_H - 2, C_TEXT, 0, key);
+            }
         }
         rect(u, UI_W - 32, LIST_Y, 28, 66, C_PANEL);
         text(u, UI_W - 18, LIST_Y + 24, C_ACCENT, 1, "^");

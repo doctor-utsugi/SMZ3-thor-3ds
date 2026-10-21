@@ -65,6 +65,18 @@ int main(int argc, char **argv)
         bad |= nbad;
         ui.value[UIO_NERF] = 0;
     }
+    {   /* "Save states" is off and the rules are the default ones until either changes (feeds the leaderboards) */
+        static uint8_t c[SMZ_HOST_ROM_SIZE];
+        int sbad = 0;
+        if (smz_host_generate(&ui, 777, sm, z3, NULL, 0, NULL, 0, ips, NULL, c, json, sizeof json, seedText, sizeof seedText, NULL)) return 9;
+        sbad |= !strstr(json, "\"saveStates\":false") || !strstr(json, "\"defaultRules\":true");
+        ui.value[UIO_SAVES] = 1;
+        if (smz_host_generate(&ui, 777, sm, z3, NULL, 0, NULL, 0, ips, NULL, c, json, sizeof json, seedText, sizeof seedText, NULL)) return 9;
+        sbad |= !strstr(json, "\"saveStates\":true") || !strstr(json, "\"defaultRules\":false");
+        ui.value[UIO_SAVES] = 0;
+        printf(sbad ? "save states / default rules DIFFERENT\n" : "save states: off by default, flips defaultRules\n");
+        bad |= sbad;
+    }
     if (argc > 4) {   /* a plando file: the host path with it set must equal smz_generate_plando */
         size_t yl;
         uint8_t *yaml = slurp(argv[4], &yl);

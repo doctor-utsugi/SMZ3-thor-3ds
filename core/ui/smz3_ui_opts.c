@@ -22,7 +22,7 @@ static const char *const N_JINGLE[] = {"Random", "Vanilla", "Blue Badger", "Batt
 _Static_assert(sizeof N_JINGLE / sizeof N_JINGLE[0] == SMZ_JINGLE_COUNT + 1, "jingle names");
 
 /* Order matters: ui_settings reads the first block by index (see enum below). */
-enum { O_SEED, O_KEYS, O_PLACE, O_GANON, O_GT, O_TOURIAN, O_LINK, O_SAMUS, O_MAP, O_DARK, O_FILTER, O_SHAPE, O_HELP, O_HELPS, O_PYRAMID, O_DOOR, O_WALL, O_MODE, O_PLANDO, O_JINGLE, O_SPAZ_POOL, O_SPAZ_REQ, O_NERF, O_ITEM0, O_LOGIC0 = O_ITEM0 + SMZ_ITEMOPT_GROUP_COUNT };
+enum { O_SEED, O_KEYS, O_PLACE, O_GANON, O_GT, O_TOURIAN, O_LINK, O_SAMUS, O_MAP, O_DARK, O_FILTER, O_SHAPE, O_HELP, O_HELPS, O_PYRAMID, O_DOOR, O_WALL, O_MODE, O_PLANDO, O_JINGLE, O_SPAZ_POOL, O_SPAZ_REQ, O_NERF, O_SAVES, O_ITEM0, O_LOGIC0 = O_ITEM0 + SMZ_ITEMOPT_GROUP_COUNT };
 
 #define B(k, l, t) {k, l, t, OPT_BOOL, LEVEL_ADVANCED, 0, 1, 0, 0}
 #define Q(k, l, t) {k, l, t, OPT_BOOL, LEVEL_QOL, 0, 1, 0, 0}
@@ -50,6 +50,7 @@ const UiOptDef UI_OPTS[] = {
     {"SpazersInPool", "Spazers in pool", "Spazer Hunt: how many spazers are placed.", OPT_INT, LEVEL_ADVANCED, 1, 60, 40, 0},
     {"SpazersRequired", "Spazers required", "Spazer Hunt: how many you need to beat the game.", OPT_INT, LEVEL_ADVANCED, 1, 60, 30, 0},
     {"NerfedCharge", "Nerfed charge", "Charge the beam from the start, at a third of the damage.", OPT_BOOL, LEVEL_QOL, 0, 1, 0, 0},
+    {"SaveStates", "Save states", "Allow save states in this run. Off keeps the run honest: only the game's own saves.", OPT_BOOL, LEVEL_QOL, 0, 1, 0, 0},
     ITEM_OPT_DEFS
     Q("PreventScrewAttackSoftLock", "No Screw Attack soft locks", "Screw Attack is not expected without the morph ball."),
     Q("PreventFivePowerBombSeed", "No five power bomb seeds", "Expects at least two power bomb upgrades."),
@@ -138,6 +139,18 @@ void ui_settings(const SmzUi *u, int32_t seed_if_random, SmzSettings *s, SmzPatc
     }
 }
 
+/* 1 when every option that changes the run's rules is at its default; the seed, sprites, screen, map view and jingle are cosmetic. */
+static int ui_is_default(const SmzUi *u)
+{
+    for (int i = 0; i < UI_OPT_COUNT; i++) {
+        if (i == O_SEED || i == O_LINK || i == O_SAMUS || i == O_MAP || i == O_FILTER || i == O_SHAPE || i == O_JINGLE) continue;
+        if (UI_OPTS[i].kind == OPT_SPRITE) { if (u->value[i] != 0) return 0; continue; }
+        if (u->value[i] != UI_OPTS[i].def) return 0;
+    }
+    return 1;
+}
+
+
 /* The run's settings as JSON, in the format both frontends store with a run (keys and values as the generator's schema names them). */
 int ui_settings_json(const SmzUi *u, int32_t seed_if_random, char *out, size_t cap)
 {
@@ -153,10 +166,10 @@ int ui_settings_json(const SmzUi *u, int32_t seed_if_random, char *out, size_t c
     int n = snprintf(out, cap,
         "{\"seed\":\"%d\",\"keysanity\":\"%s\",\"itemPlacement\":\"%s\",\"gameMode\":\"%s\",\"ganonCrystals\":%d,"
         "\"ganonsTowerCrystals\":%d,\"tourianBosses\":%d,\"pyramidHole\":\"%s\",\"tourianBossDoor\":\"%s\","
-        "\"mapMode\":\"%s\",\"lightDarkRooms\":%s,\"nerfedCharge\":%s,\"screenFilter\":\"%s\",\"screenShape\":\"%s\",\"helpMode\":\"%s\",\"helpCount\":%d,\"linkSprite\":\"%s\",\"samusSprite\":\"%s\",\"plando\":\"%s\",\"etecoonsJingle\":%d,\"logic\":{",
+        "\"mapMode\":\"%s\",\"lightDarkRooms\":%s,\"nerfedCharge\":%s,\"saveStates\":%s,\"defaultRules\":%s,\"screenFilter\":\"%s\",\"screenShape\":\"%s\",\"helpMode\":\"%s\",\"helpCount\":%d,\"linkSprite\":\"%s\",\"samusSprite\":\"%s\",\"plando\":\"%s\",\"etecoonsJingle\":%d,\"logic\":{",
         s.seed, KEYS[s.keysanity], PLACE[s.placement_rule], MODE[s.game_mode], s.ganon_crystals, s.gt_crystals, s.tourian_bosses,
         pc.pyramid_open ? "Open" : "Closed", pc.tourian_door_open ? "Open" : "Closed",
-        u->value[O_MAP] ? "discovered" : "all", u->value[O_DARK] ? "true" : "false", u->value[O_NERF] ? "true" : "false", FILTER[u->value[O_FILTER]], SHAPE[u->value[O_SHAPE]], HELP[u->value[O_HELP]], u->value[O_HELPS], link, samus, g_plando_loaded ? plando : "", u->value[O_JINGLE]);
+        u->value[O_MAP] ? "discovered" : "all", u->value[O_DARK] ? "true" : "false", u->value[O_NERF] ? "true" : "false", u->value[O_SAVES] ? "true" : "false", ui_is_default(u) ? "true" : "false", FILTER[u->value[O_FILTER]], SHAPE[u->value[O_SHAPE]], HELP[u->value[O_HELP]], u->value[O_HELPS], link, samus, g_plando_loaded ? plando : "", u->value[O_JINGLE]);
     for (int i = O_LOGIC0; i < UI_OPT_COUNT && n < (int)cap; i++)
         n += snprintf(out + n, cap - n, "\"%s\":%s,", UI_OPTS[i].key, smz_cfg_get(&s.cfg, UI_OPTS[i].key) ? "true" : "false");
     /* the frontends hand every integer in "logic" to the generator by name (smz_setting_set) */
