@@ -1387,10 +1387,10 @@ index 02e981f..c1bfab7 100644
          return currentState.gameData to result
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Bosses.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Bosses.kt
 new file mode 100644
-index 0000000..2eb235d
+index 0000000..de6b7df
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Bosses.kt
-@@ -0,0 +1,41 @@
+@@ -0,0 +1,62 @@
 +package com.swordfish.lemuroid.app.shared.game.viewmodel
 +
 +/** A boss or dungeon reward shown on the map; [icon] is a file in assets/smz3/rewards. */
@@ -1430,6 +1430,27 @@ index 0000000..2eb235d
 +            out += BossMark(c.x, c.y, b.icon, (events and b.bit) != 0)
 +        }
 +        return out
++    }
++
++    /** Bit 0 Kraid, 1 Phantoon, 2 Draygon, 3 Ridley: the Super Metroid bosses beaten (event word at $7ED828). */
++    fun metroidMask(wram: ByteArray, sram: ByteArray, game: Int): Int {
++        // while Zelda is running the Super Metroid memory is parked in the save RAM ($A16000 block, event word at +$78)
++        val events = if (game == 2) { if (wram.size < 0xD82A) return 0; u16(wram, 0xD828) } else { if (sram.size < 0x207A) return 0; u16(sram, 0x2078) }
++        var mask = 0
++        for ((i, b) in bosses.withIndex()) if (events and b.bit != 0) mask = mask or (1 shl i)
++        return mask
++    }
++
++    // The crystal byte at $7EF37A has one bit per crystal number: bit 0 is crystal 6, then 1, 5, 7, 2, 4, 3.
++    private val crystalOfBit = intArrayOf(6, 1, 5, 7, 2, 4, 3)
++
++    /** Bit n-1 set when crystal n is collected. */
++    fun crystalMask(wram: ByteArray, sram: ByteArray, game: Int): Int {
++        // Zelda's memory lives in the work RAM while it runs and in the save RAM ($A06000) while Super Metroid does
++        val bits = if (game == 2) { if (sram.size < 0x37B) return 0; sram[0x37A].toInt() and 0xFF } else { if (wram.size < 0xF37B) return 0; wram[0xF37A].toInt() and 0xFF }
++        var mask = 0
++        for (b in 0 until 7) if (bits and (1 shl b) != 0) mask = mask or (1 shl (crystalOfBit[b] - 1))
++        return mask
 +    }
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Discovery.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Discovery.kt
@@ -2527,10 +2548,10 @@ index 0000000..fb5fd89
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Presentation.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Presentation.kt
 new file mode 100644
-index 0000000..281da97
+index 0000000..0ab473c
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Presentation.kt
-@@ -0,0 +1,531 @@
+@@ -0,0 +1,561 @@
 +package com.swordfish.lemuroid.app.shared.game.viewmodel
 +
 +import android.app.Presentation
@@ -2582,7 +2603,6 @@ index 0000000..281da97
 +    private lateinit var metroidText: TextView
 +    private lateinit var zeldaBar: ProgressBar
 +    private lateinit var metroidBar: ProgressBar
-+    private lateinit var recent: TextView
 +
 +    private var map: Smz3MapView? = null
 +    private var miniMap: Smz3MapView? = null
@@ -2666,51 +2686,83 @@ index 0000000..281da97
 +    private lateinit var percent: TextView
 +    private lateinit var stats: TextView
 +    private lateinit var closest: TextView
-+    private lateinit var mapHint: TextView
 +    private var areaBox: android.graphics.RectF? = null
 +
++    private lateinit var rewards: Smz3RewardsView
++    private lateinit var recentBox: LinearLayout
++    private var recentShown: List<Int>? = null
++
++    /** Info on the left, the following mini map on the right; tapping the map opens the big one. */
 +    private fun buildRunPage(): View {
-+        val page = LinearLayout(context).apply {
++        val column = LinearLayout(context).apply {
 +            orientation = LinearLayout.VERTICAL
-+            setPadding(dp(16), dp(10), dp(16), dp(16))
++            setPadding(dp(12), dp(8), dp(4), dp(8))
 +        }
-+        game = label(15f, Role.ACCENT)
-+        percent = label(64f, Role.ACCENT)
++        game = label(14f, Role.ACCENT).apply { isSingleLine = true }
++        percent = label(54f, Role.ACCENT).apply { includeFontPadding = false }
 +        time = label(22f, Role.TEXT)
-+        stats = label(15f, Role.TEXT).apply { setLineSpacing(0f, 1.25f) }
-+        zeldaText = label(15f)
++        stats = label(14f, Role.TEXT).apply { setLineSpacing(0f, 1.2f) }
++        zeldaText = label(14f)
 +        zeldaBar = bar()
-+        metroidText = label(15f)
++        metroidText = label(14f)
 +        metroidBar = bar()
 +        val head = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.BOTTOM }
 +        head.addView(percent, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 +        head.addView(
 +            LinearLayout(context).apply {
 +                orientation = LinearLayout.VERTICAL
-+                setPadding(dp(16), 0, 0, dp(10))
++                setPadding(dp(8), 0, 0, dp(4))
 +                addView(game)
 +                addView(time)
 +            },
 +            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f),
 +        )
-+        page.addView(head, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
++        column.addView(head, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 +        listOf(zeldaText, zeldaBar, metroidText, metroidBar, stats).forEach {
-+            page.addView(it, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { if (it === stats) topMargin = dp(8) })
++            column.addView(it, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, if (it is ProgressBar) dp(8) else ViewGroup.LayoutParams.WRAP_CONTENT).apply { if (it === zeldaText) topMargin = dp(8); if (it === stats) topMargin = dp(6) })
 +        }
++        rewards = Smz3RewardsView(context)
++        column.addView(rewards, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) })
++        recentBox = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
++        column.addView(recentBox, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) })
++        closest = label(13f, Role.DIM).apply { setLineSpacing(0f, 1.15f) }
++        column.addView(closest, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) })
++
++        val page = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL }
++        page.addView(ScrollView(context).apply { addView(column) }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 0.46f))
 +        miniMap = Smz3MapView(context, follow = true).also {
 +            it.setOnClickListener {
 +                select(MAP_TAB)
 +                areaBox?.let { box -> map?.fitRect(box) }
 +            }
-+            page.addView(it, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(190)).apply { topMargin = dp(10) })
++            page.addView(it, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 0.54f))
 +        }
-+        mapHint = label(12f, Role.DIM).apply { text = "Tap the map to enlarge it" }
-+        closest = label(14f, Role.TEXT).apply { setLineSpacing(0f, 1.2f) }
-+        recent = label(14f, Role.TEXT).apply { gravity = Gravity.START; setPadding(0, dp(10), 0, 0) }
-+        listOf(mapHint, closest, recent).forEach {
-+            page.addView(it, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
++        return page
++    }
++
++    private fun renderRecentItems(list: List<Int>) {
++        if (list == recentShown) return
++        recentShown = list
++        recentBox.removeAllViews()
++        if (list.isEmpty()) return
++        recentBox.addView(label(12f, Role.DIM).apply { text = "RECENT ITEMS" })
++        for (index in list) {
++            val info = Smz3Native.inventoryInfo(index).split("|")
++            val row = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
++            row.addView(
++                ImageView(context).apply {
++                    scaleType = ImageView.ScaleType.FIT_CENTER
++                    runCatching {
++                        context.assets.open("smz3/items/" + info[2].replace(" ", "_")).use { stream ->
++                            setImageDrawable(BitmapDrawable(context.resources, BitmapFactory.decodeStream(stream)).apply { isFilterBitmap = false })
++                        }
++                    }
++                },
++                LinearLayout.LayoutParams(dp(24), dp(24)),
++            )
++            row.addView(label(14f, Role.TEXT).apply { text = info[1]; isSingleLine = true; ellipsize = android.text.TextUtils.TruncateAt.END; setPadding(dp(6), 0, 0, 0) })
++            recentBox.addView(row)
 +        }
-+        return ScrollView(context).apply { addView(page) }
 +    }
 +
 +    private fun buildItemsPage(): View {
@@ -3002,19 +3054,18 @@ index 0000000..281da97
 +        metroidText.text = "Metroid  ${s.metroidCleared} / ${s.metroidTotal}"
 +        zeldaBar.progress = if (s.zeldaTotal == 0) 0 else s.zeldaCleared * 100 / s.zeldaTotal
 +        metroidBar.progress = if (s.metroidTotal == 0) 0 else s.metroidCleared * 100 / s.metroidTotal
-+        val bossesDone = s.bosses.count { it.done }
 +        val itemsOwned = s.inventory.count { it > 0 }
 +        val perHour = if (sec >= 300) "%.1f".format(cleared * 3600f / sec) else "-"
-+        stats.text = "Checks  $cleared / $total      Bosses  $bossesDone / ${s.bosses.size}\n" +
-+            "Items  $itemsOwned / ${itemNames.size}      Pace  $perHour checks/h"
++        stats.text = "Checks  $cleared / $total\nItems  $itemsOwned / ${itemNames.size}   ·   $perHour/h"
++        rewards.set(s.bossMask, s.crystalMask)
++        renderRecentItems(s.recentItems)
 +        // Regions nearest to being finished: a goal to aim for that the game screen does not show.
 +        val nearly = regions
 +            .map { r -> Triple(r, r.locations.count { it in s.cleared }, r.locations.size) }
 +            .filter { (_, done, size) -> done in 1 until size }
 +            .sortedBy { (_, done, size) -> size - done }
 +            .take(3)
-+        closest.text = if (nearly.isEmpty()) "" else "Nearly done\n" + nearly.joinToString("\n") { (r, done, size) -> "${r.name}  $done / $size  (${size - done} left)" }
-+        recent.text = if (s.recent.isEmpty()) "" else "Recent checks\n" + s.recent.joinToString("\n")
++        closest.text = if (nearly.isEmpty()) "" else "NEARLY DONE\n" + nearly.take(2).joinToString("\n") { (r, _, size) -> "${r.name}: ${size - r.locations.count { it in s.cleared }} left" }
 +
 +        for (cell in cells) {
 +            val level = s.inventory.getOrElse(cell.index) { 0 }
@@ -3060,6 +3111,105 @@ index 0000000..281da97
 +                }
 +            }
 +        }
++    }
++}
+diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3RewardsView.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3RewardsView.kt
+new file mode 100644
+index 0000000..d8469cc
+--- /dev/null
++++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3RewardsView.kt
+@@ -0,0 +1,93 @@
++package com.swordfish.lemuroid.app.shared.game.viewmodel
++
++import android.content.Context
++import android.graphics.Bitmap
++import android.graphics.BitmapFactory
++import android.graphics.Canvas
++import android.graphics.Color
++import android.graphics.Paint
++import android.graphics.Path
++import android.graphics.RectF
++import android.view.View
++
++/** The token pictures sit in a corner of a 32x32 canvas: keep just the part that is drawn. */
++private fun cropToArt(bmp: Bitmap): Bitmap {
++    var minX = bmp.width; var minY = bmp.height; var maxX = -1; var maxY = -1
++    for (y in 0 until bmp.height) for (x in 0 until bmp.width) {
++        if (Color.alpha(bmp.getPixel(x, y)) > 0) { minX = minOf(minX, x); minY = minOf(minY, y); maxX = maxOf(maxX, x); maxY = maxOf(maxY, y) }
++    }
++    return if (maxX < 0) bmp else Bitmap.createBitmap(bmp, minX, minY, maxX - minX + 1, maxY - minY + 1)
++}
++
++/** One line with the four Super Metroid boss tokens and the seven numbered crystals; what is still missing is dimmed. */
++internal class Smz3RewardsView(context: Context) : View(context) {
++    private val density = context.resources.displayMetrics.density
++    private val tokens: List<Bitmap?> = listOf("kraid", "phantoon", "draygon", "ridley").map { name ->
++        runCatching { context.assets.open("smz3/rewards/${name}_boss_token.png").use { BitmapFactory.decodeStream(it) } }.getOrNull()?.let(::cropToArt)
++    }
++    private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
++    private val text = Paint(Paint.ANTI_ALIAS_FLAG).apply { textAlign = Paint.Align.CENTER; isFakeBoldText = true }
++    private val gem = Path()
++    private val dst = RectF()
++    private var bosses = 0
++    private var crystals = 0
++
++    /** [bossMask]: bit 0 Kraid, 1 Phantoon, 2 Draygon, 3 Ridley. [crystalMask]: bit n-1 is crystal n. */
++    fun set(bossMask: Int, crystalMask: Int) {
++        if (bossMask == bosses && crystalMask == crystals) return
++        bosses = bossMask
++        crystals = crystalMask
++        invalidate()
++    }
++
++    override fun onMeasure(widthMeasureSpec: Int, heightMeasureSpec: Int) {
++        setMeasuredDimension(MeasureSpec.getSize(widthMeasureSpec), (28 * density).toInt())
++    }
++
++    override fun onDraw(canvas: Canvas) {
++        // 4 tokens of one unit, a small gap, 7 gems of 0.7 units: the unit is whatever makes them fill the width.
++        val unit = minOf(height.toFloat(), width / (4f + 0.25f + 7 * 0.7f + 0.2f))
++        var x = 0f
++        val top = (height - unit) / 2f
++        for (i in 0 until 4) {
++            val bmp = tokens[i]
++            val done = bosses and (1 shl i) != 0
++            if (bmp != null) {
++                val h = unit * bmp.height / bmp.width
++                dst.set(x, (height - h) / 2f, x + unit, (height + h) / 2f)
++                paint.alpha = if (done) 255 else 90
++                canvas.drawBitmap(bmp, null, dst, paint)
++            }
++            x += unit
++        }
++        x += unit * 0.25f
++        val gw = unit * 0.7f
++        val gh = unit * 0.9f
++        for (n in 1..7) {
++            val done = crystals and (1 shl (n - 1)) != 0
++            val red = n == 5 || n == 6
++            val l = x
++            val t = (height - gh) / 2f
++            gem.reset()
++            gem.moveTo(l + gw * 0.5f, t)
++            gem.lineTo(l + gw, t + gh * 0.32f)
++            gem.lineTo(l + gw * 0.8f, t + gh)
++            gem.lineTo(l + gw * 0.2f, t + gh)
++            gem.lineTo(l, t + gh * 0.32f)
++            gem.close()
++            paint.style = Paint.Style.FILL
++            paint.alpha = 255
++            paint.color = if (!done) Color.parseColor("#2A3340") else if (red) Color.parseColor("#FF6B6B") else Color.parseColor("#4FC3F7")
++            canvas.drawPath(gem, paint)
++            paint.style = Paint.Style.STROKE
++            paint.strokeWidth = 1.5f * density
++            paint.color = if (done) Color.parseColor("#E8F6FF") else Color.parseColor("#667080")
++            canvas.drawPath(gem, paint)
++            text.textSize = gh * 0.5f
++            text.color = if (done) Color.parseColor("#0A2230") else Color.parseColor("#8C97A3")
++            canvas.drawText(n.toString(), l + gw * 0.5f, t + gh * 0.66f, text)
++            x += gw
++        }
++        paint.style = Paint.Style.FILL
 +    }
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3RoomFilter.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3RoomFilter.kt
@@ -3153,10 +3303,10 @@ index 0000000..378f91a
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Tracker.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Tracker.kt
 new file mode 100644
-index 0000000..234d3d3
+index 0000000..3725d6e
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Tracker.kt
-@@ -0,0 +1,265 @@
+@@ -0,0 +1,284 @@
 +package com.swordfish.lemuroid.app.shared.game.viewmodel
 +
 +import android.app.Presentation
@@ -3196,6 +3346,9 @@ index 0000000..234d3d3
 +    val metroidCleared: Int,
 +    val metroidTotal: Int,
 +    val recent: List<String>,
++    val recentItems: List<Int> = emptyList(),
++    val bossMask: Int = 0,
++    val crystalMask: Int = 0,
 +    val elapsedMs: Long,
 +    val cleared: Set<Int>,
 +    val inventory: IntArray,
@@ -3213,6 +3366,7 @@ index 0000000..234d3d3
 +    private const val WRAM_SIZE = 0x20000
 +    private const val SRAM_SIZE = 0x100000
 +    private const val MAX_RECENT = 8
++    private const val MAX_RECENT_ITEMS = 5
 +
 +    private val main = Handler(Looper.getMainLooper())
 +    private var presentation: Smz3Presentation? = null
@@ -3265,6 +3419,8 @@ index 0000000..234d3d3
 +        scope.launch(Dispatchers.Default) {
 +            var seen = emptySet<Int>()
 +            val recent = ArrayDeque<String>()
++            val recentItems = ArrayDeque<Int>()
++            var inventoryBaseline = false
 +            var startedAt = 0L
 +            var lastTick = SystemClock.elapsedRealtime()
 +            var saveCountdown = 0
@@ -3308,7 +3464,17 @@ index 0000000..234d3d3
 +                }
 +                seen = cleared
 +                val inv = Smz3Native.inventory(wram, sram)
-+                for (i in inv.indices) if (inv[i] >= 0 && i < inventoryCache.size) inventoryCache[i] = inv[i]
++                for (i in inv.indices) if (inv[i] >= 0 && i < inventoryCache.size) {
++                    // an item picked up since the last read goes to the recent list; the first read of a run is the
++                    // baseline, not a pickup
++                    if (started && inventoryBaseline && inv[i] > inventoryCache[i]) {
++                        recentItems.remove(i)
++                        recentItems.addFirst(i)
++                        while (recentItems.size > MAX_RECENT_ITEMS) recentItems.removeLast()
++                    }
++                    inventoryCache[i] = inv[i]
++                }
++                inventoryBaseline = started
 +
 +                if (started && Smz3Help.current().mode == "all" && --logicCountdown <= 0) {
 +                    logicCountdown = 6
@@ -3350,6 +3516,9 @@ index 0000000..234d3d3
 +                    zeldaCleared = s[2], zeldaTotal = s[3],
 +                    metroidCleared = s[4], metroidTotal = s[5],
 +                    recent = recent.toList(),
++                    recentItems = recentItems.toList(),
++                    bossMask = if (started) Smz3Bosses.metroidMask(wram, sram, s[0]) else 0,
++                    crystalMask = if (started) Smz3Bosses.crystalMask(wram, sram, s[0]) else 0,
 +                    elapsedMs = if (startedAt == 0L) 0 else scaledElapsedMs,
 +                    cleared = cleared,
 +                    inventory = inventoryCache.copyOf(),
