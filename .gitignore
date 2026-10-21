@@ -1,0 +1,11 @@
+rom/*
+!rom/.gitkeep
+build/
+*.srm
+*.sav
+vendor/
+tools/gen-cli/bin/
+tools/gen-cli/obj/
+data/sm_rooms.json
+data/sm_location_tiles.json
+data/*.bin
