@@ -670,10 +670,10 @@ index 0000000..4f06e9b
 +private fun Color.toArgb(): Int = android.graphics.Color.argb((alpha * 255).toInt(), (red * 255).toInt(), (green * 255).toInt(), (blue * 255).toInt())
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/RunGenerator.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/RunGenerator.kt
 new file mode 100644
-index 0000000..389bc81
+index 0000000..de13d6b
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/RunGenerator.kt
-@@ -0,0 +1,216 @@
+@@ -0,0 +1,217 @@
 +package com.swordfish.lemuroid.app.mobile.feature.runs
 +
 +import android.content.Context
@@ -756,6 +756,7 @@ index 0000000..389bc81
 +        if (settings.optString("helpMode", "all") == "all") 15 else 0,   // hint tiles belong to "all helps"
 +        settings.optInt("etecoonsJingle", 0),
 +        if (settings.optBoolean("nerfedCharge")) 1 else 0,
++        if (settings.optBoolean("quickMorph")) 1 else 0,
 +    )
 +
 +    fun logicNames(settings: JSONObject): Pair<Array<String>, IntArray> {
@@ -1029,10 +1030,10 @@ index 0000000..91f0bba
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/RunStore.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/RunStore.kt
 new file mode 100644
-index 0000000..988ef52
+index 0000000..350cbcb
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/RunStore.kt
-@@ -0,0 +1,110 @@
+@@ -0,0 +1,113 @@
 +package com.swordfish.lemuroid.app.mobile.feature.runs
 +
 +import android.content.Context
@@ -1123,6 +1124,8 @@ index 0000000..988ef52
 +
 +    fun discoveryFile(context: Context, slot: Int) = File(File(context.filesDir, "runs").apply { mkdirs() }, "slot$slot.disc.json")
 +
++    fun marksFile(context: Context, slot: Int) = File(File(context.filesDir, "runs").apply { mkdirs() }, "slot$slot.marks.json")
++
 +    private fun romDir(context: Context) = File(context.filesDir, "runs").apply { mkdirs() }
 +
 +    /** The slot's ROM: the file named in its run (see [romName]) or, for runs made before stable names, the slot file. */
@@ -1141,6 +1144,7 @@ index 0000000..988ef52
 +        file(context, slot).delete()
 +        rom.delete()
 +        discoveryFile(context, slot).delete()
++        marksFile(context, slot).delete()
 +    }
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/RunSummary.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/RunSummary.kt
@@ -2187,10 +2191,10 @@ index 0000000..79c2c3e
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3MapView.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3MapView.kt
 new file mode 100644
-index 0000000..fd41e49
+index 0000000..0bbeea1
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3MapView.kt
-@@ -0,0 +1,276 @@
+@@ -0,0 +1,322 @@
 +package com.swordfish.lemuroid.app.shared.game.viewmodel
 +
 +import android.content.Context
@@ -2281,7 +2285,40 @@ index 0000000..fd41e49
 +        }
 +    })
 +
++    private var marks: List<UserMark> = emptyList()
++    var onMapTap: ((Float, Float) -> Unit)? = null
++    var onMarkTap: ((UserMark) -> Unit)? = null
++    private val itemIcons = HashMap<String, Bitmap?>()
++
++    fun setMarks(list: List<UserMark>) {
++        marks = list
++        invalidate()
++    }
++
++    private fun itemIcon(name: String): Bitmap? = itemIcons.getOrPut(name) {
++        runCatching { context.assets.open("smz3/items/" + name.replace(" ", "_")).use { BitmapFactory.decodeStream(it) } }.getOrNull()
++    }
++
++    private fun markHalf(zoom: Float) = (9f + 3f * zoom).coerceIn(10f, 22f)
++
 +    private val panDetector = GestureDetector(context, object : GestureDetector.SimpleOnGestureListener() {
++        override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
++            matrix.getValues(values)
++            val half = markHalf(values[Matrix.MSCALE_X]) + 6f
++            val pts = FloatArray(2)
++            for (m in marks.asReversed()) {
++                pts[0] = m.x; pts[1] = m.y
++                matrix.mapPoints(pts)
++                if (Math.abs(pts[0] - e.x) <= half && Math.abs(pts[1] - e.y) <= half) { onMarkTap?.invoke(m); return true }
++            }
++            val inverse = Matrix()
++            if (!matrix.invert(inverse)) return false
++            pts[0] = e.x; pts[1] = e.y
++            inverse.mapPoints(pts)
++            if (mapRect.contains(pts[0], pts[1])) onMapTap?.invoke(pts[0], pts[1])
++            return true
++        }
++
 +        override fun onScroll(e1: MotionEvent?, e2: MotionEvent, dx: Float, dy: Float): Boolean {
 +            matrix.postTranslate(-dx, -dy)
 +            invalidate()
@@ -2335,6 +2372,8 @@ index 0000000..fd41e49
 +    }
 +
 +    private val iconPaint = Paint(Paint.FILTER_BITMAP_FLAG)
++    private val markBack = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(215, 12, 16, 22) }
++    private val markRim = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; color = Color.parseColor("#FFD54A"); strokeWidth = 2.5f }
 +    private val dst = RectF()
 +
 +    private fun isSeen(x: Float, y: Float) = seen.any { it.contains(x, y) }
@@ -2446,7 +2485,18 @@ index 0000000..fd41e49
 +            canvas.drawBitmap(bmp2, null, dst, iconPaint)
 +            if (b.done) canvas.drawCircle(pts[0] + half * 0.6f, pts[1] + half * 0.6f, half * 0.35f, done)
 +        }
-+            position?.let {
++        for (m in marks) {
++            pts[0] = m.x; pts[1] = m.y
++            matrix.mapPoints(pts)
++            val bmp2 = itemIcon(m.icon) ?: continue
++            val half = markHalf(zoom)
++            canvas.drawCircle(pts[0], pts[1], half + 2f, markBack)
++            canvas.drawCircle(pts[0], pts[1], half + 2f, markRim)
++            dst.set(pts[0] - half, pts[1] - half, pts[0] + half, pts[1] + half)
++            iconPaint.alpha = 255
++            canvas.drawBitmap(bmp2, null, dst, iconPaint)
++        }
++        position?.let {
 +            pts[0] = it.x; pts[1] = it.y
 +            matrix.mapPoints(pts)
 +            val pr = (6f + 2f * zoom).coerceIn(7f, 14f)
@@ -2465,6 +2515,38 @@ index 0000000..fd41e49
 +        /** Size of the half-size combined map: the coordinate space of the tracker data. */
 +        const val MAP_W = 1623f
 +        const val MAP_H = 958f
++    }
++}
+diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Marks.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Marks.kt
+new file mode 100644
+index 0000000..494a59b
+--- /dev/null
++++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Marks.kt
+@@ -0,0 +1,26 @@
++package com.swordfish.lemuroid.app.shared.game.viewmodel
++
++import org.json.JSONArray
++import org.json.JSONObject
++import java.io.File
++
++/** A player-placed marker: an item icon at a half-size map position, with an optional note. */
++class UserMark(val id: Long, val x: Float, val y: Float, val game: Int, val name: String, val icon: String, val note: String)
++
++/** The markers of one run, kept in a JSON file next to the run. */
++object Smz3Marks {
++    fun load(file: File): List<UserMark> = runCatching {
++        val a = JSONArray(file.readText())
++        List(a.length()) { i ->
++            a.getJSONObject(i).let {
++                UserMark(it.getLong("id"), it.getDouble("x").toFloat(), it.getDouble("y").toFloat(), it.getInt("game"), it.getString("name"), it.getString("icon"), it.optString("note"))
++            }
++        }
++    }.getOrDefault(emptyList())
++
++    fun save(file: File, marks: List<UserMark>) {
++        val a = JSONArray()
++        for (m in marks) a.put(JSONObject().put("id", m.id).put("x", m.x.toDouble()).put("y", m.y.toDouble()).put("game", m.game).put("name", m.name).put("icon", m.icon).put("note", m.note))
++        file.writeText(a.toString())
 +    }
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Native.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Native.kt
@@ -2539,10 +2621,10 @@ index 0000000..fb5fd89
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Presentation.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Presentation.kt
 new file mode 100644
-index 0000000..e2bd3c2
+index 0000000..72e7c69
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Presentation.kt
-@@ -0,0 +1,561 @@
+@@ -0,0 +1,691 @@
 +package com.swordfish.lemuroid.app.shared.game.viewmodel
 +
 +import android.app.Presentation
@@ -2608,6 +2690,7 @@ index 0000000..e2bd3c2
 +
 +    override fun onCreate(savedInstanceState: Bundle?) {
 +        super.onCreate(savedInstanceState)
++        window?.setSoftInputMode(android.view.WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
 +        root = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
 +        tabRow = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL }
 +        val content = FrameLayout(context)
@@ -2759,11 +2842,11 @@ index 0000000..e2bd3c2
 +    private fun buildItemsPage(): View {
 +        val column = LinearLayout(context).apply {
 +            orientation = LinearLayout.VERTICAL
-+            setPadding(dp(12), dp(8), dp(12), dp(12))
++            setPadding(dp(10), dp(4), dp(10), dp(6))
 +        }
 +        for ((gameId, title) in listOf(1 to "A LINK TO THE PAST", 2 to "SUPER METROID")) {
-+            column.addView(label(12f, Role.DIM).apply { text = title; setPadding(0, dp(10), 0, dp(4)) })
-+            val grid = GridLayout(context).apply { columnCount = 7 }
++            column.addView(label(12f, Role.DIM).apply { text = title; setPadding(0, dp(6), 0, dp(2)) })
++            val grid = GridLayout(context).apply { columnCount = 11 }
 +            for (i in 0 until Smz3Native.inventoryCount()) {
 +                val info = Smz3Native.inventoryInfo(i).split("|")
 +                if (info[0].toInt() != gameId) continue
@@ -2778,14 +2861,14 @@ index 0000000..e2bd3c2
 +                    }
 +                    alpha = 0.2f
 +                }
-+                val count = label(13f, Role.TEXT).apply {
++                val count = label(11f, Role.TEXT).apply {
 +                    setShadowLayer(3f, 0f, 0f, Color.BLACK)
 +                    gravity = Gravity.END or Gravity.BOTTOM
-+                    setPadding(0, 0, dp(3), dp(1))
++                    setPadding(0, 0, dp(2), 0)
 +                }
 +                cell.addView(icon, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
 +                cell.addView(count, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-+                val lp = GridLayout.LayoutParams().apply { width = dp(64); height = dp(64); setMargins(dp(2), dp(2), dp(2), dp(2)) }
++                val lp = GridLayout.LayoutParams().apply { width = dp(44); height = dp(44); setMargins(dp(1), dp(1), dp(1), dp(1)) }
 +                grid.addView(cell, lp)
 +                cells += ItemCell(i, icon, count)
 +            }
@@ -2802,6 +2885,9 @@ index 0000000..e2bd3c2
 +            setBackgroundColor(Color.argb(170, 0, 0, 0))
 +            setOnClickListener { view.centerOnPlayerNow() }
 +        }
++        val overlay = buildMarkOverlay().also { markOverlay = it }
++        view.onMapTap = { x, y -> showAddMark(x, y) }
++        view.onMarkTap = { mark -> showMark(mark) }
 +        return FrameLayout(context).apply {
 +            addView(view, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
 +            addView(
@@ -2809,7 +2895,132 @@ index 0000000..e2bd3c2
 +                FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM or Gravity.END)
 +                    .apply { setMargins(0, 0, dp(10), dp(10)) },
 +            )
++            addView(overlay, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
 +        }
++    }
++
++    private var marks: List<UserMark> = emptyList()
++    private var marksSlot: Int? = null
++    private var markOverlay: LinearLayout? = null
++
++    private fun loadMarks() {
++        val slot = com.swordfish.lemuroid.app.mobile.feature.runs.RunStore.activeSlot(context)
++        if (slot == marksSlot) return
++        marksSlot = slot
++        marks = slot?.let { Smz3Marks.load(com.swordfish.lemuroid.app.mobile.feature.runs.RunStore.marksFile(context, it)) } ?: emptyList()
++        map?.setMarks(marks)
++        miniMap?.setMarks(marks)
++    }
++
++    private fun setMarks(list: List<UserMark>) {
++        marks = list
++        marksSlot?.let { Smz3Marks.save(com.swordfish.lemuroid.app.mobile.feature.runs.RunStore.marksFile(context, it), list) }
++        map?.setMarks(list)
++        miniMap?.setMarks(list)
++    }
++
++    private fun buildMarkOverlay() = LinearLayout(context).apply {
++        orientation = LinearLayout.VERTICAL
++        setBackgroundColor(Color.rgb(8, 12, 18))
++        setPadding(dp(10), dp(8), dp(10), dp(8))
++        visibility = View.GONE
++        isClickable = true
++    }
++
++    private fun closeOverlay() {
++        markOverlay?.apply { visibility = View.GONE; removeAllViews() }
++    }
++
++    private fun overlayButton(text: String, action: () -> Unit) = Button(context).apply {
++        this.text = text
++        setOnClickListener { action() }
++    }
++
++    /** Detail of a placed marker, with a way to delete it. */
++    private fun showMark(mark: UserMark) {
++        val box = markOverlay ?: return
++        box.removeAllViews()
++        val head = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
++        head.addView(markIcon(mark.icon, 48))
++        head.addView(TextView(context).apply { textSize = 18f; setTextColor(Color.WHITE); text = mark.name; setPadding(dp(10), 0, 0, 0) })
++        box.addView(head)
++        box.addView(TextView(context).apply { textSize = 15f; setTextColor(Color.parseColor("#C8D0D8")); text = mark.note.ifBlank { "No description" }; setPadding(0, dp(10), 0, dp(10)) }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
++        val buttons = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL }
++        buttons.addView(overlayButton("DELETE") { setMarks(marks.filter { it.id != mark.id }); closeOverlay() }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
++        buttons.addView(overlayButton("CLOSE") { closeOverlay() }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
++        box.addView(buttons)
++        box.visibility = View.VISIBLE
++    }
++
++    private fun markIcon(icon: String, size: Int) = ImageView(context).apply {
++        scaleType = ImageView.ScaleType.FIT_CENTER
++        runCatching {
++            context.assets.open("smz3/items/" + icon.replace(" ", "_")).use { stream ->
++                setImageDrawable(BitmapDrawable(context.resources, BitmapFactory.decodeStream(stream)).apply { isFilterBitmap = false })
++            }
++        }
++        layoutParams = LinearLayout.LayoutParams(dp(size), dp(size))
++    }
++
++    /** Item picker (grid with a quick filter) and optional description for a marker at map position [x], [y]. */
++    private fun showAddMark(x: Float, y: Float) {
++        val box = markOverlay ?: return
++        if (marksSlot == null) return
++        box.removeAllViews()
++        var chosen: List<String>? = null
++        val title = TextView(context).apply { textSize = 14f; setTextColor(Color.parseColor("#FFD54A")); text = "Tap an item" }
++        val filter = android.widget.EditText(context).apply {
++            hint = "Filter items"
++            isSingleLine = true
++            imeOptions = android.view.inputmethod.EditorInfo.IME_FLAG_NO_EXTRACT_UI or android.view.inputmethod.EditorInfo.IME_ACTION_DONE
++            textSize = 14f
++            setTextColor(Color.WHITE)
++            setHintTextColor(Color.GRAY)
++        }
++        val top = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
++        top.addView(title, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
++        top.addView(filter, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
++        box.addView(top)
++        val grid = GridLayout(context).apply { columnCount = 11 }
++        box.addView(ScrollView(context).apply { addView(grid) }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
++        val note = android.widget.EditText(context).apply {
++            hint = "Description (optional)"
++            isSingleLine = true
++            imeOptions = android.view.inputmethod.EditorInfo.IME_FLAG_NO_EXTRACT_UI or android.view.inputmethod.EditorInfo.IME_ACTION_DONE
++            textSize = 14f
++            setTextColor(Color.WHITE)
++            setHintTextColor(Color.GRAY)
++        }
++        val infos = List(Smz3Native.inventoryCount()) { Smz3Native.inventoryInfo(it).split("|") }
++        fun fill() {
++            grid.removeAllViews()
++            val q = filter.text.toString().trim().lowercase()
++            for (info in infos) {
++                if (q.isNotEmpty() && q !in info[1].lowercase()) continue
++                val cell = markIcon(info[2], 40).apply {
++                    setPadding(dp(2), dp(2), dp(2), dp(2))
++                    if (chosen?.get(2) == info[2] && chosen?.get(0) == info[0]) setBackgroundColor(Color.argb(160, 255, 213, 74))
++                    setOnClickListener { chosen = info; title.text = info[1]; fill() }
++                }
++                grid.addView(cell, GridLayout.LayoutParams().apply { width = dp(44); height = dp(44); setMargins(dp(1), dp(1), dp(1), dp(1)) })
++            }
++        }
++        filter.addTextChangedListener(object : android.text.TextWatcher {
++            override fun afterTextChanged(e: android.text.Editable?) = fill()
++            override fun beforeTextChanged(t: CharSequence?, a: Int, b: Int, c: Int) {}
++            override fun onTextChanged(t: CharSequence?, a: Int, b: Int, c: Int) {}
++        })
++        fill()
++        val buttons = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
++        buttons.addView(note, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
++        buttons.addView(overlayButton("ADD") {
++            val item = chosen ?: return@overlayButton
++            setMarks(marks + UserMark(System.currentTimeMillis(), x, y, item[0].toInt(), item[1], item[2], note.text.toString().trim()))
++            closeOverlay()
++        })
++        buttons.addView(overlayButton("CANCEL") { closeOverlay() })
++        box.addView(buttons)
++        box.visibility = View.VISIBLE
 +    }
 +
 +    private val configButtons = mutableListOf<() -> Unit>()
@@ -3079,6 +3290,7 @@ index 0000000..e2bd3c2
 +        miniMap?.setDiscovery(s.position, s.seen, s.discoveredOnly)
 +        map?.setBosses(s.bosses)
 +        miniMap?.setBosses(s.bosses)
++        loadMarks()
 +
 +        regions.forEachIndexed { i, region ->
 +            val done = region.locations.count { it in s.cleared }
@@ -3294,10 +3506,10 @@ index 0000000..378f91a
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Tracker.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Tracker.kt
 new file mode 100644
-index 0000000..1a5ff26
+index 0000000..0a02054
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Tracker.kt
-@@ -0,0 +1,269 @@
+@@ -0,0 +1,276 @@
 +package com.swordfish.lemuroid.app.shared.game.viewmodel
 +
 +import android.app.Presentation
@@ -3398,6 +3610,9 @@ index 0000000..1a5ff26
 +            val recentItems = ArrayDeque<Int>()
 +            var inventoryBaseline = false
 +            var startedAt = 0L
++            var liveSummary: IntArray? = null
++            var liveCleared: Set<Int> = emptySet()
++            var liveAt = 0L
 +            var lastTick = SystemClock.elapsedRealtime()
 +            var saveCountdown = 0
 +            var lastFrame = -1
@@ -3426,8 +3641,12 @@ index 0000000..1a5ff26
 +                val frame = if (wram.size > 0x05B6) (wram[0x1A].toInt() and 0xFF) or ((wram[0x05B6].toInt() and 0xFF) shl 8) else -1
 +                val running = frame != lastFrame
 +                lastFrame = frame
-+                val s = Smz3Native.summarize(wram, sram)
-+                val cleared = Smz3Native.clearedLocations(wram, sram).toSet()
++                var s = Smz3Native.summarize(wram, sram)
++                var cleared = Smz3Native.clearedLocations(wram, sram).toSet()
++                // A transition frame (room load, screen fade) can briefly read as not started: hold the last live state.
++                val nowMs = SystemClock.elapsedRealtime()
++                if (s[1] != 0) { liveSummary = s; liveCleared = cleared; liveAt = nowMs }
++                else if (liveSummary != null && nowMs - liveAt < 2000) { s = liveSummary!!; cleared = liveCleared }
 +
 +                val started = s[1] != 0
 +                if (started && startedAt == 0L) startedAt = SystemClock.elapsedRealtime()

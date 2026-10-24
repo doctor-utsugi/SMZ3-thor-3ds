@@ -29,7 +29,7 @@ JNIEXPORT jintArray JNICALL NATIVE(clearedLocations)(JNIEnv *env, jclass cls, jb
     jbyte *w = (*env)->GetByteArrayElements(env, wram, NULL);
     jbyte *s = (*env)->GetByteArrayElements(env, sram, NULL);
     smz3_game game = smz3_current_game((const uint8_t *)s, (size_t)sl);
-    int started = smz3_started((const uint8_t *)w, (size_t)wl);
+    int started = smz3_started((const uint8_t *)w, (size_t)wl, (const uint8_t *)s, (size_t)sl);
 
     jint cleared[1024];
     jsize count = 0;
@@ -130,12 +130,12 @@ static const uint8_t *ips_lookup(void *user, const char *name, size_t *len)
     return NULL;
 }
 
-/* params: seed, keysanity, placement rule, ganon crystals, GT crystals, Tourian bosses, open pyramid, open Tourian door, light dark rooms, hint tiles, Etecoons jingle, nerfed charge */
+/* params: seed, keysanity, placement rule, ganon crystals, GT crystals, Tourian bosses, open pyramid, open Tourian door, light dark rooms, hint tiles, Etecoons jingle, nerfed charge, quick morph */
 static void fill_settings(JNIEnv *env, jintArray params, jobjectArray logicNames, jintArray logicValues, SmzSettings *s, SmzPatchCfg *cfg)
 {
-    jint p[12] = {0};
+    jint p[13] = {0};
     jsize np = (*env)->GetArrayLength(env, params);
-    (*env)->GetIntArrayRegion(env, params, 0, np < 12 ? np : 12, p);
+    (*env)->GetIntArrayRegion(env, params, 0, np < 13 ? np : 13, p);
     smz_settings_defaults(s);
     s->seed = p[0]; s->keysanity = p[1]; s->placement_rule = p[2];
     s->ganon_crystals = p[3]; s->gt_crystals = p[4]; s->tourian_bosses = p[5];
@@ -157,6 +157,7 @@ static void fill_settings(JNIEnv *env, jintArray params, jobjectArray logicNames
         cfg->hint_tiles = p[9];
         cfg->etecoons_jingle = p[10];
         cfg->nerfed_charge = p[11];
+        cfg->quick_morph = p[12];
         cfg->sm_default_controls = 1;
     }
 }

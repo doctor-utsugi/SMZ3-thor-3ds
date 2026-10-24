@@ -75,7 +75,7 @@ void smz3_inventory(const uint8_t *wram, size_t wram_len, const uint8_t *sram, s
                     int *levels)
 {
     smz3_game cur = smz3_current_game(sram, sram_len);
-    int live = smz3_started(wram, wram_len) && cur != SMZ3_GAME_NONE;
+    int live = smz3_started(wram, wram_len, sram, sram_len) && cur != SMZ3_GAME_NONE;
 
     for (unsigned i = 0; i < smz3_inventory_count; i++) {
         const smz3_inv_item *it = &smz3_inventory_items[i];

@@ -73,6 +73,7 @@ static int build_rom(uint8_t *rom, SmzSeed *seed, const uint8_t *sm, const uint8
         if (!cfg->nerfed_charge && !strcmp(SMZ_DEFAULT_CAS_IPS[i], "nerfed_charge.ips")) continue;
         if (!(ips = load(user, SMZ_DEFAULT_CAS_IPS[i], &len)) || smz_ips_apply_sm(rom, ips, len)) return -1;
     }
+    if (cfg->quick_morph && (!(ips = load(user, "UnifiedAim.ips", &len)) || smz_ips_apply_sm(rom, ips, len))) return -1;
     if (cfg->light_dark_rooms) {
         /* room header pointer table at $04:F1E2 of the ALttP half; bit 0 of each header's first byte is the dark flag */
 #define Z3A(bank, off) (0x400000 + (bank) * 0x10000 + 0x8000 + ((off) & 0x7FFF))

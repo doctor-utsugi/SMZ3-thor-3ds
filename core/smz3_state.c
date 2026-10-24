@@ -1,6 +1,7 @@
 #include "smz3_state.h"
 
-#define WRAM_STARTED 0x0020
+#define WRAM_ZELDA_MODULE 0x0010
+#define WRAM_METROID_STATE 0x0998
 #define SRAM_GAME 0x33FE
 #define WRAM_ZELDA 0xF000        /* 0x7EF000 */
 #define WRAM_ZELDA_MISC 0xF280   /* 0x7EF280 */
@@ -28,9 +29,15 @@ int smz3_zelda_room_location(unsigned room)
     return -1;
 }
 
-int smz3_started(const uint8_t *wram, size_t wram_len)
+/* Past the title and file select: ALttP module 6+ (file loaded), Super Metroid game state 6+ (game data loading). */
+int smz3_started(const uint8_t *wram, size_t wram_len, const uint8_t *sram, size_t sram_len)
 {
-    return wram_len > WRAM_STARTED && wram[WRAM_STARTED] != 0;
+    switch (smz3_current_game(sram, sram_len)) {
+    case SMZ3_GAME_ZELDA: return wram_len > WRAM_ZELDA_MODULE && wram[WRAM_ZELDA_MODULE] >= 6;
+    case SMZ3_GAME_METROID: return wram_len > WRAM_METROID_STATE + 1 && wram[WRAM_METROID_STATE] >= 6;
+    case SMZ3_GAME_CREDITS: return 1;
+    default: return 0;
+    }
 }
 
 int smz3_location_cleared(const smz3_location *loc, smz3_game current,
@@ -69,7 +76,7 @@ void smz3_summarize(const uint8_t *wram, size_t wram_len,
 {
     *out = (smz3_summary){0};
     out->game = smz3_current_game(sram, sram_len);
-    out->started = smz3_started(wram, wram_len);
+    out->started = smz3_started(wram, wram_len, sram, sram_len);
     if (!out->started || out->game == SMZ3_GAME_NONE) {
         for (unsigned i = 0; i < smz3_location_count; i++) {
             if (smz3_locations[i].game == SMZ3_GAME_ZELDA) out->zelda_total++;

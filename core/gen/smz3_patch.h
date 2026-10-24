@@ -29,6 +29,7 @@ typedef struct {
     int etecoons_jingle;          /* 0 random (picked from the seed), 1..SMZ_JINGLE_COUNT fixed (EtecoonsJingle enum order) */
     int light_dark_rooms;         /* clear the dark flag of every underworld room header */
     int sm_default_controls;      /* Super Metroid's own controller settings start as shot Y, jump B, dash A, item cancel X (off in the oracle) */
+    int quick_morph;              /* apply UnifiedAim.ips: aim-down becomes a quick morph and aim up/down share one button */
     int nerfed_charge;            /* apply nerfed_charge.ips: the beam charges without the item, at a third of the damage (off, as on the web) */
 } SmzPatchCfg;
 

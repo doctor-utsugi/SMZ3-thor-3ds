@@ -73,6 +73,16 @@ int main(int argc, char **argv)
         bad |= nbad;
         ui.value[UIO_NERF] = 0;
     }
+    {   /* "Quick morph" is off by default; on applies UnifiedAim.ips (changes the ROM, not the rules) */
+        static uint8_t c[SMZ_HOST_ROM_SIZE];
+        int qbad = !strstr(json, "\"quickMorph\":false");
+        ui.value[UIO_MORPH] = 1;
+        if (smz_host_generate(&ui, 777, sm, z3, NULL, 0, NULL, 0, ips, NULL, c, json, sizeof json, seedText, sizeof seedText, NULL)) return 9;
+        qbad |= !memcmp(c, a, SMZ_HOST_ROM_SIZE) || !strstr(json, "\"quickMorph\":true") || !strstr(json, "\"defaultRules\":true");
+        printf(qbad ? "quick morph row DIFFERENT\n" : "quick morph: off by default, on patches the ROM and keeps the default rules\n");
+        bad |= qbad;
+        ui.value[UIO_MORPH] = 0;
+    }
     {   /* "Save states" is off and the rules are the default ones until either changes (feeds the leaderboards) */
         static uint8_t c[SMZ_HOST_ROM_SIZE];
         int sbad = 0;

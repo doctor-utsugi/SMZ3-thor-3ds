@@ -35,7 +35,7 @@ typedef struct {
 } smz3_summary;
 
 smz3_game smz3_current_game(const uint8_t *sram, size_t sram_len);
-int smz3_started(const uint8_t *wram, size_t wram_len);
+int smz3_started(const uint8_t *wram, size_t wram_len, const uint8_t *sram, size_t sram_len);
 
 /* Index of the first ALttP chest location in the given room (WRAM 0xA0), or -1: lets the map place Link indoors. */
 int smz3_zelda_room_location(unsigned room);
