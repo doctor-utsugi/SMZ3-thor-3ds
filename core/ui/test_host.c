@@ -85,10 +85,10 @@ int main(int argc, char **argv)
     }
     {   /* "Random music" only records the choice (the MSU-1 links are made by the app); it keeps the default rules */
         static uint8_t c0[SMZ_HOST_ROM_SIZE];
-        int mbad = !strstr(json, "\"randomMusic\":false");
-        ui.value[UIO_MUSIC] = 1;
+        int mbad = !strstr(json, "\"musicPackage\":\"\"");
+        ui.value[UIO_MUSIC] = 1;   /* "Random" */
         if (smz_host_generate(&ui, 777, sm, z3, NULL, 0, NULL, 0, ips, NULL, c0, json, sizeof json, seedText, sizeof seedText, NULL)) return 9;
-        mbad |= !strstr(json, "\"randomMusic\":true") || !strstr(json, "\"defaultRules\":true");
+        mbad |= !strstr(json, "\"musicPackage\":\"*\"") || !strstr(json, "\"defaultRules\":true");
         printf(mbad ? "random music row DIFFERENT\n" : "random music: off by default, on is stored and keeps the default rules\n");
         bad |= mbad;
         ui.value[UIO_MUSIC] = 0;

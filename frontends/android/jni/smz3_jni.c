@@ -424,6 +424,9 @@ JNIEXPORT jstring JNICALL NATIVE(uiSettingsJson)(JNIEnv *env, jclass cls, jint s
 }
 
 JNIEXPORT jint JNICALL NATIVE(uiOption)(JNIEnv *env, jclass cls, jint opt) { return opt >= 0 && opt < UI_OPT_COUNT ? g_ui.value[opt] : 0; }
+JNIEXPORT void JNICALL NATIVE(uiSetSlotCount)(JNIEnv *env, jclass cls, jint n) { ui_set_slot_count(&g_ui, n); }
+/* The slot the menu is on: the highlighted one in the list, the opened one in its menus. */
+JNIEXPORT jint JNICALL NATIVE(uiSlot)(JNIEnv *env, jclass cls) { return g_ui.screen == UI_SLOTS_SCREEN ? g_ui.slot_cursor : g_ui.screen == UI_SLOT_MENU || g_ui.screen == UI_CONFIRM ? g_ui.active_slot : -1; }
 JNIEXPORT jint JNICALL NATIVE(uiScreen)(JNIEnv *env, jclass cls) { return g_ui.screen; }
 
 JNIEXPORT jstring JNICALL NATIVE(romName)(JNIEnv *env, jclass cls, jstring json, jstring seed)

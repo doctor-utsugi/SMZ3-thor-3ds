@@ -52,7 +52,7 @@ const UiOptDef UI_OPTS[] = {
     {"NerfedCharge", "Nerfed charge", "Charge the beam from the start, at a third of the damage.", OPT_BOOL, LEVEL_QOL, 0, 1, 0, 0},
     {"SaveStates", "Save states", "Allow save states in this run. Off keeps the run honest: only the game's own saves.", OPT_BOOL, LEVEL_QOL, 0, 1, 0, 0},
     {"QuickMorph", "Quick morph", "Super Metroid: the aim-down button turns Samus into a ball; aim up and down share one button.", OPT_BOOL, LEVEL_QOL, 0, 1, 0, 0},
-    {"RandomMusic", "Random music", "Random SNES songs (MSU-1) from /sdcard/SMZ3/music. Android only.", OPT_BOOL, LEVEL_QOL, 0, 1, 0, 0},
+    {"MusicPackage", "Music package", "Original, random, or a pack from /sdcard/SMZ3/music (MSU-1). Android only.", OPT_SPRITE, LEVEL_QOL, 0, 1, 0, 0},
     ITEM_OPT_DEFS
     Q("PreventScrewAttackSoftLock", "No Screw Attack soft locks", "Screw Attack is not expected without the morph ball."),
     Q("PreventFivePowerBombSeed", "No five power bomb seeds", "Expects at least two power bomb upgrades."),
@@ -164,16 +164,35 @@ int ui_settings_json(const SmzUi *u, int32_t seed_if_random, char *out, size_t c
     static const char *const SHAPE[] = {"original", "wide", "pixel"};
     static const char *const HELP[] = {"all", "limited", "none"};
     static const char *const MODE[] = {"Vanilla", "AllDungeons", "SpazerHunt"};
-    SmzSettings s; SmzPatchCfg pc; char link[32], samus[32], plando[32];
+    SmzSettings s; SmzPatchCfg pc; char link[32], samus[32], plando[32], music[32];
     ui_settings(u, seed_if_random, &s, &pc, link, samus);
+    {   /* "" keeps the game's music, "*" draws from every package, anything else is a package folder */
+        int m = u->value[O_MUSIC];
+        if (m <= 0 || m >= u->sprite_count[3]) music[0] = 0;
+        else if (m == 1) strcpy(music, "*");
+        else { snprintf(music, sizeof music, "%s", u->sprites[3][m]); for (char *c = music; *c; c++) if (*c == '"' || *c == '\\') *c = '_'; }
+    }
     ui_plando_name(u, plando);
     int n = snprintf(out, cap,
         "{\"seed\":\"%d\",\"keysanity\":\"%s\",\"itemPlacement\":\"%s\",\"gameMode\":\"%s\",\"ganonCrystals\":%d,"
         "\"ganonsTowerCrystals\":%d,\"tourianBosses\":%d,\"pyramidHole\":\"%s\",\"tourianBossDoor\":\"%s\","
-        "\"mapMode\":\"%s\",\"lightDarkRooms\":%s,\"nerfedCharge\":%s,\"saveStates\":%s,\"quickMorph\":%s,\"randomMusic\":%s,\"defaultRules\":%s,\"screenFilter\":\"%s\",\"screenShape\":\"%s\",\"helpMode\":\"%s\",\"helpCount\":%d,\"linkSprite\":\"%s\",\"samusSprite\":\"%s\",\"plando\":\"%s\",\"etecoonsJingle\":%d,\"logic\":{",
+        "\"mapMode\":\"%s\",\"lightDarkRooms\":%s,\"nerfedCharge\":%s,\"saveStates\":%s,\"quickMorph\":%s,\"musicPackage\":\"%s\",\"defaultRules\":%s,\"screenFilter\":\"%s\",\"screenShape\":\"%s\",\"helpMode\":\"%s\",\"helpCount\":%d,\"linkSprite\":\"%s\",\"samusSprite\":\"%s\",\"plando\":\"%s\",\"etecoonsJingle\":%d,",
         s.seed, KEYS[s.keysanity], PLACE[s.placement_rule], MODE[s.game_mode], s.ganon_crystals, s.gt_crystals, s.tourian_bosses,
         pc.pyramid_open ? "Open" : "Closed", pc.tourian_door_open ? "Open" : "Closed",
-        u->value[O_MAP] ? "discovered" : "all", u->value[O_DARK] ? "true" : "false", u->value[O_NERF] ? "true" : "false", u->value[O_SAVES] ? "true" : "false", u->value[O_MORPH] ? "true" : "false", u->value[O_MUSIC] ? "true" : "false", ui_is_default(u) ? "true" : "false", FILTER[u->value[O_FILTER]], SHAPE[u->value[O_SHAPE]], HELP[u->value[O_HELP]], u->value[O_HELPS], link, samus, g_plando_loaded ? plando : "", u->value[O_JINGLE]);
+        u->value[O_MAP] ? "discovered" : "all", u->value[O_DARK] ? "true" : "false", u->value[O_NERF] ? "true" : "false", u->value[O_SAVES] ? "true" : "false", u->value[O_MORPH] ? "true" : "false", music, ui_is_default(u) ? "true" : "false", FILTER[u->value[O_FILTER]], SHAPE[u->value[O_SHAPE]], HELP[u->value[O_HELP]], u->value[O_HELPS], link, samus, g_plando_loaded ? plando : "", u->value[O_JINGLE]);
+    /* options that differ from the defaults, as "Label: value" lines for the run's info on the bottom screen */
+    n += snprintf(out + n, n < (int)cap ? cap - n : 0, "\"diff\":[");
+    for (int i = 0, first = 1; i < UI_OPT_COUNT && n < (int)cap; i++) {
+        if (i == O_SEED || i == O_LINK || i == O_SAMUS || i == O_MAP || i == O_FILTER || i == O_SHAPE || i == O_JINGLE || i == O_MORPH || i == O_MUSIC || i == O_HELPS) continue;
+        if (UI_OPTS[i].kind == OPT_SPRITE ? u->value[i] == 0 : u->value[i] == UI_OPTS[i].def) continue;
+        char v[44], line[96];
+        ui_value_text(u, i, v, sizeof v);
+        snprintf(line, sizeof line, "%s: %s", UI_OPTS[i].label, v);
+        for (char *c = line; *c; c++) if (*c == '"' || *c == '\\') *c = '\'';
+        n += snprintf(out + n, cap - n, "%s\"%s\"", first ? "" : ",", line);
+        first = 0;
+    }
+    n += snprintf(out + n, n < (int)cap ? cap - n : 0, "],\"logic\":{");
     for (int i = O_LOGIC0; i < UI_OPT_COUNT && n < (int)cap; i++)
         n += snprintf(out + n, cap - n, "\"%s\":%s,", UI_OPTS[i].key, smz_cfg_get(&s.cfg, UI_OPTS[i].key) ? "true" : "false");
     /* the frontends hand every integer in "logic" to the generator by name (smz_setting_set) */

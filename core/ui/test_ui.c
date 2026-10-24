@@ -132,6 +132,28 @@ int main(void)
         ui_settings_json(&u, 5, js, sizeof js);
         assert(strstr(js, "\"plando\":\"\""));
     }
+    {   /* 32 slots, 4 shown, chevrons; deleting asks first */
+        SmzUi v; ui_init(&v);
+        ui_set_slot_count(&v, 32);
+        ui_set_slot(&v, 5, 1, "Run 6", "Zelda 1/216");
+        for (int k = 0; k < 6; k++) ui_input(&v, BTN_DOWN);
+        assert(v.slot_cursor == 6 && v.slot_scroll == 3);
+        ui_draw(&v);
+        int chev = 0;
+        for (int k = 0; k < v.hit_count; k++) chev += v.hit[k].kind == H_CHEVRON;
+        assert(chev == 2);
+        v.slot_cursor = 5; ui_input(&v, BTN_A);                       /* the used slot opens its menu */
+        assert(v.screen == UI_SLOT_MENU);
+        ui_input(&v, BTN_DOWN); ui_input(&v, BTN_A);
+        assert(v.screen == UI_CONFIRM && v.action == ACT_NONE);       /* nothing is deleted yet */
+        ui_input(&v, BTN_A);                                          /* Cancel is the default */
+        assert(v.screen == UI_SLOT_MENU && v.action == ACT_NONE);
+        ui_input(&v, BTN_A);                                          /* Continue */
+        ui_input(&v, BTN_A);
+        v.action = ACT_NONE; v.screen = UI_SLOT_MENU; v.menu_cursor = 1; ui_input(&v, BTN_A);
+        ui_input(&v, BTN_DOWN); ui_input(&v, BTN_A);
+        assert(v.action == ACT_DELETE && v.action_slot == 5);
+    }
     printf("ui ok, %d draw commands\n", u.cmd_count);
     return 0;
 }

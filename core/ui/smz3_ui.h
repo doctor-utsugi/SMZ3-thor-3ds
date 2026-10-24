@@ -4,17 +4,19 @@
 #define SMZ3_UI_H
 
 #include <stdint.h>
+#include <stddef.h>
 
 #define UI_W 320
 #define UI_H 240
-#define UI_SLOTS 4
+#define UI_SLOTS 32           /* most slots a frontend can show; each one sets how many it keeps with ui_set_slot_count */
+#define UI_SLOTS_SHOWN 4
 #define UI_MAX_SPRITES 640
 #define UI_MAX_OPTS 128
 #define UI_MAX_CMDS 160
 #define UI_MAX_HITS 32
 
 typedef enum { BTN_UP, BTN_DOWN, BTN_LEFT, BTN_RIGHT, BTN_A, BTN_B, BTN_L, BTN_R } UiButton;
-typedef enum { UI_SLOTS_SCREEN, UI_SLOT_MENU, UI_CREATE, UI_SPRITES, UI_BUSY } UiScreen;
+typedef enum { UI_SLOTS_SCREEN, UI_SLOT_MENU, UI_CREATE, UI_SPRITES, UI_BUSY, UI_CONFIRM } UiScreen;
 typedef enum { OPT_ENUM, OPT_INT, OPT_BOOL, OPT_SEED, OPT_SPRITE } OptKind;
 typedef enum { LEVEL_SIMPLE, LEVEL_ADVANCED, LEVEL_QOL, LEVEL_ITEMS, LEVEL_COUNT } OptLevel;
 typedef enum { ACT_NONE, ACT_CONTINUE, ACT_DELETE, ACT_GENERATE } UiAction;
@@ -37,17 +39,17 @@ typedef struct { uint8_t kind; int16_t x, y, w, h; uint8_t color; uint8_t align;
 enum { C_BG, C_PANEL, C_SEL, C_TEXT, C_DIM, C_ACCENT, C_WARN };
 
 typedef struct { int16_t x, y, w, h; uint8_t kind; int16_t idx; } UiHit;
-enum { H_SLOT, H_MENU, H_TAB, H_ROW, H_SPRITE, H_SCROLL, H_CREATE, H_BACK };
+enum { H_SLOT, H_MENU, H_TAB, H_ROW, H_SPRITE, H_SCROLL, H_CREATE, H_BACK, H_CHEVRON, H_CONFIRM };
 
 typedef struct {
     UiScreen screen, back;
     UiSlot slots[UI_SLOTS];
-    int slot_cursor, menu_cursor, active_slot;
+    int slot_cursor, menu_cursor, active_slot, slot_count, slot_scroll, confirm_cursor;
     int level;                   /* LEVEL_* shown in the options screen */
     int cursor[LEVEL_COUNT], scroll[LEVEL_COUNT];
     int value[UI_MAX_OPTS];
-    char sprites[3][UI_MAX_SPRITES][32];  /* 0 Link, 1 Samus, 2 plando files; index 0 is "Default" ("None" for plandos) */
-    int sprite_count[3], sprite_game, sprite_cursor;
+    char sprites[4][UI_MAX_SPRITES][32];  /* 0 Link, 1 Samus, 2 plando files, 3 music packages; index 0 is "Default" ("None" for plandos, "Original" then "Random" for music) */
+    int sprite_count[4], sprite_game, sprite_cursor;
     UiAction action;             /* set by an input event, read and cleared by the host */
     int action_slot;
     char status[44];
@@ -65,7 +67,10 @@ extern const int UI_OPT_COUNT;
 
 void ui_init(SmzUi *u);
 void ui_set_slot(SmzUi *u, int i, int used, const char *name, const char *summary);
-/* game 0 Link sprites, 1 Samus sprites, 2 plando files */
+void ui_set_slot_count(SmzUi *u, int n);
+/* Text of an option's current value ("On", "Medium", a sprite name ...). */
+void ui_value_text(const SmzUi *u, int opt, char *out, size_t n);
+/* game 0 Link sprites, 1 Samus sprites, 2 plando files, 3 music packages */
 void ui_set_sprites(SmzUi *u, int game, const char *const *names, int n);
 void ui_input(SmzUi *u, UiButton b);
 /* Touch at canvas coordinates (as drawn by the last ui_draw): selects and activates the row under the point. */
