@@ -456,3 +456,7 @@ Clean pass on the final commit: test-fill 10/10, test-patch 10/10, test-modes 40
   - **Verified on the Thor:** list scroll and chevrons, used/empty look, run info for old and new runs, package picker, items grid, markers, delete confirm screen (Cancel only), SHOW LADDERS and BACK. **Not verified:** a real delete, music playback with a chosen package, the ring animation by eye, Zelda detection in play, Quick morph in play, the 3DS build with the new shared UI.
 
 - **Add-on music pack "SNES greatest hits" (2026-10-24).** Music is never part of the release: packs are add-ons the player copies to `/sdcard/SMZ3/music/<name>/`. `tools/music-pack.py` renders a curated pack from a `.spc` library using a JSON map (`tools/music-packs/greatest-hits.json`: SMZ3 slot -> game folder + ID666 title, picked to match the scene, e.g. a Final Fantasy IV cave for the Zelda cave). Output is `<pack>-<slot>.pcm` for the 47 looping slots (about 1.0 GB at the 150 s cap); one-shot slots keep the original music. Rendered on a build machine, pushed to the Thor by hand. Not heard in play yet. Idea pending: a shared pool plus JSON maps so several packs reuse the same rendered tracks.
+
+## To fix later
+
+- **In-game timers reset on load (reported 2026-10-24).** The run's timers are cleared when a game is loaded and should be kept. Not investigated yet; check how the play time and the clock are stored per run and restored on Continue.
