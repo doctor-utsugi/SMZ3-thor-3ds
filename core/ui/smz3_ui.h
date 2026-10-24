@@ -18,7 +18,8 @@
 typedef enum { BTN_UP, BTN_DOWN, BTN_LEFT, BTN_RIGHT, BTN_A, BTN_B, BTN_L, BTN_R } UiButton;
 typedef enum { UI_SLOTS_SCREEN, UI_SLOT_MENU, UI_CREATE, UI_SPRITES, UI_BUSY, UI_CONFIRM } UiScreen;
 typedef enum { OPT_ENUM, OPT_INT, OPT_BOOL, OPT_SEED, OPT_SPRITE } OptKind;
-typedef enum { LEVEL_SIMPLE, LEVEL_ADVANCED, LEVEL_QOL, LEVEL_ITEMS, LEVEL_COUNT } OptLevel;
+/* Tabs of the Create run screen. Only LEVEL_ITEMS is read from UiOptDef.level; the other tabs list their keys in UI_TABS. */
+typedef enum { LEVEL_RUN, LEVEL_ZELDA, LEVEL_METROID, LEVEL_PLAY, LEVEL_ITEMS, LEVEL_COUNT } OptLevel;
 typedef enum { ACT_NONE, ACT_CONTINUE, ACT_DELETE, ACT_GENERATE } UiAction;
 
 typedef struct {
@@ -60,10 +61,11 @@ typedef struct {
 } SmzUi;
 
 /* Option indices the host reads from u->value (see ui_settings for the rest). */
-enum { UIO_LINK = 6, UIO_SAMUS = 7, UIO_PLANDO = 18, UIO_JINGLE = 19, UIO_MAP = 8, UIO_DARK = 9, UIO_FILTER = 10, UIO_SHAPE = 11, UIO_HELP = 12, UIO_HELPS = 13, UIO_NERF = 22, UIO_SAVES = 23, UIO_MORPH = 24, UIO_MUSIC = 25 };
+enum { UIO_LINK = 6, UIO_SAMUS = 7, UIO_PLANDO = 18, UIO_JINGLE = 19, UIO_MAP = 8, UIO_MODE = 17, UIO_DARK = 9, UIO_FILTER = 10, UIO_SHAPE = 11, UIO_HELP = 12, UIO_HELPS = 13, UIO_NERF = 22, UIO_SAVES = 23, UIO_MORPH = 24, UIO_MUSIC = 25 };
 
 extern const UiOptDef UI_OPTS[];
 extern const int UI_OPT_COUNT;
+extern const char *const UI_TABS[LEVEL_ITEMS][24];   /* option keys per tab, in display order, NULL ended */
 
 void ui_init(SmzUi *u);
 void ui_set_slot(SmzUi *u, int i, int used, const char *name, const char *summary);

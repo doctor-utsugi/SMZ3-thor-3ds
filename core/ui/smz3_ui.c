@@ -76,9 +76,16 @@ void ui_idle(SmzUi *u) { u->screen = UI_SLOTS_SCREEN; }
 static int visible(const SmzUi *u, int level, int *idx)
 {
     int n = 0;
-    for (int i = 0; i < UI_OPT_COUNT; i++) {
-        if (UI_OPTS[i].level != level) continue;
+    for (int k = 0; k < UI_OPT_COUNT; k++) {
+        int i = k;
+        if (level != LEVEL_ITEMS) {
+            const char *key = k < 24 ? UI_TABS[level][k] : NULL;
+            if (!key) break;
+            for (i = 0; i < UI_OPT_COUNT && strcmp(UI_OPTS[i].key, key); i++) {}
+            if (i == UI_OPT_COUNT) continue;
+        } else if (UI_OPTS[i].level != LEVEL_ITEMS) continue;
         if (i == UIO_HELPS && u->value[UIO_HELP] != 1) continue;   /* the count only matters in the limited mode */
+        if (!strncmp(UI_OPTS[i].key, "Spazers", 7) && u->value[UIO_MODE] != 2) continue;   /* Spazer Hunt only */
         idx[n++] = i;
     }
     return n;
@@ -127,7 +134,7 @@ void ui_input(SmzUi *u, UiButton b)
         else if (b == BTN_A) {
             u->active_slot = u->slot_cursor;
             if (u->slots[u->slot_cursor].used) { u->screen = UI_SLOT_MENU; u->menu_cursor = 0; }
-            else { u->screen = UI_CREATE; u->level = LEVEL_SIMPLE; for (int l = 0; l < LEVEL_COUNT; l++) u->cursor[l] = u->scroll[l] = 0; }
+            else { u->screen = UI_CREATE; u->level = LEVEL_RUN; for (int l = 0; l < LEVEL_COUNT; l++) u->cursor[l] = u->scroll[l] = 0; }
         }
         break;
     case UI_SLOT_MENU:
@@ -153,7 +160,7 @@ void ui_input(SmzUi *u, UiButton b)
         if (b == BTN_UP) move(cur, scr, rows, -1);
         else if (b == BTN_DOWN) move(cur, scr, rows, 1);
         else if (b == BTN_B) u->screen = UI_SLOTS_SCREEN;
-        else if (b == BTN_L) { if (u->level > LEVEL_SIMPLE) u->level--; }
+        else if (b == BTN_L) { if (u->level > LEVEL_RUN) u->level--; }
         else if (b == BTN_R) { if (u->level < LEVEL_ITEMS) u->level++; }
         else if (*cur == n) {
             if (b == BTN_A) { u->action = ACT_GENERATE; u->action_slot = u->active_slot; }
@@ -308,14 +315,14 @@ void ui_draw(SmzUi *u)
     case UI_CREATE: {
         int idx[UI_MAX_OPTS], n = visible(u, u->level, idx);
         int cur = u->cursor[u->level], scr = u->scroll[u->level];
-        title(u, "Create run");
+        title(u, "New run");
         {
-            static const char *const TABS[LEVEL_COUNT] = { "Simple", "Advanced", "QoL", "Items" };
+            static const char *const TABS[LEVEL_COUNT] = { "Run", "Zelda", "Metroid", "Play", "Items" };
             for (int t = 0; t < LEVEL_COUNT; t++) {
-                int x = 88 + t * 58;
-                hit(u, H_TAB, t, x, 4, 56, 20);
-                rect(u, x, 4, 56, 20, u->level == t ? C_SEL : C_BG);
-                text(u, x + 28, 8, C_TEXT, 1, TABS[t]);
+                int x = 62 + t * 51;
+                hit(u, H_TAB, t, x, 4, 49, 20);
+                rect(u, x, 4, 49, 20, u->level == t ? C_SEL : C_BG);
+                text(u, x + 24, 8, C_TEXT, 1, TABS[t]);
             }
         }
         for (int r = 0; r < ROWS_SHOWN && scr + r <= n; r++) {

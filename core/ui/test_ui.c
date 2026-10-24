@@ -17,17 +17,18 @@ int main(void)
 
     ui_input(&u, BTN_A);                       /* empty slot 1 -> Create */
     assert(u.screen == UI_CREATE && u.active_slot == 0);
-    ui_input(&u, BTN_DOWN);                    /* keysanity */
+    ui_input(&u, BTN_DOWN); ui_input(&u, BTN_DOWN);   /* keysanity (after Game mode) */
     ui_input(&u, BTN_RIGHT);
     ui_input(&u, BTN_RIGHT);                   /* Both -> Zelda only */
-    for (int i = 0; i < 5; i++) ui_input(&u, BTN_DOWN);   /* Link sprite */
+    ui_input(&u, BTN_R);                       /* Zelda tab */
+    for (int i = 0; i < 3; i++) ui_input(&u, BTN_DOWN);   /* Link sprite */
     ui_input(&u, BTN_A);
     assert(u.screen == UI_SPRITES);
     ui_input(&u, BTN_RIGHT);      /* Pink Link (grid, names are sorted) */
     ui_input(&u, BTN_A);
     assert(u.screen == UI_CREATE);
-    ui_input(&u, BTN_R); ui_input(&u, BTN_R);  /* QoL tab */
-    ui_input(&u, BTN_DOWN);                    /* wall jump (after Light dark rooms) */
+    ui_input(&u, BTN_R);                       /* Metroid tab */
+    for (int i = 0; i < 4; i++) ui_input(&u, BTN_DOWN);   /* wall jump (after the jingle) */
     ui_input(&u, BTN_RIGHT);                   /* Hard */
     ui_draw(&u);
 
@@ -38,13 +39,13 @@ int main(void)
     assert(s.cfg.WallJumpDifficulty == 3);
 
     for (int i = 0; i < 40 && u.screen == UI_CREATE; i++) { ui_input(&u, BTN_DOWN); }
-    u.level = LEVEL_SIMPLE; u.cursor[0] = 15;  /* Create button (the "Helps available" row is hidden unless the mode is Limited) */
+    u.level = LEVEL_RUN; u.cursor[0] = 7;  /* Create button (the "Helps available" row is hidden unless the mode is Limited) */
     ui_input(&u, BTN_A);
     assert(u.action == ACT_GENERATE && u.action_slot == 0);
     {   /* "Helps available" only shows in the Limited mode */
         int shown[2];
         for (int m = 0; m < 3; m++) {
-            u.value[UIO_HELP] = m; u.level = LEVEL_SIMPLE; u.screen = UI_CREATE; u.scroll[0] = 0; u.cursor[0] = 0;
+            u.value[UIO_HELP] = m; u.level = LEVEL_RUN; u.screen = UI_CREATE; u.scroll[0] = 0; u.cursor[0] = 0;
             int found = 0;
             for (int pass = 0; pass < 3; pass++) {
                 u.scroll[0] = pass * 6; ui_draw(&u);
@@ -56,16 +57,18 @@ int main(void)
         (void)shown;
         u.value[UIO_HELP] = 0;
     }
-    /* touch: tapping an empty slot opens Create, tapping the Advanced tab switches level */
+    /* touch: tapping an empty slot opens Create, tapping a tab switches level */
     u.action = ACT_NONE; u.screen = UI_SLOTS_SCREEN;
     ui_draw(&u);
     ui_touch(&u, 100, 40 + 2 * 46 + 10);
     assert(u.screen == UI_CREATE && u.active_slot == 2);
     ui_draw(&u);
-    ui_touch(&u, 174, 10);
-    assert(u.level == LEVEL_ADVANCED);
-    ui_touch(&u, 232, 10);
-    assert(u.level == LEVEL_QOL);
+    ui_touch(&u, 137, 10);
+    assert(u.level == LEVEL_ZELDA);
+    ui_touch(&u, 188, 10);
+    assert(u.level == LEVEL_METROID);
+    ui_touch(&u, 239, 10);
+    assert(u.level == LEVEL_PLAY);
     ui_touch(&u, 290, 10);
     assert(u.level == LEVEL_ITEMS);
     ui_touch(&u, 10, 10);

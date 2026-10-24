@@ -24,35 +24,35 @@ _Static_assert(sizeof N_JINGLE / sizeof N_JINGLE[0] == SMZ_JINGLE_COUNT + 1, "ji
 /* Order matters: ui_settings reads the first block by index (see enum below). */
 enum { O_SEED, O_KEYS, O_PLACE, O_GANON, O_GT, O_TOURIAN, O_LINK, O_SAMUS, O_MAP, O_DARK, O_FILTER, O_SHAPE, O_HELP, O_HELPS, O_PYRAMID, O_DOOR, O_WALL, O_MODE, O_PLANDO, O_JINGLE, O_SPAZ_POOL, O_SPAZ_REQ, O_NERF, O_SAVES, O_MORPH, O_MUSIC, O_ITEM0, O_LOGIC0 = O_ITEM0 + SMZ_ITEMOPT_GROUP_COUNT };
 
-#define B(k, l, t) {k, l, t, OPT_BOOL, LEVEL_ADVANCED, 0, 1, 0, 0}
-#define Q(k, l, t) {k, l, t, OPT_BOOL, LEVEL_QOL, 0, 1, 0, 0}
+#define B(k, l, t) {k, l, t, OPT_BOOL, LEVEL_RUN, 0, 1, 0, 0}
+#define Q(k, l, t) {k, l, t, OPT_BOOL, LEVEL_RUN, 0, 1, 0, 0}
 const UiOptDef UI_OPTS[] = {
-    {"Seed", "Seed", "0 picks a random seed. Left/right change it by 1, A adds 1000.", OPT_SEED, LEVEL_SIMPLE, 0, 2147483646, 0, 0},
-    {"Keysanity", "Keysanity", "Shuffles keys, maps, compasses and keycards.", OPT_ENUM, LEVEL_SIMPLE, 0, 4, 0, N_KEYS},
-    {"ItemPlacement", "Item placement", "Where each game's items may end up.", OPT_ENUM, LEVEL_SIMPLE, 0, 4, 0, N_PLACE},
-    {"GanonCrystals", "Crystals for Ganon", "Crystals needed to damage Ganon.", OPT_INT, LEVEL_SIMPLE, 0, 7, 7, 0},
-    {"GtCrystals", "Crystals for Tower", "Crystals needed to open Ganon's Tower.", OPT_INT, LEVEL_SIMPLE, 0, 7, 7, 0},
-    {"TourianBosses", "Bosses for Tourian", "Metroid bosses to beat before Tourian opens.", OPT_INT, LEVEL_SIMPLE, 0, 4, 4, 0},
-    {"LinkSprite", "Link sprite", "Sprite for A Link to the Past.", OPT_SPRITE, LEVEL_SIMPLE, 0, 0, 0, 0},
-    {"SamusSprite", "Samus sprite", "Sprite for Super Metroid.", OPT_SPRITE, LEVEL_SIMPLE, 0, 0, 0, 0},
-    {"MapMode", "Tracker map", "Whole map shows every check; discovered only shows what you have found.", OPT_ENUM, LEVEL_SIMPLE, 0, 1, 0, N_MAP},
-    {"LightDarkRooms", "Light dark rooms", "Light every dark room of A Link to the Past.", OPT_BOOL, LEVEL_QOL, 0, 1, 0, 0},
-    {"ScreenFilter", "Screen filter", "Video filter of the game screen.", OPT_ENUM, LEVEL_SIMPLE, 0, 3, 0, N_FILTER},
-    {"ScreenShape", "Screen shape", "Wide stretches the picture to 16:9.", OPT_ENUM, LEVEL_SIMPLE, 0, 2, 0, N_SHAPE},
-    {"HelpMode", "Helps", "All: tiles, map dots, free hints. Limited: ask, a few times. None: no help.", OPT_ENUM, LEVEL_SIMPLE, 0, 2, 0, N_HELP},
-    {"HelpCount", "Helps available", "Limited mode: how many times you can ask.", OPT_INT, LEVEL_SIMPLE, 1, 15, 3, 0},
-    {"PyramidHole", "Pyramid hole", "Closed opens after Ganon's Tower is completed.", OPT_ENUM, LEVEL_ADVANCED, 0, 2, 0, N_DOOR},
-    {"TourianBossDoor", "Tourian boss door", "Closed needs the Crateria boss keycard.", OPT_ENUM, LEVEL_ADVANCED, 0, 2, 0, N_DOOR},
-    {"WallJumpDifficulty", "Wall jump logic", "How hard the wall jumps in logic may be. Easy never asks for one.", OPT_ENUM, LEVEL_QOL, 0, 3, 2, N_WALL},
-    {"GameMode", "Game mode", "Vanilla, All Dungeons or Spazer Hunt (collect spazers).", OPT_ENUM, LEVEL_SIMPLE, 0, 2, 0, N_MODE},
-    {"Plando", "Plando", "A plando file of /SMZ3/plando replaces the generated seed.", OPT_SPRITE, LEVEL_SIMPLE, 0, 0, 0, 0},
-    {"EtecoonsJingle", "Etecoons jingle", "The jingle played when you find the Etecoons. Random picks one from the seed.", OPT_ENUM, LEVEL_SIMPLE, 0, SMZ_JINGLE_COUNT, 0, N_JINGLE},
-    {"SpazersInPool", "Spazers in pool", "Spazer Hunt: how many spazers are placed.", OPT_INT, LEVEL_ADVANCED, 1, 60, 40, 0},
-    {"SpazersRequired", "Spazers required", "Spazer Hunt: how many you need to beat the game.", OPT_INT, LEVEL_ADVANCED, 1, 60, 30, 0},
-    {"NerfedCharge", "Nerfed charge", "Charge the beam from the start, at a third of the damage.", OPT_BOOL, LEVEL_QOL, 0, 1, 0, 0},
-    {"SaveStates", "Save states", "Allow save states in this run. Off keeps the run honest: only the game's own saves.", OPT_BOOL, LEVEL_QOL, 0, 1, 0, 0},
-    {"QuickMorph", "Quick morph", "Super Metroid: the aim-down button turns Samus into a ball; aim up and down share one button.", OPT_BOOL, LEVEL_QOL, 0, 1, 0, 0},
-    {"MusicPackage", "Music package", "Original, random, or a pack from /sdcard/SMZ3/music (MSU-1). Android only.", OPT_SPRITE, LEVEL_QOL, 0, 1, 0, 0},
+    {"Seed", "Seed", "0 picks a random seed. Left/right change it by 1, A adds 1000.", OPT_SEED, LEVEL_RUN, 0, 2147483646, 0, 0},
+    {"Keysanity", "Keysanity", "Shuffles keys, maps, compasses and keycards.", OPT_ENUM, LEVEL_RUN, 0, 4, 0, N_KEYS},
+    {"ItemPlacement", "Item placement", "Where each game's items may end up.", OPT_ENUM, LEVEL_RUN, 0, 4, 0, N_PLACE},
+    {"GanonCrystals", "Crystals for Ganon", "Crystals needed to damage Ganon.", OPT_INT, LEVEL_RUN, 0, 7, 7, 0},
+    {"GtCrystals", "Crystals for Tower", "Crystals needed to open Ganon's Tower.", OPT_INT, LEVEL_RUN, 0, 7, 7, 0},
+    {"TourianBosses", "Bosses for Tourian", "Metroid bosses to beat before Tourian opens.", OPT_INT, LEVEL_RUN, 0, 4, 4, 0},
+    {"LinkSprite", "Link sprite", "Sprite for A Link to the Past.", OPT_SPRITE, LEVEL_RUN, 0, 0, 0, 0},
+    {"SamusSprite", "Samus sprite", "Sprite for Super Metroid.", OPT_SPRITE, LEVEL_RUN, 0, 0, 0, 0},
+    {"MapMode", "Tracker map", "Whole map shows every check; discovered only shows what you have found.", OPT_ENUM, LEVEL_RUN, 0, 1, 0, N_MAP},
+    {"LightDarkRooms", "Light dark rooms", "Light every dark room of A Link to the Past.", OPT_BOOL, LEVEL_RUN, 0, 1, 0, 0},
+    {"ScreenFilter", "Screen filter", "Video filter of the game screen.", OPT_ENUM, LEVEL_RUN, 0, 3, 0, N_FILTER},
+    {"ScreenShape", "Screen shape", "Wide stretches the picture to 16:9.", OPT_ENUM, LEVEL_RUN, 0, 2, 0, N_SHAPE},
+    {"HelpMode", "Helps", "All: tiles, map dots, free hints. Limited: ask, a few times. None: no help.", OPT_ENUM, LEVEL_RUN, 0, 2, 0, N_HELP},
+    {"HelpCount", "Helps available", "Limited mode: how many times you can ask.", OPT_INT, LEVEL_RUN, 1, 15, 3, 0},
+    {"PyramidHole", "Pyramid hole", "Closed opens after Ganon's Tower is completed.", OPT_ENUM, LEVEL_RUN, 0, 2, 0, N_DOOR},
+    {"TourianBossDoor", "Tourian boss door", "Closed needs the Crateria boss keycard.", OPT_ENUM, LEVEL_RUN, 0, 2, 0, N_DOOR},
+    {"WallJumpDifficulty", "Wall jump logic", "How hard the wall jumps in logic may be. Easy never asks for one.", OPT_ENUM, LEVEL_RUN, 0, 3, 2, N_WALL},
+    {"GameMode", "Game mode", "Vanilla, All Dungeons or Spazer Hunt (collect spazers).", OPT_ENUM, LEVEL_RUN, 0, 2, 0, N_MODE},
+    {"Plando", "Plando", "A plando file of /SMZ3/plando replaces the generated seed.", OPT_SPRITE, LEVEL_RUN, 0, 0, 0, 0},
+    {"EtecoonsJingle", "Etecoons jingle", "The jingle played when you find the Etecoons. Random picks one from the seed.", OPT_ENUM, LEVEL_RUN, 0, SMZ_JINGLE_COUNT, 0, N_JINGLE},
+    {"SpazersInPool", "Spazers in pool", "Spazer Hunt: how many spazers are placed.", OPT_INT, LEVEL_RUN, 1, 60, 40, 0},
+    {"SpazersRequired", "Spazers required", "Spazer Hunt: how many you need to beat the game.", OPT_INT, LEVEL_RUN, 1, 60, 30, 0},
+    {"NerfedCharge", "Nerfed charge", "Charge the beam from the start, at a third of the damage.", OPT_BOOL, LEVEL_RUN, 0, 1, 0, 0},
+    {"SaveStates", "Save states", "Allow save states in this run. Off keeps the run honest: only the game's own saves.", OPT_BOOL, LEVEL_RUN, 0, 1, 0, 0},
+    {"QuickMorph", "Quick morph", "Super Metroid: the aim-down button turns Samus into a ball; aim up and down share one button.", OPT_BOOL, LEVEL_RUN, 0, 1, 0, 0},
+    {"MusicPackage", "Music package", "Original, random, or a pack from /sdcard/SMZ3/music (MSU-1). Android only.", OPT_SPRITE, LEVEL_RUN, 0, 1, 0, 0},
     ITEM_OPT_DEFS
     Q("PreventScrewAttackSoftLock", "No Screw Attack soft locks", "Screw Attack is not expected without the morph ball."),
     Q("PreventFivePowerBombSeed", "No five power bomb seeds", "Expects at least two power bomb upgrades."),
@@ -74,7 +74,20 @@ const UiOptDef UI_OPTS[] = {
     B("LightWorldSouthFakeFlippers", "Light World south fake flippers", "Allow fake flippers in the south."),
 };
 const int UI_OPT_COUNT = sizeof UI_OPTS / sizeof UI_OPTS[0];
-_Static_assert((int)O_LINK == UIO_LINK && (int)O_SAMUS == UIO_SAMUS && (int)O_PLANDO == UIO_PLANDO && (int)O_JINGLE == UIO_JINGLE && (int)O_MAP == UIO_MAP && (int)O_SHAPE == UIO_SHAPE && (int)O_HELP == UIO_HELP && (int)O_HELPS == UIO_HELPS, "option indices");
+
+/* The Create run tabs: the run itself, what only touches one game, and how it is played. */
+const char *const UI_TABS[LEVEL_ITEMS][24] = {
+    {"Seed", "GameMode", "Keysanity", "ItemPlacement", "HelpMode", "HelpCount", "MapMode", "Plando", NULL},
+    {"GanonCrystals", "GtCrystals", "PyramidHole", "LinkSprite", "LightDarkRooms", "FireRodDarkRooms", "SwordOnlyDarkRooms",
+     "InfiniteBombJump", "MoatSpeedBooster", "LightWorldSouthFakeFlippers", "KholdstareNeedsCaneOfSomaria", "ZoraNeedsRupeeItems",
+     "QuarterMagic", "PreventLowResourceDarkWorld", NULL},
+    {"TourianBosses", "TourianBossDoor", "SamusSprite", "EtecoonsJingle", "WallJumpDifficulty", "NerfedCharge", "QuickMorph",
+     "SpazersInPool", "SpazersRequired", "PreventScrewAttackSoftLock", "PreventFivePowerBombSeed", "LeftSandPitRequiresSpringBall",
+     "LaunchPadRequiresIceBeam", "WaterwayNeedsGravitySuit", "EasyEastCrateriaSkyItem", "EasyBlueBrinstarTop", "ParlorSpeedBooster",
+     "MockBall", NULL},
+    {"ScreenFilter", "ScreenShape", "SaveStates", "MusicPackage", NULL},
+};
+_Static_assert((int)O_LINK == UIO_LINK && (int)O_SAMUS == UIO_SAMUS && (int)O_PLANDO == UIO_PLANDO && (int)O_JINGLE == UIO_JINGLE && (int)O_MAP == UIO_MAP && (int)O_SHAPE == UIO_SHAPE && (int)O_HELP == UIO_HELP && (int)O_HELPS == UIO_HELPS && (int)O_MODE == UIO_MODE, "option indices");
 
 static SmzPlando g_plando;
 static int g_plando_loaded;
