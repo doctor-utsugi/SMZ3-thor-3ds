@@ -83,6 +83,16 @@ int main(int argc, char **argv)
         bad |= qbad;
         ui.value[UIO_MORPH] = 0;
     }
+    {   /* "Random music" only records the choice (the MSU-1 links are made by the app); it keeps the default rules */
+        static uint8_t c0[SMZ_HOST_ROM_SIZE];
+        int mbad = !strstr(json, "\"randomMusic\":false");
+        ui.value[UIO_MUSIC] = 1;
+        if (smz_host_generate(&ui, 777, sm, z3, NULL, 0, NULL, 0, ips, NULL, c0, json, sizeof json, seedText, sizeof seedText, NULL)) return 9;
+        mbad |= !strstr(json, "\"randomMusic\":true") || !strstr(json, "\"defaultRules\":true");
+        printf(mbad ? "random music row DIFFERENT\n" : "random music: off by default, on is stored and keeps the default rules\n");
+        bad |= mbad;
+        ui.value[UIO_MUSIC] = 0;
+    }
     {   /* "Save states" is off and the rules are the default ones until either changes (feeds the leaderboards) */
         static uint8_t c[SMZ_HOST_ROM_SIZE];
         int sbad = 0;
