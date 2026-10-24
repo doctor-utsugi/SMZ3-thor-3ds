@@ -3747,10 +3747,10 @@ index 0000000..378f91a
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Tracker.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Tracker.kt
 new file mode 100644
-index 0000000..0a02054
+index 0000000..a1239de
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Tracker.kt
-@@ -0,0 +1,276 @@
+@@ -0,0 +1,282 @@
 +package com.swordfish.lemuroid.app.shared.game.viewmodel
 +
 +import android.app.Presentation
@@ -3821,7 +3821,8 @@ index 0000000..0a02054
 +
 +    /** 0 until the game is known, then 1 for A Link to the Past, 2 for Super Metroid and 3 for the credits. */
 +    @Volatile var currentGame = 0
-+    private var scaledElapsedMs = 0L
++    private var baseMs = 0L
++    private var baseSlot: Int? = null
 +    private var finishedSaved = false
 +    private var lastPad = 0
 +    private var lastSmState = -1
@@ -3927,6 +3928,11 @@ index 0000000..0a02054
 +                }
 +
 +                val slotNow = RunStore.activeSlot(context)
++                if (slotNow != baseSlot) {
++                    baseSlot = slotNow
++                    baseMs = slotNow?.let { RunStore.load(context, it)?.playTimeMs } ?: 0L
++                    pendingPlayTime = 0
++                }
 +                Smz3Help.select(context, slotNow)
 +                val help = Smz3Help.current()
 +                if (slotNow != discoverySlot) {
@@ -3955,7 +3961,7 @@ index 0000000..0a02054
 +                    recentItems = recentItems.toList(),
 +                    bossMask = if (started) Smz3Bosses.metroidMask(wram, sram, s[0]) else 0,
 +                    crystalMask = if (started) Smz3Bosses.crystalMask(wram, sram, s[0]) else 0,
-+                    elapsedMs = if (startedAt == 0L) 0 else scaledElapsedMs,
++                    elapsedMs = if (started) baseMs + pendingPlayTime else 0,
 +                    cleared = cleared,
 +                    inventory = inventoryCache.copyOf(),
 +                    inLogic = if (help.mode == "all") inLogic else null,   // which checks are in logic is a help too
@@ -3976,7 +3982,6 @@ index 0000000..0a02054
 +                    if (started && running) {
 +                        val scaled = delta * speed
 +                        pendingPlayTime += scaled
-+                        scaledElapsedMs += scaled
 +                    }
 +                    val finishing = s[0] == 3 && !finishedSaved
 +                    if (--saveCountdown <= 0 || finishing) {
@@ -4002,6 +4007,7 @@ index 0000000..0a02054
 +                                    metroidTotal = s[5],
 +                                ),
 +                            )
++                            if (run.completedAt == 0L) baseMs = totalMs
 +                            pendingPlayTime = 0
 +                        }
 +                    }

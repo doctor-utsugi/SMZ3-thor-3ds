@@ -457,6 +457,4 @@ Clean pass on the final commit: test-fill 10/10, test-patch 10/10, test-modes 40
 
 - **Add-on music pack "SNES greatest hits" (2026-10-24).** Music is never part of the release: packs are add-ons the player copies to `/sdcard/SMZ3/music/<name>/`. `tools/music-pack.py` renders a curated pack from a `.spc` library using a JSON map (`tools/music-packs/greatest-hits.json`: SMZ3 slot -> game folder + ID666 title, picked to match the scene, e.g. a Final Fantasy IV cave for the Zelda cave). Output is `<pack>-<slot>.pcm` for the 47 looping slots (about 1.0 GB at the 150 s cap); one-shot slots keep the original music. Rendered on a build machine, pushed to the Thor by hand. Not heard in play yet. Idea pending: a shared pool plus JSON maps so several packs reuse the same rendered tracks.
 
-## To fix later
-
-- **In-game timers reset on load (reported 2026-10-24).** The run's timers are cleared when a game is loaded and should be kept. Not investigated yet; check how the play time and the clock are stored per run and restored on Continue.
+- **Timers kept on load (2026-10-24).** The RUN tab's clock restarted at 0 on every load because it showed only the time counted in the current session. It now shows the saved play time of the run plus what has accumulated since the last save (`baseMs + pendingPlayTime` in `Smz3Tracker`). Verified on the Thor: a run saved at 0:11:22 showed 0:11:41 about 20 s after loading. Not checked: a finished run (the clock may jitter after the credits).
