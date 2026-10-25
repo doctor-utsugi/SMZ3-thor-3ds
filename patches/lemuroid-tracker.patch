@@ -2642,10 +2642,10 @@ index 0000000..3d11f48
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3IdlePresentation.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3IdlePresentation.kt
 new file mode 100644
-index 0000000..a893bff
+index 0000000..7f96c80
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3IdlePresentation.kt
-@@ -0,0 +1,186 @@
+@@ -0,0 +1,190 @@
 +package com.swordfish.lemuroid.app.shared.game.viewmodel
 +
 +import android.animation.ValueAnimator
@@ -2679,7 +2679,7 @@ index 0000000..a893bff
 +        val view = IdleView(context)
 +        setContentView(view, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
 +        animator = ValueAnimator.ofFloat(0f, 1f).apply {
-+            duration = 12000
++            duration = 40000
 +            repeatCount = ValueAnimator.INFINITE
 +            interpolator = LinearInterpolator()
 +            addUpdateListener { view.phase = it.animatedValue as Float; view.invalidate() }
@@ -2728,9 +2728,13 @@ index 0000000..a893bff
 +            paint.shader = null
 +            paint.alpha = 255
 +            for (s in stars) {
-+                val y = (s[1] + phase * s[2]) % 1f
-+                val twinkle = 0.5f + 0.5f * sin((phase * 6f * s[2] + s[0] * 10f) * 2f * PI.toFloat())
-+                paint.color = Color.argb((90 + 150 * twinkle * s[2]).toInt().coerceIn(0, 255), 243, 235, 200)
++                // whole numbers of screen crossings and twinkles per loop, so the loop restarts without a jump
++                val laps = 1 + (s[2] * 3f).toInt().coerceAtMost(2)
++                val y = (s[1] + phase * laps) % 1f
++                val cycles = 2 + (s[2] * 8f).toInt()
++                val twinkle = 0.5f + 0.5f * sin((phase * cycles + s[0] * 10f) * 2f * PI.toFloat())
++                val edge = minOf(1f, y * 12f, (1f - y) * 12f)   // fade in at the top and out at the bottom instead of popping
++                paint.color = Color.argb(((90 + 150 * twinkle * s[2]) * edge).toInt().coerceIn(0, 255), 243, 235, 200)
 +                canvas.drawCircle(s[0] * w, y * h, (1f + 1.6f * s[2]) * density, paint)
 +            }
 +            paint.textAlign = Paint.Align.CENTER

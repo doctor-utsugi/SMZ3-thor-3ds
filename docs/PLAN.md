@@ -533,3 +533,7 @@ The row no longer shows "Slot N Run N" nor the Zelda/Metroid counters. Link's li
 - A new run is named after how it was set up ("Cozy run", "Original", "Custom" or the saved custom's name) via `ui_run_label`, and the row shows that name. Older runs keep their "Run N".
 - The Android run list refreshes on every resume, so progress made in a run (crystals, bosses, time) shows when returning to the list.
 - An empty slot shows a plus, "New run" instead of "Slot N - empty - / + New run (A)".
+
+## Idle screen starfield loop
+
+The waiting screen of the second display looped its stars with a visible jump: each star moved a fraction of the screen per loop and its twinkle did not complete whole cycles. Stars now cross the screen a whole number of times per 40 s loop, twinkle a whole number of cycles, and fade in and out at the top and bottom edges, so the restart is seamless.
