@@ -295,11 +295,15 @@ void ui_player_load(SmzUi *u, const char *text)
     if (n >= sizeof u->player) n = sizeof u->player - 1;
     memcpy(u->player, text, n); u->player[n] = 0;
     if (tab && tab[1] >= 'A' && tab[1] <= 'Z' && tab[2] >= 'A' && tab[2] <= 'Z') { u->country[0] = tab[1]; u->country[1] = tab[2]; u->country[2] = 0; }
+    const char *t2 = tab ? strchr(tab + 1, '\t') : NULL;
+    u->online_mode = t2 && t2[1] >= '0' && t2[1] <= '2' ? t2[1] - '0' : 0;
 }
+
+int ui_online_now(const SmzUi *u) { return u->player_on && u->online_mode == 1; }
 
 int ui_player_text(const SmzUi *u, char *out, size_t cap)
 {
-    int w = snprintf(out, cap, "%s\t%s\n", u->player, u->country);
+    int w = snprintf(out, cap, "%s\t%s\t%d\n", u->player, u->country, u->online_mode);
     return w < 0 || (size_t)w >= cap ? -1 : w;
 }
 
@@ -324,6 +328,27 @@ static void country_input(SmzUi *u, UiButton b)
 }
 
 #define START_ROW 3
+
+/* After Yes the missing name is asked, then the flag; the host starts the run when Start is pressed again. */
+static void online_input(SmzUi *u, UiButton b)
+{
+    int *c = &u->online_cursor;
+    if (b == BTN_B) { u->screen = UI_START; return; }
+    if (b == BTN_UP) *c = (*c + 2) % 3;
+    else if (b == BTN_DOWN) *c = (*c + 1) % 3;
+    else if (b == BTN_A) {
+        u->player_dirty = 1;
+        if (*c == 0) {
+            u->online_mode = 1;
+            if (!u->player[0]) { u->name_for = 1; u->name[0] = 0; u->name_len = 0; u->key_cursor = 0; u->screen = UI_NAME; return; }
+            u->screen = UI_START;
+        } else {
+            u->online_mode = *c == 2 ? 2 : u->online_mode == 1 ? 0 : u->online_mode;
+            if (u->online_gen) { u->action = ACT_GENERATE; u->action_slot = u->active_slot; }
+            else u->screen = UI_START;
+        }
+    }
+}
 
 static void goto_start(SmzUi *u)
 {
@@ -385,6 +410,7 @@ static void name_input(SmzUi *u, UiButton b)
                 snprintf(u->player, sizeof u->player, "%s", u->name);
                 u->player_dirty = 1;
                 u->screen = UI_START;
+                if (u->online_gen && !u->country[0]) { u->country_cursor = u->country_scroll = 0; u->screen = UI_COUNTRY; }
                 break;
             }
             make_spec(u, spec, sizeof spec);
@@ -440,12 +466,17 @@ static void start_input(SmzUi *u, UiButton b)
         *cur = (*cur + d) % rows;
         if (*cur == 2 && !u->player_on) *cur = (*cur + d) % rows;
     }
-    else if (b == BTN_LEFT) u->start_col = 0;
-    else if (b == BTN_RIGHT) u->start_col = *cur < START_ROW;
+    else if (b == BTN_LEFT) u->start_col = u->start_col > 0 && *cur == 2 ? u->start_col - 1 : 0;
+    else if (b == BTN_RIGHT) u->start_col = *cur == 2 && u->online_mode == 1 ? (u->start_col < 2 ? u->start_col + 1 : 2) : *cur < START_ROW;
     else if (b == BTN_A) {
-        if (*cur == START_ROW) { u->action = ACT_GENERATE; u->action_slot = u->active_slot; }
+        if (*cur == START_ROW) {
+            if (u->player_on && u->online_mode == 0) { u->online_cursor = 0; u->online_gen = 1; u->screen = UI_ONLINE; }
+            else { u->action = ACT_GENERATE; u->action_slot = u->active_slot; }
+        }
+        else if (*cur == 2 && u->online_mode != 1) { u->online_cursor = u->online_mode == 2 ? 2 : 0; u->online_gen = 0; u->screen = UI_ONLINE; }
         else if (*cur == 2) {
-            if (u->start_col) { u->country_cursor = 0; for (int i = 0; i < COUNTRY_COUNT; i++) if (!strcmp(COUNTRIES[i].code, u->country)) u->country_cursor = i; u->country_scroll = u->country_cursor < COUNTRY_ROWS ? 0 : u->country_cursor - COUNTRY_ROWS + 1; u->screen = UI_COUNTRY; }
+            if (u->start_col == 2) { u->online_cursor = 0; u->online_gen = 0; u->screen = UI_ONLINE; }
+            else if (u->start_col) { u->country_cursor = 0; for (int i = 0; i < COUNTRY_COUNT; i++) if (!strcmp(COUNTRIES[i].code, u->country)) u->country_cursor = i; u->country_scroll = u->country_cursor < COUNTRY_ROWS ? 0 : u->country_cursor - COUNTRY_ROWS + 1; u->screen = UI_COUNTRY; }
             else { u->name_for = 1; snprintf(u->name, sizeof u->name, "%s", u->player); u->name_len = (int)strlen(u->name); u->key_cursor = 0; u->screen = UI_NAME; }
         }
         else if (u->start_col) random_sprite(u, *cur);
@@ -563,6 +594,7 @@ void ui_input(SmzUi *u, UiButton b)
     case UI_NAME: name_input(u, b); break;
     case UI_START: start_input(u, b); break;
     case UI_COUNTRY: country_input(u, b); break;
+    case UI_ONLINE: online_input(u, b); break;
     case UI_BUSY: break;
     }
 }
@@ -595,10 +627,11 @@ void ui_touch(SmzUi *u, int x, int y)
         case H_SAVED: u->saved_cursor = t->idx; u->saved_col = 0; u->saved_confirm = 0; ui_input(u, BTN_A); break;
         case H_SAVED_DEL: u->saved_cursor = t->idx; u->saved_col = 1; ui_input(u, BTN_A); break;
         case H_KEY: u->key_cursor = t->idx; ui_input(u, BTN_A); break;
+        case H_ONLINE: u->online_cursor = t->idx; ui_input(u, BTN_A); break;
         case H_COUNTRY: u->country_cursor = t->idx; ui_input(u, BTN_A); break;
         case H_START: {   /* 0, 1 sprite rows, 2, 3 their Random chips, 4 Start, 5 player name, 6 country */
             u->start_cursor = t->idx == 4 ? START_ROW : t->idx >= 5 ? 2 : t->idx & 1;
-            u->start_col = t->idx == 2 || t->idx == 3 || t->idx == 6;
+            u->start_col = t->idx == 7 ? 2 : t->idx == 2 || t->idx == 3 || t->idx == 6;
             ui_input(u, BTN_A);
             break;
         }
@@ -946,20 +979,47 @@ void ui_draw(SmzUi *u)
             text(u, 272, y + rh / 2 - 6, C_ACCENT, 1, "Random");
         }
         if (u->player_on) {
-            int y = 34 + 2 * step;
-            rect(u, 8, y, 218, 36, u->start_cursor == 2 && !u->start_col ? C_SEL : C_PANEL);
-            hit(u, H_START, 5, 8, y, 218, 36);
-            rect(u, 232, y, 80, 36, u->start_cursor == 2 && u->start_col ? C_SEL : C_PANEL);
-            hit(u, H_START, 6, 232, y, 80, 36);
-            text(u, 16, y + 4, C_DIM, 0, "Player");
-            text(u, 16, y + 19, u->player[0] ? C_ACCENT : C_DIM, 0, u->player[0] ? u->player : "Set your name");
-            text(u, 272, y + 12, u->country[0] ? C_ACCENT : C_DIM, 1, u->country[0] ? u->country : "Flag");
+            int y = 34 + 2 * step, sel = u->start_cursor == 2;
+            if (u->online_mode == 1) {
+                rect(u, 8, y, 162, 36, sel && u->start_col == 0 ? C_SEL : C_PANEL);
+                hit(u, H_START, 5, 8, y, 162, 36);
+                rect(u, 176, y, 62, 36, sel && u->start_col == 1 ? C_SEL : C_PANEL);
+                hit(u, H_START, 6, 176, y, 62, 36);
+                rect(u, 244, y, 68, 36, sel && u->start_col == 2 ? C_SEL : C_PANEL);
+                hit(u, H_START, 7, 244, y, 68, 36);
+                text(u, 16, y + 4, C_DIM, 0, "Online player");
+                text(u, 16, y + 19, u->player[0] ? C_ACCENT : C_DIM, 0, u->player[0] ? u->player : "Set your name");
+                text(u, 207, y + 12, u->country[0] ? C_ACCENT : C_DIM, 1, u->country[0] ? u->country : "Flag");
+                text(u, 278, y + 12, C_GREEN, 1, "On");
+            } else {
+                rect(u, 8, y, UI_W - 16, 36, sel ? C_SEL : C_PANEL);
+                hit(u, H_START, 7, 8, y, UI_W - 16, 36);
+                text(u, 16, y + 4, C_DIM, 0, "Online ladder");
+                text(u, 16, y + 19, u->online_mode == 2 ? C_DIM : C_ACCENT, 0, u->online_mode == 2 ? "Off" : "Ask before each run");
+            }
         }
         int sy = u->player_on ? 188 : 164, sh = u->player_on ? 34 : 44;
         rect(u, 8, sy, UI_W - 16, sh, u->start_cursor == START_ROW ? C_SEL : C_PANEL);
         hit(u, H_START, 4, 8, sy, UI_W - 16, sh);
         text(u, UI_W / 2, sy + sh / 2 - 6, C_ACCENT, 1, "Start");
         text(u, 6, UI_H - 6, C_DIM, 0, "A choose  Right: Random  B back");
+        break;
+    }
+    case UI_ONLINE: {
+        title(u, "Online ladder");
+        text(u, 12, 36, C_TEXT, 0, "Send the time of this run to the online ladder?");
+        text(u, 12, 54, C_DIM, 0, "Only Original-rules runs count.");
+        static const char *const ROW[3] = {"Yes", "Not now", "No, don't ask again"};
+        static const char *const SUB[3] = {"Upload and choose a name and flag", "Offline this time, ask again next run", "Change it later in the Player row"};
+        for (int r = 0; r < 3; r++) {
+            int y = 78 + r * 46;
+            rect(u, 8, y, UI_W - 16, 42, r == u->online_cursor ? C_SEL : C_PANEL);
+            rect(u, 8, y, 5, 42, r == 0 ? C_GREEN : C_ACCENT);
+            hit(u, H_ONLINE, r, 8, y, UI_W - 16, 42);
+            text(u, 22, y + 6, C_TEXT, 0, ROW[r]);
+            text(u, 22, y + 24, C_DIM, 0, SUB[r]);
+        }
+        text(u, 6, UI_H - 6, C_DIM, 0, "A choose  B back");
         break;
     }
     case UI_COUNTRY: {

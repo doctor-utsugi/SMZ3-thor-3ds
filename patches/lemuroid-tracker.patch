@@ -468,10 +468,10 @@ index 0000000..c830243
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/NativeMenuScreen.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/NativeMenuScreen.kt
 new file mode 100644
-index 0000000..2d29fb7
+index 0000000..f12a929
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/NativeMenuScreen.kt
-@@ -0,0 +1,263 @@
+@@ -0,0 +1,264 @@
 +package com.swordfish.lemuroid.app.mobile.feature.runs
 +
 +import android.graphics.Paint
@@ -649,6 +649,7 @@ index 0000000..2d29fb7
 +                        settings = settings.toString(), mapMode = settings.optString("mapMode", "all"),
 +                    ),
 +                )
++                OnlineLadder.markRun(context, slot, Smz3Native.uiOnline() == 1)
 +                val game = RunGenerator.registerGame(context, retrogradeDb, slot, name)
 +                RunStore.load(context, slot)?.let { RunStore.save(context, it.copy(gameId = game.id)) }
 +            }.onFailure { android.util.Log.e("NativeMenu", "generation failed", it) }
@@ -737,10 +738,10 @@ index 0000000..2d29fb7
 +private fun Color.toArgb(): Int = android.graphics.Color.argb((alpha * 255).toInt(), (red * 255).toInt(), (green * 255).toInt(), (blue * 255).toInt())
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/OnlineLadder.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/OnlineLadder.kt
 new file mode 100644
-index 0000000..5eec9c8
+index 0000000..556cc5f
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/OnlineLadder.kt
-@@ -0,0 +1,113 @@
+@@ -0,0 +1,122 @@
 +package com.swordfish.lemuroid.app.mobile.feature.runs
 +
 +import android.content.Context
@@ -785,9 +786,18 @@ index 0000000..5eec9c8
 +    /** Name and flag shown on the ladder, set in the start screen of a new run. */
 +    fun playerName(context: Context) = profile(context).first
 +
++    private fun onlineFile(context: Context, slot: Int) = File(dir(context), "slot$slot.online")
++
++    /** Records whether the run just generated in [slot] goes to the online ladder; the answer given in the menu then. */
++    fun markRun(context: Context, slot: Int, online: Boolean) {
++        tokenFile(context, slot).delete()
++        finishFile(context, slot).delete()
++        if (online) runCatching { onlineFile(context, slot).writeText("1") } else onlineFile(context, slot).delete()
++    }
++
 +    /** Asks the server for the run's token the first time it is played; no network means no token and the run stays off the online ladder. */
 +    fun ensureToken(context: Context, slot: Int) {
-+        if (tokenFile(context, slot).exists()) return
++        if (!onlineFile(context, slot).exists() || tokenFile(context, slot).exists()) return
 +        val r = call("/api/start", JSONObject().put("install", installId(context)).put("kind", "original")) ?: return
 +        r.optString("token").takeIf { it.isNotEmpty() }?.let { tokenFile(context, slot).writeText(it) }
 +    }
@@ -3481,10 +3491,10 @@ index 0000000..dc5944a
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Native.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Native.kt
 new file mode 100644
-index 0000000..207f0c4
+index 0000000..8f848fc
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Native.kt
-@@ -0,0 +1,73 @@
+@@ -0,0 +1,74 @@
 +package com.swordfish.lemuroid.app.shared.game.viewmodel
 +
 +/** JNI bridge to the shared C core (core/smz3_state.c). */
@@ -3552,6 +3562,7 @@ index 0000000..207f0c4
 +    @JvmStatic external fun uiSavedChanged(): String?
 +    @JvmStatic external fun uiPlayerLoad(text: String?)
 +    @JvmStatic external fun uiPlayerChanged(): String?
++    @JvmStatic external fun uiOnline(): Int
 +    @JvmStatic external fun uiOption(opt: Int): Int
 +    @JvmStatic external fun uiScreen(): Int
 +    @JvmStatic external fun uiSetSlotCount(n: Int)

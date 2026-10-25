@@ -552,3 +552,7 @@ The waiting screen of the second display looped its stars with a visible jump: e
 ## Player name and flag
 
 The start screen of a new run (Android only, enabled by the host with `ui_player_enable`) has a Player row: the name opens the same d-pad keyboard as saved customs (`name_for = 1`), the flag chip opens a scrolling list of 41 countries (`UI_COUNTRY`, ISO codes, first entry "No flag"). The profile is one per device, stored by the host as `name<TAB>CC` in `runs/player.txt` (`ui_player_load/text/dirty`, JNI `uiPlayerLoad/Changed`) and sent with the finished run (`country` is optional on `/api/finish`). The web page and the bottom screen show it as a regional-indicator emoji flag before the name. It is set before starting, not at the credits, because the game process has no menu at that moment; it can be changed for the next run at any time.
+
+### Online consent
+
+Pressing Start on a new run asks once about the online ladder (`UI_ONLINE`): Yes (then name and flag if missing), Not now (offline this run, asked again next time) or No, don't ask again. The answer is `online_mode` (0 ask, 1 on, 2 off), the third field of `runs/player.txt`. The Player row of the start screen shows the state and reopens the question (when On it has name, flag and an On chip). Only runs generated while On get `runs/slotN.online`; the tracker asks the server for a token only for those, so Not now and Off runs never contact it.

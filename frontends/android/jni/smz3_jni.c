@@ -461,6 +461,8 @@ JNIEXPORT void JNICALL NATIVE(uiPlayerLoad)(JNIEnv *env, jclass cls, jstring tex
     if (t) (*env)->ReleaseStringUTFChars(env, text, t);
 }
 
+JNIEXPORT jint JNICALL NATIVE(uiOnline)(JNIEnv *env, jclass cls) { return ui_online_now(&g_ui); }
+
 JNIEXPORT jstring JNICALL NATIVE(uiPlayerChanged)(JNIEnv *env, jclass cls)
 {
     char buf[64];

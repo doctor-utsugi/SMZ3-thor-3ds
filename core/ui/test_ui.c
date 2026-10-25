@@ -165,7 +165,7 @@ int main(void)
     assert(u.action == ACT_GENERATE && u.action_slot == 2);
     u.action = ACT_NONE; u.screen = UI_SLOTS_SCREEN;
     {   /* player profile: name keyboard and flag list from the start screen */
-        SmzUi p; ui_init(&p); ui_player_enable(&p, 1); ui_player_load(&p, "Ana\tES");
+        SmzUi p; ui_init(&p); ui_player_enable(&p, 1); ui_player_load(&p, "Ana\tES\t1");
         assert(!strcmp(p.player, "Ana") && !strcmp(p.country, "ES"));
         p.screen = UI_MODE; p.mode_cursor = 1; ui_input(&p, BTN_A);
         assert(p.screen == UI_START && p.start_cursor == 3);
@@ -179,6 +179,20 @@ int main(void)
         ui_input(&p, BTN_A);     /* letter A */
         p.key_cursor = 10 * 4 + 2; ui_input(&p, BTN_A);   /* Save */
         assert(p.screen == UI_START && !strcmp(p.player, "A"));
+        { /* first run: Start asks about the online ladder */
+          SmzUi q; ui_init(&q); ui_player_enable(&q, 1); ui_player_load(&q, NULL);
+          q.screen = UI_MODE; q.mode_cursor = 1; ui_input(&q, BTN_A);
+          ui_input(&q, BTN_A); assert(q.screen == UI_ONLINE && q.action == ACT_NONE); ui_draw(&q);
+          ui_input(&q, BTN_A); assert(q.online_mode == 1 && q.screen == UI_NAME);   /* Yes: asks the name */
+          ui_input(&q, BTN_A); q.key_cursor = 42; ui_input(&q, BTN_A);               /* A, Save */
+          assert(q.screen == UI_COUNTRY); ui_input(&q, BTN_DOWN); ui_input(&q, BTN_A);
+          assert(q.screen == UI_START && q.country[0] && ui_online_now(&q));
+          q.start_cursor = 3; ui_input(&q, BTN_A); assert(q.action == ACT_GENERATE);
+          SmzUi n; ui_init(&n); ui_player_enable(&n, 1); n.screen = UI_MODE; n.mode_cursor = 1; ui_input(&n, BTN_A);
+          ui_input(&n, BTN_A); ui_input(&n, BTN_DOWN); ui_input(&n, BTN_DOWN); ui_input(&n, BTN_A);   /* never ask again */
+          assert(n.online_mode == 2 && n.action == ACT_GENERATE && !ui_online_now(&n));
+          char o[64]; ui_player_text(&n, o, sizeof o); assert(strstr(o, "\t2"));
+        }
         char out[64]; assert(ui_player_text(&p, out, sizeof out) > 0 && out[0] == 'A' && out[1] == '\t');
     }
     char js[2048];
