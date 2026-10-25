@@ -2899,10 +2899,10 @@ index 0000000..18f46e9
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Presentation.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Presentation.kt
 new file mode 100644
-index 0000000..4f7adfd
+index 0000000..3ccdc08
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Presentation.kt
-@@ -0,0 +1,696 @@
+@@ -0,0 +1,709 @@
 +package com.swordfish.lemuroid.app.shared.game.viewmodel
 +
 +import android.app.Presentation
@@ -3120,15 +3120,29 @@ index 0000000..4f7adfd
 +    }
 +
 +    private fun buildItemsPage(): View {
-+        val column = LinearLayout(context).apply {
-+            orientation = LinearLayout.VERTICAL
-+            setPadding(dp(10), dp(4), dp(10), dp(6))
-+        }
-+        // one grid for both games (A Link to the Past first), as large as the screen allows
-+        val metrics = context.resources.displayMetrics
++        // one grid for both games (A Link to the Past first); the square cell size comes from the space the page really gets
 +        val columns = 9
-+        val cellDp = minOf((metrics.widthPixels / metrics.density - 24f) / columns, (metrics.heightPixels / metrics.density - 110f) / 6f).toInt() - 2
-+        val grid = GridLayout(context).apply { columnCount = columns }
++        val grid = object : ViewGroup(context) {
++            override fun onMeasure(widthSpec: Int, heightSpec: Int) {
++                val w = MeasureSpec.getSize(widthSpec)
++                val h = MeasureSpec.getSize(heightSpec)
++                val rows = (childCount + columns - 1) / columns
++                val cell = minOf(w / columns, if (rows > 0) h / rows else w)
++                val spec = MeasureSpec.makeMeasureSpec(cell, MeasureSpec.EXACTLY)
++                for (i in 0 until childCount) getChildAt(i).measure(spec, spec)
++                setMeasuredDimension(w, h)
++            }
++            override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) {
++                val rows = (childCount + columns - 1) / columns
++                val cell = minOf((r - l) / columns, if (rows > 0) (b - t) / rows else r - l)
++                val left = ((r - l) - cell * columns) / 2
++                for (i in 0 until childCount) {
++                    val x = left + (i % columns) * cell
++                    val y = (i / columns) * cell
++                    getChildAt(i).layout(x, y, x + cell, y + cell)
++                }
++            }
++        }
 +        for (gameId in listOf(1, 2)) {
 +            for (i in 0 until Smz3Native.inventoryCount()) {
 +                val info = Smz3Native.inventoryInfo(i).split("|")
@@ -3151,13 +3165,12 @@ index 0000000..4f7adfd
 +                }
 +                cell.addView(icon, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
 +                cell.addView(count, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
-+                val lp = GridLayout.LayoutParams().apply { width = dp(cellDp); height = dp(cellDp); setMargins(dp(1), dp(1), dp(1), dp(1)) }
-+                grid.addView(cell, lp)
++                grid.addView(cell)
 +                cells += ItemCell(i, icon, count)
 +            }
 +        }
-+        column.addView(grid)
-+        return ScrollView(context).apply { addView(column) }
++        grid.setPadding(dp(8), dp(4), dp(8), dp(4))
++        return grid
 +    }
 +
 +    private fun buildMapPage(): View {

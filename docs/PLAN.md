@@ -478,3 +478,5 @@ The Super Metroid items were read only while Metroid ran, so after reopening a r
 The overworld screen that leads into a special area (Lost Woods for the Master Sword grove, the north-east corner for Zora's domain) now counts as discovered, otherwise the player stood on a dimmed, undiscovered part of the map. Seen on the Thor: the area around Zora's domain is lit.
 
 Large overworld areas (Lake Hylia, Death Mountain, Lost Woods...) are 2x2 screens named by `$8A` with their first screen only, so Link stood in a quadrant never marked as discovered. The screen under his coordinates (`y/512*8 + x/512`) is now marked too. Seen on the Thor in Lake Hylia: the quadrant under the player is lit; the other quadrants of that large area stay dim until visited. The map markers with a note also get a thicker pink rim (not yet seen with a note on the Thor).
+
+ITEMS tab grid: the cell size no longer comes from display metrics minus a guessed chrome height; a small `ViewGroup` sizes square cells from the width and height the page really gets (9 columns, 6 rows). Built, **not installed or seen on the Thor yet** (console offline).
