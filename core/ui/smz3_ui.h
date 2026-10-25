@@ -12,11 +12,13 @@
 #define UI_SLOTS_SHOWN 4
 #define UI_MAX_SPRITES 640
 #define UI_MAX_OPTS 128
-#define UI_MAX_CMDS 160
-#define UI_MAX_HITS 32
+#define UI_MAX_CMDS 256
+#define UI_MAX_HITS 64
+#define UI_MAX_SAVED 16
+#define UI_SPEC_LEN 512
 
 typedef enum { BTN_UP, BTN_DOWN, BTN_LEFT, BTN_RIGHT, BTN_A, BTN_B, BTN_L, BTN_R } UiButton;
-typedef enum { UI_SLOTS_SCREEN, UI_SLOT_MENU, UI_CREATE, UI_SPRITES, UI_BUSY, UI_CONFIRM } UiScreen;
+typedef enum { UI_SLOTS_SCREEN, UI_SLOT_MENU, UI_CREATE, UI_SPRITES, UI_BUSY, UI_CONFIRM, UI_MODE, UI_SAVED, UI_NAME, UI_START } UiScreen;
 typedef enum { OPT_ENUM, OPT_INT, OPT_BOOL, OPT_SEED, OPT_SPRITE } OptKind;
 /* Tabs of the Create run screen. Only LEVEL_ITEMS is read from UiOptDef.level; the other tabs list their keys in UI_TABS. */
 typedef enum { LEVEL_RUN, LEVEL_ZELDA, LEVEL_METROID, LEVEL_PLAY, LEVEL_ITEMS, LEVEL_COUNT } OptLevel;
@@ -33,6 +35,8 @@ typedef struct {
 } UiOptDef;
 
 typedef struct { int used; char name[24]; char summary[40]; } UiSlot;
+/* A saved custom: a name and its options that differ from the defaults as "Key=value,Key=value" (option keys, so the list survives new options). */
+typedef struct { char name[24]; char spec[UI_SPEC_LEN]; } UiSaved;
 
 /* kind 0 rectangle, 1 text, 2 sprite preview: draw the picture of text ("link/<name>" or "samus/<name>", file <name>.pv beside the
  * .rdc: u8 width, u8 height, then width*height RGBA bytes) centred and scaled to fit the x, y, w, h box. */
@@ -40,7 +44,7 @@ typedef struct { uint8_t kind; int16_t x, y, w, h; uint8_t color; uint8_t align;
 enum { C_BG, C_PANEL, C_SEL, C_TEXT, C_DIM, C_ACCENT, C_WARN };
 
 typedef struct { int16_t x, y, w, h; uint8_t kind; int16_t idx; } UiHit;
-enum { H_SLOT, H_MENU, H_TAB, H_ROW, H_SPRITE, H_SCROLL, H_CREATE, H_BACK, H_CHEVRON, H_CONFIRM };
+enum { H_SLOT, H_MENU, H_TAB, H_ROW, H_SPRITE, H_SCROLL, H_CREATE, H_BACK, H_CHEVRON, H_CONFIRM, H_MODE, H_SAVED, H_SAVED_DEL, H_KEY, H_START };
 
 typedef struct {
     UiScreen screen, back;
@@ -49,8 +53,17 @@ typedef struct {
     int level;                   /* LEVEL_* shown in the options screen */
     int cursor[LEVEL_COUNT], scroll[LEVEL_COUNT];
     int value[UI_MAX_OPTS];
-    char sprites[4][UI_MAX_SPRITES][32];  /* 0 Link, 1 Samus, 2 plando files, 3 music packages; index 0 is "Default" ("None" for plandos, "Original" then "Random" for music) */
+    char sprites[4][UI_MAX_SPRITES][32];  /* 0 Link, 1 Samus, 2 plando files, 3 music packages; index 0 is "Original" ("None" for plandos, "Original" then "Random" for music) */
     int sprite_count[4], sprite_game, sprite_cursor;
+    int mode_cursor, run_mode;   /* run_mode: 0 Chill run, 1 Original, 2 Custom, 3 Saved custom */
+    UiSaved saved[UI_MAX_SAVED];
+    int saved_count, saved_cursor, saved_scroll, saved_col, saved_confirm, saved_dirty;
+    char name[24];               /* the name being typed for a new saved custom */
+    int name_len, key_cursor;
+    char start_label[24], notice[32];
+    int start_cursor, start_col;  /* sprite screen: row (Link, Samus, Start) and column (sprite, Random) */
+    UiScreen start_from;
+    uint32_t rng;
     UiAction action;             /* set by an input event, read and cleared by the host */
     int action_slot;
     char status[44];
@@ -77,6 +90,11 @@ void ui_set_sprites(SmzUi *u, int game, const char *const *names, int n);
 void ui_input(SmzUi *u, UiButton b);
 /* Touch at canvas coordinates (as drawn by the last ui_draw): selects and activates the row under the point. */
 void ui_touch(SmzUi *u, int x, int y);
+/* Saved customs: text is the file the host stored ("name<TAB>spec" lines); NULL (no file yet) installs the built-in ones.
+ * ui_saved_dirty returns 1 once after the list changed, then the host writes ui_saved_text again. */
+void ui_saved_load(SmzUi *u, const char *text);
+int ui_saved_text(const SmzUi *u, char *out, size_t cap);
+int ui_saved_dirty(SmzUi *u);
 void ui_busy(SmzUi *u, const char *msg);
 void ui_idle(SmzUi *u);
 /* Rebuilds u->cmd. */

@@ -431,6 +431,22 @@ JNIEXPORT jstring JNICALL NATIVE(uiSettingsJson)(JNIEnv *env, jclass cls, jint s
     return (*env)->NewStringUTF(env, buf);
 }
 
+/* Saved customs: the host stores the text in a file; null (no file yet) installs the built-in ones. */
+JNIEXPORT void JNICALL NATIVE(uiSavedLoad)(JNIEnv *env, jclass cls, jstring text)
+{
+    const char *t = text ? (*env)->GetStringUTFChars(env, text, NULL) : NULL;
+    ui_saved_load(&g_ui, t);
+    if (t) (*env)->ReleaseStringUTFChars(env, text, t);
+}
+
+/* The saved customs as the file text when they changed since the last call, else null. */
+JNIEXPORT jstring JNICALL NATIVE(uiSavedChanged)(JNIEnv *env, jclass cls)
+{
+    static char buf[UI_MAX_SAVED * (UI_SPEC_LEN + 40)];
+    if (!ui_saved_dirty(&g_ui) || ui_saved_text(&g_ui, buf, sizeof buf) < 0) return NULL;
+    return (*env)->NewStringUTF(env, buf);
+}
+
 JNIEXPORT jint JNICALL NATIVE(uiOption)(JNIEnv *env, jclass cls, jint opt) { return opt >= 0 && opt < UI_OPT_COUNT ? g_ui.value[opt] : 0; }
 JNIEXPORT void JNICALL NATIVE(uiSetSlotCount)(JNIEnv *env, jclass cls, jint n) { ui_set_slot_count(&g_ui, n); }
 /* The slot the menu is on: the highlighted one in the list, the opened one in its menus. */

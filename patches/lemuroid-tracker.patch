@@ -468,10 +468,10 @@ index 0000000..c830243
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/NativeMenuScreen.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/NativeMenuScreen.kt
 new file mode 100644
-index 0000000..f1906de
+index 0000000..8b27146
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/NativeMenuScreen.kt
-@@ -0,0 +1,241 @@
+@@ -0,0 +1,244 @@
 +package com.swordfish.lemuroid.app.mobile.feature.runs
 +
 +import android.graphics.Paint
@@ -569,6 +569,7 @@ index 0000000..f1906de
 +    val scope = rememberCoroutineScope()
 +    var version by remember { mutableIntStateOf(0) }
 +    val focus = remember { FocusRequester() }
++    val savedCustoms = remember { File(context.filesDir, "saved_customs.txt") }
 +    val paint = remember { Paint(Paint.ANTI_ALIAS_FLAG).apply { typeface = Typeface.MONOSPACE } }
 +
 +    fun publishSelection() {
@@ -591,6 +592,7 @@ index 0000000..f1906de
 +        Smz3Native.uiSetSprites(1, spriteNames(1))
 +        Smz3Native.uiSetSprites(2, plandoNames())
 +        Smz3Native.uiSetSprites(3, Smz3Music.packages())
++        Smz3Native.uiSavedLoad(savedCustoms.takeIf { it.exists() }?.readText())
 +        refreshSlots()
 +        onDispose { }
 +    }
@@ -646,6 +648,7 @@ index 0000000..f1906de
 +    }
 +
 +    fun pollActions() {
++        Smz3Native.uiSavedChanged()?.let { runCatching { savedCustoms.writeText(it) } }
 +        val (act, slot) = Smz3Native.uiAction().let { Act.values()[it[0]] to it[1] }
 +        when (act) {
 +            Act.CONTINUE -> RunStore.load(context, slot)?.let(onContinue)
@@ -3320,10 +3323,10 @@ index 0000000..dc5944a
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Native.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Native.kt
 new file mode 100644
-index 0000000..815ecfe
+index 0000000..76d60dc
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Native.kt
-@@ -0,0 +1,67 @@
+@@ -0,0 +1,69 @@
 +package com.swordfish.lemuroid.app.shared.game.viewmodel
 +
 +/** JNI bridge to the shared C core (core/smz3_state.c). */
@@ -3385,6 +3388,8 @@ index 0000000..815ecfe
 +    @JvmStatic external fun uiSetPlando(yaml: ByteArray?): String
 +    @JvmStatic external fun uiPlandoName(): String
 +    @JvmStatic external fun uiSettingsJson(seedIfRandom: Int): String
++    @JvmStatic external fun uiSavedLoad(text: String?)
++    @JvmStatic external fun uiSavedChanged(): String?
 +    @JvmStatic external fun uiOption(opt: Int): Int
 +    @JvmStatic external fun uiScreen(): Int
 +    @JvmStatic external fun uiSetSlotCount(n: Int)

@@ -15,33 +15,105 @@ int main(void)
     ui_draw(&u);
     assert(u.cmd_count > 4);
 
-    ui_input(&u, BTN_A);                       /* empty slot 1 -> Create */
-    assert(u.screen == UI_CREATE && u.active_slot == 0);
+    ui_input(&u, BTN_A);                       /* empty slot 1 -> the mode picker */
+    assert(u.screen == UI_MODE && u.active_slot == 0 && u.saved_count >= 5);
+    ui_input(&u, BTN_DOWN); ui_input(&u, BTN_DOWN); ui_input(&u, BTN_A);   /* Custom */
+    assert(u.screen == UI_CREATE);
     ui_input(&u, BTN_DOWN); ui_input(&u, BTN_DOWN);   /* keysanity (after Game mode) */
     ui_input(&u, BTN_RIGHT);
     ui_input(&u, BTN_RIGHT);                   /* Both -> Zelda only */
-    ui_input(&u, BTN_R);                       /* Zelda tab */
-    for (int i = 0; i < 3; i++) ui_input(&u, BTN_DOWN);   /* Link sprite */
-    ui_input(&u, BTN_A);
-    assert(u.screen == UI_SPRITES);
-    ui_input(&u, BTN_RIGHT);      /* Pink Link (grid, names are sorted) */
-    ui_input(&u, BTN_A);
-    assert(u.screen == UI_CREATE);
+    ui_input(&u, BTN_R);                       /* Zelda tab: the sprites are not here any more */
     ui_input(&u, BTN_R);                       /* Metroid tab */
-    for (int i = 0; i < 4; i++) ui_input(&u, BTN_DOWN);   /* wall jump (after the jingle) */
+    for (int i = 0; i < 3; i++) ui_input(&u, BTN_DOWN);   /* wall jump (after the jingle) */
     ui_input(&u, BTN_RIGHT);                   /* Hard */
     ui_draw(&u);
+    for (int t = 0; t < LEVEL_ITEMS; t++)
+        for (int k = 0; UI_TABS[t][k]; k++) assert(strcmp(UI_TABS[t][k], "LinkSprite") && strcmp(UI_TABS[t][k], "SamusSprite"));
 
-    SmzSettings s; SmzPatchCfg pc; char link[32], samus[32];
-    ui_settings(&u, 1234, &s, &pc, link, samus);
-    assert(s.seed == 1234 && s.keysanity == KEYS_Zelda);
-    assert(!strcmp(link, "Pink Link") && !samus[0]);
-    assert(s.cfg.WallJumpDifficulty == 3);
-
-    for (int i = 0; i < 40 && u.screen == UI_CREATE; i++) { ui_input(&u, BTN_DOWN); }
-    u.level = LEVEL_RUN; u.cursor[0] = 7;  /* Create button (the "Helps available" row is hidden unless the mode is Limited) */
+    u.level = LEVEL_RUN; u.cursor[0] = 8;      /* "Next" row (the "Helps available" row is hidden unless the mode is Limited) */
     ui_input(&u, BTN_A);
+    assert(u.screen == UI_START && u.start_cursor == 2 && u.action == ACT_NONE);
+    ui_input(&u, BTN_UP); ui_input(&u, BTN_UP);          /* Link row */
+    ui_input(&u, BTN_A);
+    assert(u.screen == UI_SPRITES && u.back == UI_START);
+    ui_input(&u, BTN_RIGHT);      /* Pink Link (grid, names are sorted) */
+    ui_input(&u, BTN_A);
+    assert(u.screen == UI_START);
+    ui_input(&u, BTN_DOWN); ui_input(&u, BTN_RIGHT); ui_input(&u, BTN_A);   /* Samus: Random (no Samus sprites installed) */
+    assert(u.value[UIO_SAMUS] == 0);
+    ui_input(&u, BTN_UP); ui_input(&u, BTN_RIGHT); ui_input(&u, BTN_A);     /* Link: Random picks one of the two */
+    assert(u.value[UIO_LINK] >= 1 && u.value[UIO_LINK] <= 2);
+    u.value[UIO_LINK] = 1;
+    {
+        SmzSettings s; SmzPatchCfg pc; char link[32], samus[32];
+        ui_settings(&u, 1234, &s, &pc, link, samus);
+        assert(s.seed == 1234 && s.keysanity == KEYS_Zelda);
+        assert(!strcmp(link, "Pink Link") && !samus[0]);
+        assert(s.cfg.WallJumpDifficulty == 3);
+    }
+    ui_input(&u, BTN_DOWN); ui_input(&u, BTN_DOWN); ui_input(&u, BTN_A);
     assert(u.action == ACT_GENERATE && u.action_slot == 0);
+    ui_input(&u, BTN_B);
+    assert(u.screen == UI_CREATE);                         /* back to the options of the Custom run */
+    {   /* Chill run and Original start from their own options and go straight to the sprites */
+        u.action = ACT_NONE; u.screen = UI_MODE; u.mode_cursor = 0;
+        ui_input(&u, BTN_A);
+        assert(u.screen == UI_START && u.run_mode == 0 && u.value[UIO_LINK] == 0);
+        assert(u.value[UIO_MAP] == 1 && u.value[UIO_HELP] == 0);
+        { SmzSettings s; SmzPatchCfg pc; char l[32], sm[32]; ui_settings(&u, 7, &s, &pc, l, sm); assert(s.keysanity == KEYS_Zelda && s.cfg.WallJumpDifficulty == 3); }
+        ui_input(&u, BTN_B);
+        assert(u.screen == UI_MODE);
+        ui_input(&u, BTN_DOWN); ui_input(&u, BTN_A);       /* Original */
+        { SmzSettings s; SmzPatchCfg pc; char l[32], sm[32]; ui_settings(&u, 7, &s, &pc, l, sm); assert(s.keysanity == KEYS_None && s.cfg.WallJumpDifficulty == 2 && u.value[UIO_MAP] == 0); }
+        ui_input(&u, BTN_A);                               /* Start is under the cursor */
+        assert(u.action == ACT_GENERATE);
+        u.action = ACT_NONE;
+    }
+    {   /* Save as custom: type a name with the d-pad, then it shows up in Saved customs and survives a reload */
+        SmzUi v; ui_init(&v);
+        int builtin = v.saved_count;
+        assert(builtin >= 5 && ui_saved_dirty(&v) && !ui_saved_dirty(&v));
+        v.screen = UI_MODE; v.mode_cursor = 2; ui_input(&v, BTN_A);
+        assert(v.screen == UI_CREATE);
+        v.value[UIO_HELP] = 2;                                         /* No helps */
+        v.cursor[LEVEL_RUN] = 7; ui_input(&v, BTN_A);                  /* Save as custom... */
+        assert(v.screen == UI_NAME && !strcmp(v.name, "Custom 10"));
+        ui_input(&v, BTN_L); ui_input(&v, BTN_L); ui_input(&v, BTN_L); ui_input(&v, BTN_L); ui_input(&v, BTN_L); ui_input(&v, BTN_L);
+        assert(v.name_len == 3 && !strcmp(v.name, "Cus"));
+        v.key_cursor = 0; ui_input(&v, BTN_A);                         /* A */
+        ui_input(&v, BTN_RIGHT); ui_input(&v, BTN_A);                  /* B */
+        ui_input(&v, BTN_R);                                           /* space */
+        ui_input(&v, BTN_UP);                                          /* wraps up to the buttons */
+        assert(v.key_cursor >= 40);
+        v.key_cursor = 40 + 2; ui_input(&v, BTN_A);    /* Save */
+        assert(v.screen == UI_CREATE && v.saved_count == builtin + 1 && !strcmp(v.saved[builtin].name, "CusAB"));
+        assert(strstr(v.saved[builtin].spec, "HelpMode=2") && ui_saved_dirty(&v));
+        char file[8192];
+        assert(ui_saved_text(&v, file, sizeof file) > 0);
+        SmzUi w; ui_init(&w);
+        ui_saved_load(&w, file);
+        assert(w.saved_count == v.saved_count && !strcmp(w.saved[builtin].name, "CusAB") && !ui_saved_dirty(&w));
+        w.screen = UI_MODE; w.mode_cursor = 3; ui_input(&w, BTN_A);
+        assert(w.screen == UI_SAVED);
+        w.saved_cursor = builtin; ui_input(&w, BTN_A);                 /* choose it */
+        assert(w.screen == UI_START && w.run_mode == 3 && w.value[UIO_HELP] == 2);
+        ui_input(&w, BTN_B); assert(w.screen == UI_SAVED);
+        ui_draw(&w);
+        ui_input(&w, BTN_RIGHT); ui_input(&w, BTN_A);                  /* delete asks first */
+        assert(w.saved_count == builtin + 1 && w.saved_confirm);
+        ui_input(&w, BTN_A);
+        assert(w.saved_count == builtin && ui_saved_dirty(&w));
+        while (w.saved_count) { w.saved_col = 1; w.saved_cursor = 0; ui_input(&w, BTN_A); ui_input(&w, BTN_A); }
+        assert(w.screen == UI_MODE && w.saved_count == 0);          /* nothing saved: the entry disappears */
+        ui_draw(&w);
+        int rows = 0;
+        for (int k = 0; k < w.hit_count; k++) rows += w.hit[k].kind == H_MODE;
+        assert(rows == 3);
+        ui_saved_load(&w, "");                                         /* an existing empty file stays empty */
+        assert(w.saved_count == 0);
+        v.screen = UI_NAME; ui_draw(&v);
+        assert(v.hit_count == 44);
+    }
     {   /* "Helps available" only shows in the Limited mode */
         int shown[2];
         for (int m = 0; m < 3; m++) {
@@ -57,11 +129,14 @@ int main(void)
         (void)shown;
         u.value[UIO_HELP] = 0;
     }
-    /* touch: tapping an empty slot opens Create, tapping a tab switches level */
+    /* touch: tapping an empty slot opens the mode picker, Custom opens Create, tapping a tab switches level */
     u.action = ACT_NONE; u.screen = UI_SLOTS_SCREEN;
     ui_draw(&u);
     ui_touch(&u, 100, 40 + 2 * 46 + 10);
-    assert(u.screen == UI_CREATE && u.active_slot == 2);
+    assert(u.screen == UI_MODE && u.active_slot == 2);
+    ui_draw(&u);
+    ui_touch(&u, 100, 36 + 2 * 50 + 20);
+    assert(u.screen == UI_CREATE);
     ui_draw(&u);
     ui_touch(&u, 137, 10);
     assert(u.level == LEVEL_ZELDA);
@@ -72,17 +147,29 @@ int main(void)
     ui_touch(&u, 290, 10);
     assert(u.level == LEVEL_ITEMS);
     ui_touch(&u, 10, 10);
+    assert(u.screen == UI_MODE);
+    ui_touch(&u, 10, 10);
     assert(u.screen == UI_SLOTS_SCREEN);
     ui_draw(&u);
     ui_touch(&u, 100, 40 + 2 * 46 + 10);               /* open Create again, then scroll and press the button by touch */
+    ui_draw(&u);
+    ui_touch(&u, 100, 36 + 2 * 50 + 20);
     ui_draw(&u);
     ui_touch(&u, UI_W - 18, 44 + 100);
     assert(u.cursor[u.level] == 3);
     ui_draw(&u);
     ui_touch(&u, UI_W - 40, UI_H - 20);
+    assert(u.screen == UI_START);
+    ui_draw(&u);
+    ui_touch(&u, UI_W / 2, 180);
     assert(u.action == ACT_GENERATE && u.action_slot == 2);
     u.action = ACT_NONE; u.screen = UI_SLOTS_SCREEN;
     char js[2048];
+    for (int i = 0; i < UI_OPT_COUNT; i++) {          /* the Custom run's options again */
+        if (!strcmp(UI_OPTS[i].key, "Keysanity")) u.value[i] = 2;
+        if (!strcmp(UI_OPTS[i].key, "WallJumpDifficulty")) u.value[i] = 3;
+    }
+    u.value[UIO_LINK] = 1;
     assert(ui_settings_json(&u, 5, js, sizeof js) > 0);
     assert(strstr(js, "\"keysanity\":\"Zelda\"") && strstr(js, "\"linkSprite\":\"Pink Link\"") && strstr(js, "\"WallJumpDifficulty\":3"));
     printf("%s\n", js);

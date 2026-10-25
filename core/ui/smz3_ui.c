@@ -1,6 +1,8 @@
 #include <stdio.h>
 #include <string.h>
 #include <strings.h>
+#include <stdlib.h>
+#include <time.h>
 #include "smz3_ui.h"
 
 #define ROW_H 20
@@ -32,10 +34,12 @@ void ui_init(SmzUi *u)
 {
     memset(u, 0, sizeof *u);
     for (int i = 0; i < UI_OPT_COUNT; i++) u->value[i] = UI_OPTS[i].def;
-    for (int g = 0; g < 4; g++) { strcpy(u->sprites[g][0], g == 2 ? "None" : g == 3 ? "Original" : "Default"); u->sprite_count[g] = 1; }
+    for (int g = 0; g < 4; g++) { strcpy(u->sprites[g][0], g == 2 ? "None" : "Original"); u->sprite_count[g] = 1; }
     strcpy(u->sprites[3][1], "Random"); u->sprite_count[3] = 2;
     u->slot_count = 4;
     u->screen = UI_SLOTS_SCREEN;
+    u->rng = (uint32_t)time(NULL) * 2654435761u | 1;
+    ui_saved_load(u, NULL);
 }
 
 void ui_set_slot_count(SmzUi *u, int n)
@@ -121,8 +125,279 @@ static void move(int *cur, int *scroll, int n, int dir)
     if (*cur == 0) *scroll = 0;
 }
 
+
+/* ---- run modes and saved customs */
+
+typedef struct { const char *name, *desc, *spec; } UiPreset;
+static const UiPreset CHILL = {"Chill run", "Zelda keys, discovered map, hard jumps", "MapMode=1,Keysanity=2,WallJumpDifficulty=3,HelpMode=0,LightDarkRooms=1,SaveStates=1"};
+static const UiPreset ORIGINAL = {"Original", "The default randomizer rules", ""};
+static const UiPreset BUILTIN[] = {
+    {"Keysanity (both games)", "", "Keysanity=1"},
+    {"Dungeons + Metroid", "", "ItemPlacement=1"},
+    {"Opposite game", "", "ItemPlacement=4"},
+    {"All Dungeons", "", "GameMode=1"},
+    {"Spazer Hunt", "", "GameMode=2"},
+    {"Quick finish", "", "GanonCrystals=4,GtCrystals=4,TourianBosses=2"},
+    {"Open doors", "", "PyramidHole=1,TourianBossDoor=1"},
+    {"Casual", "", "WallJumpDifficulty=0,LightDarkRooms=1,SaveStates=1"},
+    {"Hardcore", "", "Keysanity=1,HelpMode=2,WallJumpDifficulty=3"},
+};
+
+static int opt_by_key(const char *key, size_t len)
+{
+    for (int i = 0; i < UI_OPT_COUNT; i++) if (!strncmp(UI_OPTS[i].key, key, len) && !UI_OPTS[i].key[len]) return i;
+    return -1;
+}
+
+/* the choices a saved custom does not carry: they depend on the files of this device */
+static int spec_skips(int i) { return i == 0 || i == UIO_LINK || i == UIO_SAMUS || i == UIO_PLANDO || i == UIO_MUSIC; }
+
+static void reset_values(SmzUi *u) { for (int i = 0; i < UI_OPT_COUNT; i++) u->value[i] = UI_OPTS[i].def; }
+
+static void apply_spec(SmzUi *u, const char *spec)
+{
+    while (*spec) {
+        const char *eq = strchr(spec, '='), *end = strchr(spec, ',');
+        if (!eq) break;
+        if (!end) end = spec + strlen(spec);
+        if (eq < end) {
+            int i = opt_by_key(spec, (size_t)(eq - spec));
+            if (i >= 0 && !spec_skips(i)) {
+                int v = atoi(eq + 1);
+                u->value[i] = v < UI_OPTS[i].min ? UI_OPTS[i].min : v > UI_OPTS[i].max ? UI_OPTS[i].max : v;
+            }
+        }
+        spec = *end ? end + 1 : end;
+    }
+}
+
+static void make_spec(const SmzUi *u, char *out, size_t cap)
+{
+    size_t n = 0;
+    out[0] = 0;
+    for (int i = 0; i < UI_OPT_COUNT; i++) {
+        if (spec_skips(i) || u->value[i] == UI_OPTS[i].def) continue;
+        int w = snprintf(out + n, cap - n, "%s%s=%d", n ? "," : "", UI_OPTS[i].key, u->value[i]);
+        if (w < 0 || n + (size_t)w >= cap) { out[n] = 0; return; }
+        n += (size_t)w;
+    }
+}
+
+static void fmt_value(const SmzUi *u, int opt, int v, char *out, size_t n);
+
+/* "Label: value" for each option of a spec, as much as fits `cap` */
+static void spec_summary(const SmzUi *u, const char *spec, char *out, size_t cap)
+{
+    size_t n = 0;
+    out[0] = 0;
+    if (!*spec) { snprintf(out, cap, "Default rules"); return; }
+    while (*spec) {
+        const char *eq = strchr(spec, '='), *end = strchr(spec, ',');
+        if (!eq) break;
+        if (!end) end = spec + strlen(spec);
+        int i = eq < end ? opt_by_key(spec, (size_t)(eq - spec)) : -1;
+        if (i >= 0) {
+            char v[44], part[80];
+            fmt_value(u, i, atoi(eq + 1), v, sizeof v);
+            snprintf(part, sizeof part, "%s%s: %s", n ? ", " : "", UI_OPTS[i].label, v);
+            if (n + strlen(part) + 3 >= cap) { snprintf(out + n, cap - n, ".."); return; }
+            memcpy(out + n, part, strlen(part) + 1);
+            n += strlen(part);
+        }
+        spec = *end ? end + 1 : end;
+    }
+}
+
+static void saved_add(SmzUi *u, const char *name, const char *spec)
+{
+    int i;
+    for (i = 0; i < u->saved_count && strcasecmp(u->saved[i].name, name); i++) {}
+    if (i == u->saved_count) {
+        if (i >= UI_MAX_SAVED) return;
+        u->saved_count++;
+    }
+    snprintf(u->saved[i].name, sizeof u->saved[i].name, "%s", name);
+    snprintf(u->saved[i].spec, sizeof u->saved[i].spec, "%s", spec);
+    u->saved_dirty = 1;
+}
+
+void ui_saved_load(SmzUi *u, const char *text)
+{
+    u->saved_count = 0;
+    u->saved_cursor = u->saved_scroll = 0;
+    if (!text) {
+        for (size_t i = 0; i < sizeof BUILTIN / sizeof BUILTIN[0]; i++) saved_add(u, BUILTIN[i].name, BUILTIN[i].spec);
+        return;
+    }
+    while (*text && u->saved_count < UI_MAX_SAVED) {
+        const char *nl = strchr(text, '\n'), *tab = strchr(text, '\t');
+        if (!nl) nl = text + strlen(text);
+        if (tab && tab < nl) {
+            UiSaved *s = &u->saved[u->saved_count++];
+            snprintf(s->name, sizeof s->name, "%.*s", (int)(tab - text), text);
+            snprintf(s->spec, sizeof s->spec, "%.*s", (int)(nl - tab - 1), tab + 1);
+        }
+        text = *nl ? nl + 1 : nl;
+    }
+    u->saved_dirty = 0;
+}
+
+int ui_saved_text(const SmzUi *u, char *out, size_t cap)
+{
+    size_t n = 0;
+    if (cap) out[0] = 0;
+    for (int i = 0; i < u->saved_count; i++) {
+        int w = snprintf(out + n, cap - n, "%s\t%s\n", u->saved[i].name, u->saved[i].spec);
+        if (w < 0 || n + (size_t)w >= cap) return -1;
+        n += (size_t)w;
+    }
+    return (int)n;
+}
+
+int ui_saved_dirty(SmzUi *u) { int d = u->saved_dirty; u->saved_dirty = 0; return d; }
+
+static void saved_remove(SmzUi *u, int i)
+{
+    for (; i + 1 < u->saved_count; i++) u->saved[i] = u->saved[i + 1];
+    u->saved_count--;
+    u->saved_dirty = 1;
+}
+
+static void goto_start(SmzUi *u)
+{
+    u->screen = UI_START;
+    u->start_cursor = 2;
+    u->start_col = 0;
+    u->start_from = u->run_mode == 2 ? UI_CREATE : u->run_mode == 3 ? UI_SAVED : UI_MODE;
+}
+
+static void begin_run(SmzUi *u, int mode, const char *label, const char *spec)
+{
+    reset_values(u);
+    apply_spec(u, spec);
+    u->run_mode = mode;
+    snprintf(u->start_label, sizeof u->start_label, "%s", label);
+    if (mode == 2) { u->screen = UI_CREATE; u->level = LEVEL_RUN; for (int l = 0; l < LEVEL_COUNT; l++) u->cursor[l] = u->scroll[l] = 0; }
+    else goto_start(u);
+}
+
+static int mode_rows(const SmzUi *u) { return u->saved_count > 0 ? 4 : 3; }
+
+#define KEY_CHARS "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-.'!"
+#define KEY_COLS 10
+#define KEY_ROWS 4
+#define KEY_COUNT (KEY_COLS * KEY_ROWS)
+#define KEY_CTRL 4        /* Space, Delete, Save, Cancel */
+
+static void name_input(SmzUi *u, UiButton b)
+{
+    int c = u->key_cursor;
+    if (b == BTN_B) { u->screen = UI_CREATE; return; }
+    if (b == BTN_L) { if (u->name_len) u->name[--u->name_len] = 0; return; }
+    if (b == BTN_R) { if (u->name_len < (int)sizeof u->name - 1) { u->name[u->name_len++] = ' '; u->name[u->name_len] = 0; } return; }
+    if (b == BTN_LEFT || b == BTN_RIGHT) {
+        int d = b == BTN_LEFT ? -1 : 1;
+        if (c < KEY_COUNT) u->key_cursor = c / KEY_COLS * KEY_COLS + (c % KEY_COLS + d + KEY_COLS) % KEY_COLS;
+        else u->key_cursor = KEY_COUNT + (c - KEY_COUNT + d + KEY_CTRL) % KEY_CTRL;
+    } else if (b == BTN_UP || b == BTN_DOWN) {
+        if (c < KEY_COUNT) {
+            int row = c / KEY_COLS, col = c % KEY_COLS;
+            if (b == BTN_UP) u->key_cursor = row ? c - KEY_COLS : KEY_COUNT + col * KEY_CTRL / KEY_COLS;
+            else u->key_cursor = row < KEY_ROWS - 1 ? c + KEY_COLS : KEY_COUNT + col * KEY_CTRL / KEY_COLS;
+        } else {
+            int k = c - KEY_COUNT;
+            u->key_cursor = b == BTN_UP ? (KEY_ROWS - 1) * KEY_COLS + k * KEY_COLS / KEY_CTRL : k * KEY_COLS / KEY_CTRL;
+        }
+    } else if (b == BTN_A) {
+        if (c < KEY_COUNT) { if (u->name_len < (int)sizeof u->name - 1) { u->name[u->name_len++] = KEY_CHARS[c]; u->name[u->name_len] = 0; } }
+        else switch (c - KEY_COUNT) {
+        case 0: if (u->name_len < (int)sizeof u->name - 1) { u->name[u->name_len++] = ' '; u->name[u->name_len] = 0; } break;
+        case 1: if (u->name_len) u->name[--u->name_len] = 0; break;
+        case 2: {
+            char spec[UI_SPEC_LEN];
+            int len = u->name_len;
+            while (len && u->name[len - 1] == ' ') u->name[--len] = 0;
+            if (!len) break;
+            make_spec(u, spec, sizeof spec);
+            saved_add(u, u->name, spec);
+            snprintf(u->notice, sizeof u->notice, "Saved: %.20s", u->name);
+            u->screen = UI_CREATE;
+            break;
+        }
+        default: u->screen = UI_CREATE; break;
+        }
+    }
+}
+
+static void saved_input(SmzUi *u, UiButton b)
+{
+    int n = u->saved_count;
+    if (!n) { u->screen = UI_MODE; return; }
+    if (b == BTN_UP || b == BTN_DOWN) {
+        u->saved_cursor = (u->saved_cursor + (b == BTN_UP ? n - 1 : 1)) % n;
+        u->saved_col = u->saved_confirm = 0;
+    } else if (b == BTN_LEFT) u->saved_col = u->saved_confirm = 0;
+    else if (b == BTN_RIGHT) u->saved_col = 1;
+    else if (b == BTN_B) { if (u->saved_confirm) u->saved_confirm = 0; else u->screen = UI_MODE; }
+    else if (b == BTN_A) {
+        const UiSaved *s = &u->saved[u->saved_cursor];
+        if (!u->saved_col) begin_run(u, 3, s->name, s->spec);
+        else if (!u->saved_confirm) u->saved_confirm = 1;
+        else {
+            saved_remove(u, u->saved_cursor);
+            u->saved_confirm = u->saved_col = 0;
+            if (u->saved_cursor >= u->saved_count) u->saved_cursor = u->saved_count ? u->saved_count - 1 : 0;
+            if (!u->saved_count) u->screen = UI_MODE;
+        }
+    }
+    if (u->saved_cursor < u->saved_scroll) u->saved_scroll = u->saved_cursor;
+    if (u->saved_cursor >= u->saved_scroll + 5) u->saved_scroll = u->saved_cursor - 4;
+}
+
+static void random_sprite(SmzUi *u, int game)
+{
+    int n = u->sprite_count[game];
+    if (n < 2) return;
+    u->rng ^= u->rng << 13; u->rng ^= u->rng >> 17; u->rng ^= u->rng << 5;
+    u->value[game ? UIO_SAMUS : UIO_LINK] = 1 + (int)(u->rng % (uint32_t)(n - 1));
+}
+
+static void start_input(SmzUi *u, UiButton b)
+{
+    if (b == BTN_B) { u->screen = u->start_from; return; }
+    if (b == BTN_UP) u->start_cursor = (u->start_cursor + 2) % 3;
+    else if (b == BTN_DOWN) u->start_cursor = (u->start_cursor + 1) % 3;
+    else if (b == BTN_LEFT) u->start_col = 0;
+    else if (b == BTN_RIGHT) u->start_col = u->start_cursor < 2;
+    else if (b == BTN_A) {
+        if (u->start_cursor == 2) { u->action = ACT_GENERATE; u->action_slot = u->active_slot; }
+        else if (u->start_col) random_sprite(u, u->start_cursor);
+        else {
+            u->sprite_game = u->start_cursor;
+            u->sprite_cursor = u->value[u->start_cursor ? UIO_SAMUS : UIO_LINK];
+            u->back = UI_START; u->screen = UI_SPRITES;
+        }
+    }
+    if (u->start_cursor == 2) u->start_col = 0;
+}
+
+static void mode_input(SmzUi *u, UiButton b)
+{
+    int n = mode_rows(u);
+    if (b == BTN_UP) u->mode_cursor = (u->mode_cursor + n - 1) % n;
+    else if (b == BTN_DOWN) u->mode_cursor = (u->mode_cursor + 1) % n;
+    else if (b == BTN_B) u->screen = UI_SLOTS_SCREEN;
+    else if (b == BTN_A) switch (u->mode_cursor) {
+    case 0: begin_run(u, 0, CHILL.name, CHILL.spec); break;
+    case 1: begin_run(u, 1, ORIGINAL.name, ORIGINAL.spec); break;
+    case 2: begin_run(u, 2, "Custom", ""); break;
+    default: u->screen = UI_SAVED; u->saved_cursor = u->saved_scroll = u->saved_col = u->saved_confirm = 0; break;
+    }
+}
+
 void ui_input(SmzUi *u, UiButton b)
 {
+    u->notice[0] = 0;
     switch (u->screen) {
     case UI_SLOTS_SCREEN:
         if (b == BTN_UP || b == BTN_DOWN) { u->slot_cursor = (u->slot_cursor + (b == BTN_UP ? u->slot_count - 1 : 1)) % u->slot_count; slot_view(u); }
@@ -134,7 +409,7 @@ void ui_input(SmzUi *u, UiButton b)
         else if (b == BTN_A) {
             u->active_slot = u->slot_cursor;
             if (u->slots[u->slot_cursor].used) { u->screen = UI_SLOT_MENU; u->menu_cursor = 0; }
-            else { u->screen = UI_CREATE; u->level = LEVEL_RUN; for (int l = 0; l < LEVEL_COUNT; l++) u->cursor[l] = u->scroll[l] = 0; }
+            else { u->screen = UI_MODE; u->mode_cursor = 0; }
         }
         break;
     case UI_SLOT_MENU:
@@ -156,14 +431,21 @@ void ui_input(SmzUi *u, UiButton b)
     case UI_CREATE: {
         int idx[UI_MAX_OPTS], n = visible(u, u->level, idx);
         int *cur = &u->cursor[u->level], *scr = &u->scroll[u->level];
-        int rows = n + 1;                                   /* last row is the Create button */
+        int rows = n + 2;                                   /* then Save as custom and Next */
         if (b == BTN_UP) move(cur, scr, rows, -1);
         else if (b == BTN_DOWN) move(cur, scr, rows, 1);
-        else if (b == BTN_B) u->screen = UI_SLOTS_SCREEN;
+        else if (b == BTN_B) u->screen = UI_MODE;
         else if (b == BTN_L) { if (u->level > LEVEL_RUN) u->level--; }
         else if (b == BTN_R) { if (u->level < LEVEL_ITEMS) u->level++; }
         else if (*cur == n) {
-            if (b == BTN_A) { u->action = ACT_GENERATE; u->action_slot = u->active_slot; }
+            if (b == BTN_A) {
+                snprintf(u->name, sizeof u->name, "Custom %d", u->saved_count + 1);
+                u->name_len = (int)strlen(u->name);
+                u->key_cursor = 0;
+                u->screen = UI_NAME;
+            }
+        } else if (*cur == n + 1) {
+            if (b == BTN_A) { u->run_mode = 2; goto_start(u); }
         } else {
             const UiOptDef *d = &UI_OPTS[idx[*cur]];
             if (d->kind == OPT_SPRITE && b == BTN_A) {
@@ -191,13 +473,17 @@ void ui_input(SmzUi *u, UiButton b)
                 u->sprite_cursor = c;
             }
         }
-        if (b == BTN_B) u->screen = UI_CREATE;
+        if (b == BTN_B) u->screen = u->back;
         else if (b == BTN_A) {
             u->value[sprite_opt(u->sprite_game)] = u->sprite_cursor;
-            u->screen = UI_CREATE;
+            u->screen = u->back;
         }
         break;
     }
+    case UI_MODE: mode_input(u, b); break;
+    case UI_SAVED: saved_input(u, b); break;
+    case UI_NAME: name_input(u, b); break;
+    case UI_START: start_input(u, b); break;
     case UI_BUSY: break;
     }
 }
@@ -222,10 +508,20 @@ void ui_touch(SmzUi *u, int x, int y)
         case H_ROW: u->cursor[u->level] = t->idx; ui_input(u, BTN_A); break;
         case H_SCROLL: {
             int idx[UI_MAX_OPTS], n = visible(u, u->level, idx);
-            for (int k = 0; k < 3; k++) move(&u->cursor[u->level], &u->scroll[u->level], n + 1, t->idx);
+            for (int k = 0; k < 3; k++) move(&u->cursor[u->level], &u->scroll[u->level], n + 2, t->idx);
             break;
         }
-        case H_CREATE: u->action = ACT_GENERATE; u->action_slot = u->active_slot; break;
+        case H_CREATE: u->run_mode = 2; goto_start(u); break;
+        case H_MODE: u->mode_cursor = t->idx; ui_input(u, BTN_A); break;
+        case H_SAVED: u->saved_cursor = t->idx; u->saved_col = 0; u->saved_confirm = 0; ui_input(u, BTN_A); break;
+        case H_SAVED_DEL: u->saved_cursor = t->idx; u->saved_col = 1; ui_input(u, BTN_A); break;
+        case H_KEY: u->key_cursor = t->idx; ui_input(u, BTN_A); break;
+        case H_START: {   /* 0, 1 sprite rows, 2, 3 their Random chips, 4 Start */
+            u->start_cursor = t->idx == 4 ? 2 : t->idx & 1;
+            u->start_col = t->idx == 2 || t->idx == 3;
+            ui_input(u, BTN_A);
+            break;
+        }
         case H_SPRITE: u->sprite_cursor = t->idx; ui_input(u, BTN_A); break;
         }
         return;
@@ -239,18 +535,19 @@ static void title(SmzUi *u, const char *t)
     text(u, 8, 8, C_ACCENT, 0, t);
 }
 
-void ui_value_text(const SmzUi *u, int opt, char *out, size_t n)
+static void fmt_value(const SmzUi *u, int opt, int v, char *out, size_t n)
 {
     const UiOptDef *d = &UI_OPTS[opt];
-    int v = u->value[opt];
     switch (d->kind) {
     case OPT_BOOL: snprintf(out, n, "%s", v ? "On" : "Off"); break;
     case OPT_INT: snprintf(out, n, "%d", v); break;
     case OPT_SEED: if (v) snprintf(out, n, "%d", v); else snprintf(out, n, "Random"); break;
-    case OPT_ENUM: snprintf(out, n, "%s", d->names[v - d->min]); break;
+    case OPT_ENUM: snprintf(out, n, "%s", v >= d->min && v <= d->max ? d->names[v - d->min] : "?"); break;
     case OPT_SPRITE: { int g = opt == UIO_MUSIC ? 3 : opt == UIO_PLANDO ? 2 : opt == UIO_SAMUS; snprintf(out, n, "%s", v < u->sprite_count[g] ? u->sprites[g][v] : u->sprites[g][0]); break; }
     }
 }
+
+void ui_value_text(const SmzUi *u, int opt, char *out, size_t n) { fmt_value(u, opt, u->value[opt], out, n); }
 
 void ui_draw(SmzUi *u)
 {
@@ -325,11 +622,12 @@ void ui_draw(SmzUi *u)
                 text(u, x + 24, 8, C_TEXT, 1, TABS[t]);
             }
         }
-        for (int r = 0; r < ROWS_SHOWN && scr + r <= n; r++) {
+        for (int r = 0; r < ROWS_SHOWN && scr + r <= n + 1; r++) {
             int row = scr + r, y = LIST_Y + r * ROW_H;
             rect(u, 4, y, UI_W - 40, ROW_H - 2, row == cur ? C_SEL : C_PANEL);
             hit(u, H_ROW, row, 4, y, UI_W - 40, ROW_H - 2);
-            if (row == n) { text(u, (UI_W - 40) / 2, y + 4, C_ACCENT, 1, "Create run"); continue; }
+            if (row == n) { text(u, (UI_W - 40) / 2, y + 4, C_ACCENT, 1, "Save as custom..."); continue; }
+            if (row == n + 1) { text(u, (UI_W - 40) / 2, y + 4, C_ACCENT, 1, "Next: sprites and start"); continue; }
             ui_value_text(u, idx[row], val, sizeof val);
             text(u, 10, y + 4, C_TEXT, 0, UI_OPTS[idx[row]].label);
             text(u, UI_W - 46, y + 4, C_ACCENT, 2, val);
@@ -348,10 +646,10 @@ void ui_draw(SmzUi *u)
         text(u, UI_W - 18, LIST_Y + 98, C_ACCENT, 1, "v");
         hit(u, H_SCROLL, 1, UI_W - 32, LIST_Y + 74, 28, 66);
         rect(u, UI_W - 92, UI_H - 44, 88, 38, C_SEL);
-        text(u, UI_W - 48, UI_H - 30, C_ACCENT, 1, "Create run");
+        text(u, UI_W - 48, UI_H - 30, C_ACCENT, 1, "Next");
         hit(u, H_CREATE, 0, UI_W - 92, UI_H - 44, 88, 38);
         {
-            const char *tip = cur < n ? UI_OPTS[idx[cur]].tip : "Generates the seed on this device.";
+            const char *tip = u->notice[0] ? u->notice : cur < n ? UI_OPTS[idx[cur]].tip : cur == n ? "Saves these options under a name." : "Choose the sprites, then start.";
             char line[44];
             size_t len = strlen(tip), cut = len;
             if (len > 28) { cut = 28; while (cut > 0 && tip[cut] != 0x20) cut--; if (!cut) cut = 28; }
@@ -398,7 +696,7 @@ void ui_draw(SmzUi *u)
                 rect(u, x, y, GRID_CELL - 2, GRID_CELL - 2, i == u->sprite_cursor ? C_SEL : C_PANEL);
                 if (i == chosen) rect(u, x, y, GRID_CELL - 2, 3, C_ACCENT);
                 hit(u, H_SPRITE, i, x, y, GRID_CELL - 2, GRID_CELL - 2);
-                if (i == 0) text(u, x + (GRID_CELL - 2) / 2, y + GRID_CELL / 2 - 8, C_DIM, 1, "Default");
+                if (i == 0) text(u, x + (GRID_CELL - 2) / 2, y + GRID_CELL / 2 - 8, C_DIM, 1, "Original");
                 else {
                     char key[64];
                     snprintf(key, sizeof key, "%s/%s", g ? "samus" : "link", u->sprites[g][i]);
@@ -410,6 +708,98 @@ void ui_draw(SmzUi *u)
         snprintf(info, sizeof info, "%d/%d  %s", u->sprite_cursor + 1, n, u->sprites[g][u->sprite_cursor]);
         text(u, 6, UI_H - 18, C_TEXT, 0, info);
         text(u, 6, UI_H - 6, C_DIM, 0, "A pick  B back  L/R page");
+        break;
+    }
+    case UI_MODE: {
+        snprintf(buf, sizeof buf, "New run  -  Slot %d", u->active_slot + 1);
+        title(u, buf);
+        for (int r = 0; r < mode_rows(u); r++) {
+            int y = 36 + r * 50;
+            const char *name = r == 0 ? CHILL.name : r == 1 ? ORIGINAL.name : r == 2 ? "Custom" : "Saved customs";
+            char desc[48];
+            if (r == 0) snprintf(desc, sizeof desc, "%s", CHILL.desc);
+            else if (r == 1) snprintf(desc, sizeof desc, "%s", ORIGINAL.desc);
+            else if (r == 2) snprintf(desc, sizeof desc, "Pick every option yourself");
+            else snprintf(desc, sizeof desc, "%d saved", u->saved_count);
+            rect(u, 8, y, UI_W - 16, 44, r == u->mode_cursor ? C_SEL : C_PANEL);
+            rect(u, 8, y, 5, 44, C_ACCENT);
+            hit(u, H_MODE, r, 8, y, UI_W - 16, 44);
+            text(u, 20, y + 7, C_TEXT, 0, name);
+            text(u, 20, y + 25, C_DIM, 0, desc);
+        }
+        text(u, 6, UI_H - 6, C_DIM, 0, "A choose  B back");
+        break;
+    }
+    case UI_SAVED: {
+        snprintf(buf, sizeof buf, "Saved customs  (%d/%d)", u->saved_cursor + 1, u->saved_count);
+        title(u, buf);
+        for (int r = 0; r < 5 && u->saved_scroll + r < u->saved_count; r++) {
+            int i = u->saved_scroll + r, y = 34 + r * 38;
+            char sum[48];
+            spec_summary(u, u->saved[i].spec, sum, 33);
+            rect(u, 6, y, UI_W - 70, 34, i == u->saved_cursor && !u->saved_col ? C_SEL : C_PANEL);
+            hit(u, H_SAVED, i, 6, y, UI_W - 70, 34);
+            rect(u, UI_W - 60, y, 54, 34, i == u->saved_cursor && u->saved_col ? C_SEL : C_PANEL);
+            hit(u, H_SAVED_DEL, i, UI_W - 60, y, 54, 34);
+            if (i == u->saved_cursor && u->saved_confirm) {
+                text(u, 12, y + 4, C_WARN, 0, "Delete this custom?");
+                text(u, 12, y + 19, C_DIM, 0, "A yes   B no");
+                text(u, UI_W - 33, y + 11, C_WARN, 1, "Sure?");
+            } else {
+                text(u, 12, y + 4, C_TEXT, 0, u->saved[i].name);
+                text(u, 12, y + 19, C_DIM, 0, sum);
+                text(u, UI_W - 33, y + 11, C_WARN, 1, "Delete");
+            }
+        }
+        text(u, 6, UI_H - 6, C_DIM, 0, "A choose  Right: delete  B back");
+        break;
+    }
+    case UI_NAME: {
+        title(u, "Save custom as");
+        char field[40];
+        snprintf(field, sizeof field, "%s_", u->name);
+        rect(u, 10, 32, UI_W - 20, 24, C_PANEL);
+        text(u, 16, 38, C_TEXT, 0, field);
+        for (int k = 0; k < KEY_COUNT; k++) {
+            int x = 10 + (k % KEY_COLS) * 30, y = 62 + (k / KEY_COLS) * 30;
+            char ch[2] = {KEY_CHARS[k], 0};
+            rect(u, x, y, 28, 28, k == u->key_cursor ? C_SEL : C_PANEL);
+            hit(u, H_KEY, k, x, y, 28, 28);
+            text(u, x + 14, y + 8, C_TEXT, 1, ch);
+        }
+        static const char *const CTRL[KEY_CTRL] = {"Space", "Delete", "Save", "Cancel"};
+        for (int k = 0; k < KEY_CTRL; k++) {
+            int x = 10 + k * 75;
+            rect(u, x, 186, 73, 26, KEY_COUNT + k == u->key_cursor ? C_SEL : C_PANEL);
+            hit(u, H_KEY, KEY_COUNT + k, x, 186, 73, 26);
+            text(u, x + 36, 192, k == 2 ? C_ACCENT : C_TEXT, 1, CTRL[k]);
+        }
+        text(u, 6, UI_H - 6, C_DIM, 0, "A type  L delete  R space  B back");
+        break;
+    }
+    case UI_START: {
+        snprintf(buf, sizeof buf, "%s  -  Sprites", u->start_label);
+        title(u, buf);
+        for (int g = 0; g < 2; g++) {
+            int y = 34 + g * 62, v = u->value[g ? UIO_SAMUS : UIO_LINK];
+            if (v >= u->sprite_count[g]) v = 0;
+            rect(u, 8, y, 218, 56, u->start_cursor == g && !u->start_col ? C_SEL : C_PANEL);
+            hit(u, H_START, g, 8, y, 218, 56);
+            rect(u, 232, y, 80, 56, u->start_cursor == g && u->start_col ? C_SEL : C_PANEL);
+            hit(u, H_START, 2 + g, 232, y, 80, 56);
+            if (v > 0) {
+                char key[64];
+                snprintf(key, sizeof key, "%s/%s", g ? "samus" : "link", u->sprites[g][v]);
+                put(u, 2, 14, y + 4, 48, 48, C_TEXT, 0, key);
+            } else text(u, 38, y + 22, C_DIM, 1, "Orig.");
+            text(u, 72, y + 10, C_DIM, 0, g ? "Samus" : "Link");
+            text(u, 72, y + 30, C_ACCENT, 0, u->sprites[g][v]);
+            text(u, 272, y + 22, C_ACCENT, 1, "Random");
+        }
+        rect(u, 8, 164, UI_W - 16, 44, u->start_cursor == 2 ? C_SEL : C_PANEL);
+        hit(u, H_START, 4, 8, 164, UI_W - 16, 44);
+        text(u, UI_W / 2, 180, C_ACCENT, 1, "Start");
+        text(u, 6, UI_H - 6, C_DIM, 0, "A choose  Right: Random  B back");
         break;
     }
     case UI_BUSY:

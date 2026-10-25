@@ -78,10 +78,10 @@ const int UI_OPT_COUNT = sizeof UI_OPTS / sizeof UI_OPTS[0];
 /* The Create run tabs: the run itself, what only touches one game, and how it is played. */
 const char *const UI_TABS[LEVEL_ITEMS][24] = {
     {"Seed", "GameMode", "Keysanity", "ItemPlacement", "HelpMode", "HelpCount", "MapMode", "Plando", NULL},
-    {"GanonCrystals", "GtCrystals", "PyramidHole", "LinkSprite", "LightDarkRooms", "FireRodDarkRooms", "SwordOnlyDarkRooms",
+    {"GanonCrystals", "GtCrystals", "PyramidHole", "LightDarkRooms", "FireRodDarkRooms", "SwordOnlyDarkRooms",
      "InfiniteBombJump", "MoatSpeedBooster", "LightWorldSouthFakeFlippers", "KholdstareNeedsCaneOfSomaria", "ZoraNeedsRupeeItems",
      "QuarterMagic", "PreventLowResourceDarkWorld", NULL},
-    {"TourianBosses", "TourianBossDoor", "SamusSprite", "EtecoonsJingle", "WallJumpDifficulty", "NerfedCharge", "QuickMorph",
+    {"TourianBosses", "TourianBossDoor", "EtecoonsJingle", "WallJumpDifficulty", "NerfedCharge", "QuickMorph",
      "SpazersInPool", "SpazersRequired", "PreventScrewAttackSoftLock", "PreventFivePowerBombSeed", "LeftSandPitRequiresSpringBall",
      "LaunchPadRequiresIceBeam", "WaterwayNeedsGravitySuit", "EasyEastCrateriaSkyItem", "EasyBlueBrinstarTop", "ParlorSpeedBooster",
      "MockBall", NULL},

@@ -140,7 +140,7 @@ new file mode 100644
 index 0000000..88c7fc0
 --- /dev/null
 +++ b/source/smz3run.cpp
-@@ -0,0 +1,499 @@
+@@ -0,0 +1,522 @@
 +// SMZ3 runs: the shared C menu (core/ui) drawn on the second screen, and offline generation (core/gen).
 +#include <3ds.h>
 +#include <dirent.h>
@@ -461,6 +461,27 @@ index 0000000..88c7fc0
 +    remove(path);
 +}
 +
++#define SAVED_FILE SMZ_DIR "/saved_customs.txt"
++
++static void loadSavedCustoms(SmzUi *u)
++{
++    size_t len = 0;
++    unsigned char *data = readFile(SAVED_FILE, &len);
++    if (!data) { ui_saved_load(u, NULL); return; }
++    char *text = (char *)malloc(len + 1);
++    if (text) { memcpy(text, data, len); text[len] = 0; ui_saved_load(u, text); free(text); }
++    free(data);
++}
++
++static void storeSavedCustoms(SmzUi *u)
++{
++    static char buf[UI_MAX_SAVED * (UI_SPEC_LEN + 40)];
++    if (!ui_saved_dirty(u) || ui_saved_text(u, buf, sizeof buf) < 0) return;
++    mkdir(SMZ_DIR, 0777);
++    FILE *f = fopen(SAVED_FILE, "wb");
++    if (f) { fwrite(buf, 1, strlen(buf), f); fclose(f); }
++}
++
 +bool smz3RunMenu(char *romPathOut, size_t cap)
 +{
 +    static SmzUi ui;
@@ -477,6 +498,7 @@ index 0000000..88c7fc0
 +    n = listPlandos(SMZ_DIR "/plando", plandoNames, UI_MAX_SPRITES - 1);
 +    for (int i = 0; i < n; i++) list[i] = plandoNames[i];
 +    ui_set_sprites(&ui, 2, list, n);
++    loadSavedCustoms(&ui);
 +    refreshSlots(&ui);
 +
 +    bool chosen = false;
@@ -504,6 +526,7 @@ index 0000000..88c7fc0
 +            hidTouchRead(&t);
 +            ui_touch(&ui, t.px, t.py);
 +        }
++        storeSavedCustoms(&ui);
 +        if (ui.action != ACT_NONE) {
 +            int act = ui.action, slot = ui.action_slot;
 +            ui.action = ACT_NONE;
