@@ -1785,10 +1785,10 @@ index 0000000..2056545
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3DungeonMaps.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3DungeonMaps.kt
 new file mode 100644
-index 0000000..57c8a87
+index 0000000..0edc8fb
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3DungeonMaps.kt
-@@ -0,0 +1,150 @@
+@@ -0,0 +1,155 @@
 +package com.swordfish.lemuroid.app.shared.game.viewmodel
 +
 +import android.content.Context
@@ -1892,28 +1892,33 @@ index 0000000..57c8a87
 +
 +    private val cache = HashMap<String, Bitmap>()
 +
++    /** Rooms not visited yet on a run that shows the whole map: the same picture, much fainter. */
++    private val faint = android.graphics.Paint().apply { alpha = 100 }
++
 +    /**
-+     * The 80 x 80 picture of one floor. [showAll] draws every room completely; otherwise each room quadrant shows the full
-+     * drawing once Link has been there and the outline when he carries the dungeon's map, and nothing else.
++     * The 80 x 80 picture of one floor. A room quadrant shows the full drawing once Link has been there. The rest is faint when
++     * the run shows the whole map ([showAll]); otherwise it is the outline the dungeon's map item reveals, or nothing.
 +     */
 +    fun render(d: Int, idx: Int, data: DungeonData?, showAll: Boolean): Bitmap? {
 +        val fullBmp = full ?: return null
 +        val hintBmp = hint ?: return null
 +        val grid = grid(d, idx) ?: return null
 +        val haveMap = data != null && (data.mapMask and (0x8000 shr d)) != 0
-+        val seen = IntArray(25) { c -> if (showAll) 0xF else if (grid[c] == 0xF || data == null) 0 else data.roomFlags[grid[c] * 2].toInt() and 0xF }
-+        val key = "$d/$idx/${seen.joinToString(",")}/$haveMap"
++        val seen = IntArray(25) { c -> if (grid[c] == 0xF || data == null) 0 else data.roomFlags[grid[c] * 2].toInt() and 0xF }
++        val key = "$d/$idx/${seen.joinToString(",")}/$haveMap/$showAll"
 +        cache[key]?.let { return it }
 +        val bmp = Bitmap.createBitmap(FLOOR, FLOOR, Bitmap.Config.ARGB_8888)
 +        val canvas = Canvas(bmp)
 +        val src = Rect(); val dst = Rect()
 +        for (c in 0 until 25) for (q in 0 until 4) {
-+            val atlas = if (seen[c] and (8 shr q) != 0) fullBmp else if (haveMap) hintBmp else continue
++            val visited = seen[c] and (8 shr q) != 0
++            val atlas = if (visited || showAll) fullBmp else if (haveMap) hintBmp else continue
++            val paint = if (visited || !showAll) null else faint
 +            val ox = (c % 5) * ROOM + (q and 1) * 8
 +            val oy = (c / 5) * ROOM + (q shr 1) * 8
 +            src.set(idx * cell + ox, d * cell + oy, idx * cell + ox + 8, d * cell + oy + 8)
 +            dst.set(ox, oy, ox + 8, oy + 8)
-+            canvas.drawBitmap(atlas, src, dst, null)
++            canvas.drawBitmap(atlas, src, dst, paint)
 +        }
 +        if (cache.size > 64) cache.clear()
 +        cache[key] = bmp
@@ -1941,10 +1946,10 @@ index 0000000..57c8a87
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3DungeonPanel.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3DungeonPanel.kt
 new file mode 100644
-index 0000000..cc831cf
+index 0000000..99c0655
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3DungeonPanel.kt
-@@ -0,0 +1,219 @@
+@@ -0,0 +1,232 @@
 +package com.swordfish.lemuroid.app.shared.game.viewmodel
 +
 +import android.graphics.Canvas
@@ -1967,6 +1972,9 @@ index 0000000..cc831cf
 +        }
 +    var data: DungeonData? = null
 +    var showAll = false
++    /** The big map has the buttons; the mini map only follows Link, at the zoom the player picked. */
++    var interactive = true
++    var zoom = 1f
 +    /** Per room, its checks still to do: the room flag bit shifted left twice, plus 1 when in logic or 2 when out of logic. */
 +    var pendingRooms: Map<Int, List<Int>> = emptyMap()
 +
@@ -1994,7 +2002,7 @@ index 0000000..cc831cf
 +    private val blackRim = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; color = Color.BLACK; strokeWidth = 3f }
 +
 +    /** True when the view should draw the dungeon picture rather than the world map. */
-+    fun showsDungeon(): Boolean = maps.available && when (mode) {
++    fun showsDungeon(): Boolean = maps.available && if (!interactive) live != null else when (mode) {
 +        MODE_WORLD -> false
 +        MODE_PICKED -> true
 +        else -> live != null
@@ -2003,8 +2011,8 @@ index 0000000..cc831cf
 +    /** True when there is something to offer on the world map (the maps are installed). */
 +    fun available() = maps.available
 +
-+    private fun shownD() = if (mode == MODE_PICKED) pickedD else live?.d ?: pickedD
-+    private fun shownIdx() = if (mode == MODE_PICKED) pickedIdx else live?.idx ?: pickedIdx
++    private fun shownD() = if (interactive && mode == MODE_PICKED) pickedD else live?.d ?: pickedD
++    private fun shownIdx() = if (interactive && mode == MODE_PICKED) pickedIdx else live?.idx ?: pickedIdx
 +
 +    private fun pick(d: Int, idx: Int) {
 +        pickedD = d.coerceIn(0, 13)
@@ -2032,7 +2040,7 @@ index 0000000..cc831cf
 +    /** The chip that leads from the world map into the dungeon pictures. */
 +    fun drawWorldChip(canvas: Canvas, h: Int) {
 +        hits.clear()
-+        if (!maps.available) return
++        if (!maps.available || !interactive) return
 +        val d = density
 +        chip(canvas, RectF(6f * d, h - 38f * d, 98f * d, h - 6f * d), "DUNGEONS") {
 +            if (live == null) pick(pickedD, pickedIdx) else mode = MODE_AUTO
@@ -2048,8 +2056,10 @@ index 0000000..cc831cf
 +        val count = maps.floorCount(dn)
 +        val lv = live
 +
++        val colW = if (interactive) 50f * d else 0f
++        val barH = if (interactive) 40f * d else 0f
++        if (interactive) {
 +        // floor list, top floor first
-+        val colW = 50f * d
 +        for (i in count - 1 downTo 0) {
 +            val row = count - 1 - i
 +            val r = RectF(6f * d, 44f * d + row * 38f * d, 6f * d + 44f * d, 44f * d + row * 38f * d + 32f * d)
@@ -2057,7 +2067,6 @@ index 0000000..cc831cf
 +        }
 +
 +        // dungeon switcher along the bottom
-+        val barH = 40f * d
 +        val prev = RectF(colW + 6f * d, h - barH - 4f * d, colW + 6f * d + 44f * d, h - 4f * d)
 +        val next = RectF(w - 6f * d - 44f * d, h - barH - 4f * d, w - 6f * d, h - 4f * d)
 +        chip(canvas, prev, "<") { pick((dn + 13) % 14, maps.below((dn + 13) % 14)) }
@@ -2074,26 +2083,35 @@ index 0000000..cc831cf
 +            chip(canvas, RectF(6f * d, 44f * d + count * 38f * d, 6f * d + 44f * d, 44f * d + count * 38f * d + 32f * d), "HERE") { mode = MODE_AUTO; view.invalidate() }
 +        }
 +
++        }
++
 +        // the floor, cropped to the part of the grid this dungeon uses
 +        val bmp = maps.render(dn, idx, data, showAll) ?: return
 +        val b = maps.bounds(dn)
 +        val cols = b[2] - b[0] + 1
 +        val rows = b[3] - b[1] + 1
 +        val areaL = colW + 6f * d
-+        val areaT = 44f * d
++        val areaT = if (interactive) 44f * d else 30f * d
 +        val areaR = w - 6f * d
-+        val areaB = h - barH - 12f * d
-+        val scale = minOf((areaR - areaL) / (cols * Smz3DungeonMaps.ROOM), (areaB - areaT) / (rows * Smz3DungeonMaps.ROOM))
++        val areaB = if (interactive) h - barH - 12f * d else h - 6f * d
++        var scale = minOf((areaR - areaL) / (cols * Smz3DungeonMaps.ROOM), (areaB - areaT) / (rows * Smz3DungeonMaps.ROOM))
++        if (!interactive) scale *= zoom
 +        val picW = cols * Smz3DungeonMaps.ROOM * scale
 +        val picH = rows * Smz3DungeonMaps.ROOM * scale
-+        val left = areaL + ((areaR - areaL) - picW) / 2f
-+        val top = areaT + ((areaB - areaT) - picH) / 2f
++        var left = areaL + ((areaR - areaL) - picW) / 2f
++        var top = areaT + ((areaB - areaT) - picH) / 2f
++        if (!interactive && zoom > 1f && lv != null && lv.cell >= 0 && lv.d == dn && lv.idx == idx) {
++            // zoomed in, the picture follows Link
++            left = (areaL + areaR) / 2f - ((lv.cell % 5 - b[0]) * Smz3DungeonMaps.ROOM + lv.lx + 0.5f) * scale
++            top = (areaT + areaB) / 2f - ((lv.cell / 5 - b[1]) * Smz3DungeonMaps.ROOM + lv.ly + 0.5f) * scale
++        }
 +        src.set(b[0] * Smz3DungeonMaps.ROOM, b[1] * Smz3DungeonMaps.ROOM, (b[2] + 1) * Smz3DungeonMaps.ROOM, (b[3] + 1) * Smz3DungeonMaps.ROOM)
 +        dst.set(left, top, left + picW, top + picH)
 +        canvas.drawBitmap(bmp, src, dst, bitmapPaint)
 +
 +        title.textSize = 16f * d
-+        canvas.drawText(maps.floorLabel(dn, idx) + "  (" + (idx + 1) + "/" + count + ")", left, areaT - 6f * d, title)
++        if (interactive) canvas.drawText(maps.floorLabel(dn, idx) + "  (" + (idx + 1) + "/" + count + ")", left, areaT - 6f * d, title)
++        else canvas.drawText(maps.name(dn) + "  " + maps.floorLabel(dn, idx), 8f * d, 22f * d, title)
 +
 +        // unopened checks: at their chest when the game's room data places it, else together at the room's centre
 +        val grid = maps.grid(dn, idx)
@@ -2791,10 +2809,10 @@ index 0000000..a893bff
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3MapView.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3MapView.kt
 new file mode 100644
-index 0000000..e408336
+index 0000000..156f7ff
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3MapView.kt
-@@ -0,0 +1,394 @@
+@@ -0,0 +1,438 @@
 +package com.swordfish.lemuroid.app.shared.game.viewmodel
 +
 +import android.content.Context
@@ -2976,7 +2994,37 @@ index 0000000..e408336
 +        invalidate()
 +    }
 +
-+    private val panel = Smz3DungeonPanel(this, Smz3DungeonMaps.get(context))
++    private val panel = Smz3DungeonPanel(this, Smz3DungeonMaps.get(context)).also { it.interactive = !follow; it.zoom = miniZoom }
++
++    private val zoomIn = RectF()
++    private val zoomOut = RectF()
++
++    private fun placeZoom() {
++        val d = resources.displayMetrics.density
++        zoomIn.set(width - 46f * d, height - 44f * d, width - 6f * d, height - 6f * d)
++        zoomOut.set(width - 92f * d, height - 44f * d, width - 52f * d, height - 6f * d)
++    }
++
++    private fun drawZoom(canvas: Canvas) {
++        placeZoom()
++        for ((r, label) in listOf(zoomIn to "+", zoomOut to "\u2212")) {
++            canvas.drawRoundRect(r, 8f, 8f, zoomFill)
++            canvas.drawRoundRect(r, 8f, 8f, zoomRim)
++            zoomText.textSize = r.height() * 0.6f
++            canvas.drawText(label, r.centerX(), r.centerY() + zoomText.textSize * 0.35f, zoomText)
++        }
++    }
++
++    private val zoomFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(200, 12, 16, 22) }
++    private val zoomRim = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 3f; color = Color.parseColor("#FFD54A") }
++    private val zoomText = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE; typeface = Typeface.DEFAULT_BOLD; textAlign = Paint.Align.CENTER }
++
++    private fun setMiniZoom(z: Float) {
++        miniZoom = z.coerceIn(0.5f, 4f)
++        panel.zoom = miniZoom
++        if (follow) centerOnPlayer()
++        invalidate()
++    }
 +    private val zeldaRoom: IntArray by lazy { IntArray(Smz3Native.locationCount()) { Smz3Native.zeldaLocationRoom(it) } }
 +
 +    /** Link's place in a dungeon (null outside) and what the game remembers about the dungeons. */
@@ -3030,7 +3078,7 @@ index 0000000..e408336
 +
 +    private fun centerOnPlayer() {
 +        val pos = position ?: return fit()
-+        val s = width / 240f
++        val s = width / 240f * miniZoom
 +        matrix.reset()
 +        matrix.postScale(s, s)
 +        matrix.postTranslate(width / 2f - pos.x * s, height / 2f - pos.y * s)
@@ -3072,11 +3120,21 @@ index 0000000..e408336
 +    }
 +
 +    private var panelDown = false
++    private var zoomDown = 0
 +
 +    /** Whether a touch lands on one of the dungeon panel's buttons (they exist after the first draw). */
 +    private fun panelHit(x: Float, y: Float) = panel.hitTest(x, y)
 +
 +    override fun onTouchEvent(event: MotionEvent): Boolean {
++        if (follow) {
++            placeZoom()
++            if (event.action == MotionEvent.ACTION_DOWN) zoomDown = if (zoomIn.contains(event.x, event.y)) 1 else if (zoomOut.contains(event.x, event.y)) -1 else 0
++            if (zoomDown != 0) {
++                if (event.action == MotionEvent.ACTION_UP) setMiniZoom(miniZoom * if (zoomDown > 0) 1.4f else 1f / 1.4f)
++                if (event.action == MotionEvent.ACTION_UP || event.action == MotionEvent.ACTION_CANCEL) zoomDown = 0
++                return true
++            }
++        }
 +        if (event.action == MotionEvent.ACTION_DOWN) panelDown = panel.available() && panelHit(event.x, event.y)
 +        if (panelDown) {
 +            if (event.action == MotionEvent.ACTION_UP) panel.tap(event.x, event.y)
@@ -3095,7 +3153,7 @@ index 0000000..e408336
 +
 +    override fun onDraw(canvas: Canvas) {
 +        canvas.drawColor(Color.parseColor("#0B0E12"))
-+        if (panel.showsDungeon()) { panel.drawDungeon(canvas, width, height); postInvalidateDelayed(175); return }
++        if (panel.showsDungeon()) { panel.drawDungeon(canvas, width, height); if (follow) drawZoom(canvas); postInvalidateDelayed(175); return }
 +        val bmp = bitmap ?: return
 +        if (follow) centerOnPlayer()
 +        canvas.save()
@@ -3181,9 +3239,13 @@ index 0000000..e408336
 +            }
 +        }
 +        panel.drawWorldChip(canvas, height)
++        if (follow) drawZoom(canvas)
 +    }
 +
 +    private companion object {
++        /** The mini map zoom the player picked, kept while the app runs. */
++        var miniZoom = 1f
++
 +        /** Size of the half-size combined map: the coordinate space of the tracker data. */
 +        const val MAP_W = 1623f
 +        const val MAP_H = 958f
