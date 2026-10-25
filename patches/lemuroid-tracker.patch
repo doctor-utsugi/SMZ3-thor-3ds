@@ -2510,10 +2510,10 @@ index 0000000..a893bff
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3MapView.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3MapView.kt
 new file mode 100644
-index 0000000..1b79762
+index 0000000..4f41c21
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3MapView.kt
-@@ -0,0 +1,385 @@
+@@ -0,0 +1,419 @@
 +package com.swordfish.lemuroid.app.shared.game.viewmodel
 +
 +import android.content.Context
@@ -2703,7 +2703,30 @@ index 0000000..1b79762
 +    fun setDungeon(spot: DungeonSpot?) {
 +        if (spot == null && dungeon == null) return
 +        dungeon = spot
++        if (spot == null) worldOverride = false
 +        invalidate()
++    }
++
++    /** True while the player asked for the world map although Link is inside a dungeon. */
++    private var worldOverride = false
++    private val chip = RectF()
++    private var chipDown = false
++    private val chipFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(215, 12, 16, 22) }
++    private val chipRim = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 3f; color = Color.parseColor("#FFD54A") }
++
++    private fun placeChip() {
++        val d = resources.displayMetrics.density
++        chip.set(width - 92f * d - 6f * d, 6f * d, width - 6f * d, 36f * d)
++    }
++
++    private fun drawChip(canvas: Canvas) {
++        placeChip()
++        canvas.drawRoundRect(chip, 8f, 8f, chipFill)
++        canvas.drawRoundRect(chip, 8f, 8f, chipRim)
++        dungeonText.textSize = chip.height() * 0.45f
++        dungeonText.textAlign = Paint.Align.CENTER
++        canvas.drawText(if (worldOverride) "DUNGEON" else "FULL MAP", chip.centerX(), chip.centerY() + dungeonText.textSize * 0.35f, dungeonText)
++        dungeonText.textAlign = Paint.Align.LEFT
 +    }
 +
 +    private fun drawDungeon(canvas: Canvas, d: DungeonSpot) {
@@ -2794,6 +2817,16 @@ index 0000000..1b79762
 +    }
 +
 +    override fun onTouchEvent(event: MotionEvent): Boolean {
++        if (dungeon != null) {
++            placeChip()
++            val inside = chip.contains(event.x, event.y)
++            if (event.action == MotionEvent.ACTION_DOWN) chipDown = inside
++            if (chipDown) {
++                if (event.action == MotionEvent.ACTION_UP && inside) { worldOverride = !worldOverride; invalidate() }
++                if (event.action == MotionEvent.ACTION_UP || event.action == MotionEvent.ACTION_CANCEL) chipDown = false
++                return true
++            }
++        }
 +        if (follow) {
 +            if (event.action == MotionEvent.ACTION_UP) performClick()
 +            return true
@@ -2806,7 +2839,7 @@ index 0000000..1b79762
 +
 +    override fun onDraw(canvas: Canvas) {
 +        canvas.drawColor(Color.parseColor("#0B0E12"))
-+        dungeon?.let { drawDungeon(canvas, it); postInvalidateDelayed(175); return }
++        dungeon?.let { if (!worldOverride) { drawDungeon(canvas, it); drawChip(canvas); postInvalidateDelayed(175); return } }
 +        val bmp = bitmap ?: return
 +        if (follow) centerOnPlayer()
 +        canvas.save()
@@ -2891,6 +2924,7 @@ index 0000000..1b79762
 +                canvas.drawCircle(pts[0], pts[1], pr * 0.45f, me)
 +            }
 +        }
++        if (dungeon != null) drawChip(canvas)
 +    }
 +
 +    private companion object {
