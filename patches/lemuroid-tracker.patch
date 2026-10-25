@@ -1566,10 +1566,10 @@ index 0000000..d973310
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Discovery.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Discovery.kt
 new file mode 100644
-index 0000000..c52e710
+index 0000000..fc93421
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Discovery.kt
-@@ -0,0 +1,181 @@
+@@ -0,0 +1,201 @@
 +package com.swordfish.lemuroid.app.shared.game.viewmodel
 +
 +import android.content.Context
@@ -1608,6 +1608,21 @@ index 0000000..c52e710
 +        val a = JSONArray(context.assets.open("smz3/map_markers.json").use { String(it.readBytes()) })
 +        (0 until a.length()).associate { i -> a.getJSONArray(i).let { m -> m.getInt(0) to MapPosition(m.getInt(1).toFloat(), m.getInt(2).toFloat()) } }
 +    }.getOrDefault(emptyMap())
++
++    /** Special overworld areas (Master Sword grove, Zora's domain) have no place on the map of their own: they sit on the marker of their item. */
++    private val specialArea: Map<Int, MapPosition> by lazy {
++        val found = HashMap<Int, MapPosition>()
++        for (i in 0 until Smz3Native.locationCount()) {
++            val name = Smz3Native.locationName(i)
++            val screen = when {
++                name.contains("Pedestal") -> 0x80
++                name.contains("Zora") && name.contains("Ledge") -> 0x81
++                else -> continue
++            }
++            markerPos[i]?.let { found[screen] = it }
++        }
++        found
++    }
 +
 +    val rooms = linkedSetOf<Int>()
 +    val screens = linkedSetOf<Int>()
@@ -1677,7 +1692,12 @@ index 0000000..c52e710
 +            position = marker ?: lastOverworld ?: position
 +            return
 +        }
-+        val screen = (w[0x8A].toInt() and 0x3F) + if (dark) 64 else 0
++        val area = w[0x8A].toInt() and 0xFF
++        if (area >= 0x80) {
++            position = specialArea[area] ?: lastOverworld ?: position
++            return
++        }
++        val screen = (area and 0x3F) + if (dark) 64 else 0
 +        if (screens.add(screen)) dirty = true
 +        val x = u16(w, 0x22).coerceIn(0, 4095)
 +        val y = u16(w, 0x20).coerceIn(0, 4095)
