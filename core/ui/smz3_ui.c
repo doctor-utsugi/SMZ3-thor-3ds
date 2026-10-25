@@ -607,7 +607,7 @@ static void slot_rich(SmzUi *u, int i, int y, int w)
     int total = t->zelda_total + t->metroid_total, done = t->zelda_cleared + t->metroid_cleared;
     int pct = total > 0 ? (int)((long long)done * 100 / total) : 0;
     char s[48];
-    int digits = pct >= 100 ? 3 : pct >= 10 ? 2 : 1, x = 14;
+    int digits = pct >= 100 ? 3 : pct >= 10 ? 2 : 1, x = 22;
     int color = pct >= 100 ? C_GREEN : C_ACCENT;
     for (int d = 0, div = digits == 3 ? 100 : digits == 2 ? 10 : 1; d < digits; d++, div /= 10) { big_digit(u, x, y + 9, pct / div % 10, 5, color); x += 18; }
     text(u, x, y + 24, C_DIM, 0, "%");
