@@ -470,3 +470,7 @@ Clean pass on the final commit: test-fill 10/10, test-patch 10/10, test-modes 40
 ## Zelda special overworld areas on the map
 
 `$8A` values of 0x80 and above (Master Sword grove 0x80, Zora's domain 0x81) were masked with `& 0x3F` and their local coordinates drawn as light-world coordinates, so Link appeared in the north-west forest and the wrong screen was marked as discovered. Those areas now sit on the marker of their item (Master Sword Pedestal, Zora's Ledge), other special areas keep the last overworld position, and none of them is added to the discovered screens. Verified on the Thor with a run standing in Zora's domain: the player ring is on the Zora marker in the north-east.
+
+## Items counter after a restart
+
+The Super Metroid items were read only while Metroid ran, so after reopening a run inside Zelda the cache was empty and "Items" dropped (29 to 17 on the owner's run). With Zelda current they are now read from the parked save-slot copy in SRAM (`$09A2` at `+0x2010`, so address + `0x166E`). Checked on the owner's state on the PC (29/54, same as before the restart) and on the Thor after reopening the run (29/54).

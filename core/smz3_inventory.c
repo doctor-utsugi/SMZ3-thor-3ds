@@ -92,8 +92,12 @@ void smz3_inventory(const uint8_t *wram, size_t wram_len, const uint8_t *sram, s
             }
             off = it->addr;
         } else {
-            if (cur != SMZ3_GAME_METROID) continue;
-            base = wram; len = wram_len; off = it->addr;
+            if (cur == SMZ3_GAME_METROID) {
+                base = wram; len = wram_len; off = it->addr;
+            } else {
+                /* While Zelda runs the Super Metroid save-slot copy is parked in SRAM; $09A2 sits at +0x2010. */
+                base = sram; len = sram_len; off = (size_t)it->addr + 0x166E;
+            }
         }
 
         unsigned v = 0, v2 = 0;
