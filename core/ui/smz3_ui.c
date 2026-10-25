@@ -578,24 +578,6 @@ static void big_digit(SmzUi *u, int x, int y, int d, int scale, int color)
     }
 }
 
-/* 7x7 pictures, one char per pixel: g green, o orange, w white, . empty */
-static const char *const ICON_LINK[7] = {"..ggg..", ".ggggg.", "gwwwwwg", ".wkwkw.", ".wwwww.", ".ggggg.", ".gg.gg."};
-static const char *const ICON_SAMUS[7] = {"..ooo..", ".ooooo.", "ogggggo", "ogggggo", ".ooooo.", "ooo.ooo", ".oo.oo."};
-
-static void icon(SmzUi *u, int x, int y, const char *const *rows, int scale)
-{
-    for (int r = 0; r < 7; r++) {
-        for (int c = 0; c < 7;) {
-            char ch = rows[r][c];
-            int e = c;
-            while (e < 7 && rows[r][e] == ch) e++;
-            int col = ch == 'g' ? C_GREEN : ch == 'o' ? C_ACCENT : ch == 'w' ? C_TEXT : ch == 'k' ? C_BG : -1;
-            if (col >= 0) rect(u, x + c * scale, y + r * scale, (e - c) * scale, scale, col);
-            c = e;
-        }
-    }
-}
-
 static void bar(SmzUi *u, int x, int y, int w, int num, int den, int color)
 {
     int fill = den > 0 && num > 0 ? (int)((long long)w * (num > den ? den : num) / den) : 0;
@@ -620,16 +602,14 @@ static void slot_rich(SmzUi *u, int i, int y, int w)
     long long sec = t->play_ms / 1000;
     snprintf(s, sizeof s, "%lld:%02lld:%02lld", sec / 3600, sec / 60 % 60, sec % 60);
     text(u, 8 + w - 8, y + 4, C_TEXT, 2, s);
-    icon(u, mx, y + 22, ICON_LINK, 2);
+    put(u, 2, mx, y + 15, 18, 27, C_TEXT, 0, "link/Original");     /* the games' own standing sprites (tools/gen_original_icons.py) */
     snprintf(s, sizeof s, "%d/%d", t->zelda_cleared, t->zelda_total);
-    text(u, mx + 17, y + 23, C_TEXT, 0, s);
-    bar(u, mx, y + 38, 62, t->zelda_cleared, t->zelda_total, C_GREEN);
-    icon(u, mx + 80, y + 22, ICON_SAMUS, 2);
+    text(u, mx + 24, y + 19, C_TEXT, 0, s);
+    bar(u, mx + 24, y + 36, 54, t->zelda_cleared, t->zelda_total, C_GREEN);
+    put(u, 2, mx + 84, y + 15, 18, 27, C_TEXT, 0, "samus/Original");
     snprintf(s, sizeof s, "%d/%d", t->metroid_cleared, t->metroid_total);
-    text(u, mx + 97, y + 23, C_TEXT, 0, s);
-    bar(u, mx + 80, y + 38, 62, t->metroid_cleared, t->metroid_total, C_ACCENT);
-    static const char *const GAME[4] = {"new", "Zelda", "Metroid", "done"};
-    text(u, 8 + w - 8, y + 24, C_DIM, 2, GAME[t->game >= 0 && t->game < 4 ? t->game : 0]);
+    text(u, mx + 108, y + 19, C_TEXT, 0, s);
+    bar(u, mx + 108, y + 36, 54, t->metroid_cleared, t->metroid_total, C_ACCENT);
 }
 
 void ui_draw(SmzUi *u)
@@ -780,8 +760,7 @@ void ui_draw(SmzUi *u)
                 rect(u, x, y, GRID_CELL - 2, GRID_CELL - 2, i == u->sprite_cursor ? C_SEL : C_PANEL);
                 if (i == chosen) rect(u, x, y, GRID_CELL - 2, 3, C_ACCENT);
                 hit(u, H_SPRITE, i, x, y, GRID_CELL - 2, GRID_CELL - 2);
-                if (i == 0) text(u, x + (GRID_CELL - 2) / 2, y + GRID_CELL / 2 - 8, C_DIM, 1, "Original");
-                else {
+                {
                     char key[64];
                     snprintf(key, sizeof key, "%s/%s", g ? "samus" : "link", u->sprites[g][i]);
                     put(u, 2, x + 2, y + 4, GRID_CELL - 6, GRID_CELL - 8, C_TEXT, 0, key);
@@ -871,11 +850,11 @@ void ui_draw(SmzUi *u)
             hit(u, H_START, g, 8, y, 218, 56);
             rect(u, 232, y, 80, 56, u->start_cursor == g && u->start_col ? C_SEL : C_PANEL);
             hit(u, H_START, 2 + g, 232, y, 80, 56);
-            if (v > 0) {
+            {
                 char key[64];
                 snprintf(key, sizeof key, "%s/%s", g ? "samus" : "link", u->sprites[g][v]);
                 put(u, 2, 14, y + 4, 48, 48, C_TEXT, 0, key);
-            } else text(u, 38, y + 22, C_DIM, 1, "Orig.");
+            }
             text(u, 72, y + 10, C_DIM, 0, g ? "Samus" : "Link");
             text(u, 72, y + 30, C_ACCENT, 0, u->sprites[g][v]);
             text(u, 272, y + 22, C_ACCENT, 1, "Random");
