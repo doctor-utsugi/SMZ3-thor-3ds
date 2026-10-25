@@ -480,3 +480,5 @@ The overworld screen that leads into a special area (Lost Woods for the Master S
 Large overworld areas (Lake Hylia, Death Mountain, Lost Woods...) are 2x2 screens named by `$8A` with their first screen only, so Link stood in a quadrant never marked as discovered. The screen under his coordinates (`y/512*8 + x/512`) is now marked too. Seen on the Thor in Lake Hylia: the quadrant under the player is lit; the other quadrants of that large area stay dim until visited. The map markers with a note also get a thicker pink rim (not yet seen with a note on the Thor).
 
 ITEMS tab grid: the cell size no longer comes from display metrics minus a guessed chrome height; a small `ViewGroup` sizes square cells from the width and height the page really gets (9 columns, 6 rows). Built, **not installed or seen on the Thor yet** (console offline).
+
+ITEMS grid seen on the Thor: all 54 cells (9 x 6) fit with a margin on every side, counts uncut. Recent items also confirmed on the owner's run: a Hi-Jump Boots pickup showed as the first entry.

@@ -2899,10 +2899,10 @@ index 0000000..18f46e9
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Presentation.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Presentation.kt
 new file mode 100644
-index 0000000..3ccdc08
+index 0000000..9cb8224
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Presentation.kt
-@@ -0,0 +1,709 @@
+@@ -0,0 +1,713 @@
 +package com.swordfish.lemuroid.app.shared.game.viewmodel
 +
 +import android.app.Presentation
@@ -3127,18 +3127,22 @@ index 0000000..3ccdc08
 +                val w = MeasureSpec.getSize(widthSpec)
 +                val h = MeasureSpec.getSize(heightSpec)
 +                val rows = (childCount + columns - 1) / columns
-+                val cell = minOf(w / columns, if (rows > 0) h / rows else w)
++                val iw = w - paddingLeft - paddingRight
++                val ih = h - paddingTop - paddingBottom
++                val cell = minOf(iw / columns, if (rows > 0) ih / rows else iw)
 +                val spec = MeasureSpec.makeMeasureSpec(cell, MeasureSpec.EXACTLY)
 +                for (i in 0 until childCount) getChildAt(i).measure(spec, spec)
 +                setMeasuredDimension(w, h)
 +            }
 +            override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) {
 +                val rows = (childCount + columns - 1) / columns
-+                val cell = minOf((r - l) / columns, if (rows > 0) (b - t) / rows else r - l)
-+                val left = ((r - l) - cell * columns) / 2
++                val iw = r - l - paddingLeft - paddingRight
++                val ih = b - t - paddingTop - paddingBottom
++                val cell = minOf(iw / columns, if (rows > 0) ih / rows else iw)
++                val left = paddingLeft + (iw - cell * columns) / 2
 +                for (i in 0 until childCount) {
 +                    val x = left + (i % columns) * cell
-+                    val y = (i / columns) * cell
++                    val y = paddingTop + (i / columns) * cell
 +                    getChildAt(i).layout(x, y, x + cell, y + cell)
 +                }
 +            }
@@ -3147,7 +3151,7 @@ index 0000000..3ccdc08
 +            for (i in 0 until Smz3Native.inventoryCount()) {
 +                val info = Smz3Native.inventoryInfo(i).split("|")
 +                if (info[0].toInt() != gameId) continue
-+                val cell = FrameLayout(context)
++                val cell = FrameLayout(context).apply { setPadding(dp(3), dp(3), dp(3), dp(3)) }
 +                val icon = ImageView(context).apply {
 +                    scaleType = ImageView.ScaleType.FIT_CENTER
 +                    runCatching {
@@ -3169,7 +3173,7 @@ index 0000000..3ccdc08
 +                cells += ItemCell(i, icon, count)
 +            }
 +        }
-+        grid.setPadding(dp(8), dp(4), dp(8), dp(4))
++        grid.setPadding(dp(12), dp(4), dp(12), dp(4))
 +        return grid
 +    }
 +
