@@ -1563,10 +1563,10 @@ index 0000000..de6b7df
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Discovery.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Discovery.kt
 new file mode 100644
-index 0000000..6324f98
+index 0000000..c52e710
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Discovery.kt
-@@ -0,0 +1,176 @@
+@@ -0,0 +1,181 @@
 +package com.swordfish.lemuroid.app.shared.game.viewmodel
 +
 +import android.content.Context
@@ -1583,7 +1583,10 @@ index 0000000..6324f98
 + * overworld screen and dungeon. Rectangles are in pixels of the half-size combined map (1623 x 958).
 + */
 +class Smz3Discovery(context: Context) {
-+    private class SmRoom(val area: Int, val mx: Int, val my: Int, val w: Int, val h: Int)
++    private class SmRoom(val area: Int, val mx: Int, val my: Int, val w: Int, val h: Int) {
++        /** The combined map moves the east of Crateria seven columns right to make room for the Wrecked Ship. */
++        val col get() = mx + if (area == 0 && mx >= EAST_CRATERIA) 7 else 0
++    }
 +
 +    private val smRooms: Map<Int, SmRoom> = runCatching {
 +        val a = JSONArray(context.assets.open("smz3/sm_rooms.json").use { String(it.readBytes()) })
@@ -1651,7 +1654,7 @@ index 0000000..6324f98
 +        val origin = SM_ORIGINS.getOrNull(info.area) ?: return
 +        val tileX = u16(w, 0x7A1) + u16(w, 0xAF6) / 256f
 +        val tileY = u16(w, 0x7A3) + u16(w, 0xAFA) / 256f
-+        position = MapPosition((origin.first - 16 + 32 * tileX) / 2f, (origin.second - 16 + 32 * tileY) / 2f)
++        position = MapPosition((origin.first - 16 + 32 * (tileX + info.col - info.mx)) / 2f, (origin.second - 16 + 32 * tileY) / 2f)
 +    }
 +
 +    private fun updateZelda(w: ByteArray) {
@@ -1689,7 +1692,7 @@ index 0000000..6324f98
 +        var box: RectF? = null
 +        for (r in smRooms.values) {
 +            if (r.area != currentArea) continue
-+            val x = (origin.first - 16 + 32 * r.mx) / 2f
++            val x = (origin.first - 16 + 32 * r.col) / 2f
 +            val y = (origin.second - 16 + 32 * r.my) / 2f
 +            val rect = RectF(x, y, x + 16f * r.w, y + 16f * r.h)
 +            box = box?.also { it.union(rect) } ?: rect
@@ -1704,7 +1707,7 @@ index 0000000..6324f98
 +    fun metroidRoomCentre(ptr: Int): MapPosition? {
 +        val r = smRooms[ptr] ?: return null
 +        val origin = SM_ORIGINS.getOrNull(r.area) ?: return null
-+        return MapPosition((origin.first - 16 + 32 * r.mx) / 2f + 8f * r.w, (origin.second - 16 + 32 * r.my) / 2f + 8f * r.h)
++        return MapPosition((origin.first - 16 + 32 * r.col) / 2f + 8f * r.w, (origin.second - 16 + 32 * r.my) / 2f + 8f * r.h)
 +    }
 +
 +    /** Rectangles of the map that count as discovered. */
@@ -1713,7 +1716,7 @@ index 0000000..6324f98
 +        for (ptr in rooms) {
 +            val r = smRooms[ptr] ?: continue
 +            val origin = SM_ORIGINS.getOrNull(r.area) ?: continue
-+            val x = (origin.first - 16 + 32 * r.mx) / 2f
++            val x = (origin.first - 16 + 32 * r.col) / 2f
 +            val y = (origin.second - 16 + 32 * r.my) / 2f
 +            out += RectF(x, y, x + 16f * r.w, y + 16f * r.h)
 +        }
@@ -1732,6 +1735,8 @@ index 0000000..6324f98
 +    }
 +
 +    companion object {
++        private const val EAST_CRATERIA = 46
++
 +        /** Combined-map pixel (full size) where each Super Metroid area's map tile grid starts, measured from the item positions. */
 +        private val SM_ORIGINS = listOf(998 to 80, 902 to 656, 1894 to 1296, 2086 to -240, 1798 to 656)
 +
@@ -2859,10 +2864,10 @@ index 0000000..18f46e9
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Presentation.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Presentation.kt
 new file mode 100644
-index 0000000..65d932e
+index 0000000..4f7adfd
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Presentation.kt
-@@ -0,0 +1,694 @@
+@@ -0,0 +1,696 @@
 +package com.swordfish.lemuroid.app.shared.game.viewmodel
 +
 +import android.app.Presentation
@@ -3058,7 +3063,9 @@ index 0000000..65d932e
 +        recentBox.removeAllViews()
 +        if (list.isEmpty()) return
 +        recentBox.addView(TextView(context).apply { textSize = 12f; text = "RECENT ITEMS"; setTextColor(Color.parseColor("#C8D0D8")) })
-+        for (index in list) {
++        val grid = GridLayout(context).apply { columnCount = 2 }
++        recentBox.addView(grid, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
++        for ((n, index) in list.withIndex()) {
 +            val info = Smz3Native.inventoryInfo(index).split("|")
 +            val row = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
 +            row.addView(
@@ -3070,10 +3077,10 @@ index 0000000..65d932e
 +                        }
 +                    }
 +                },
-+                LinearLayout.LayoutParams(dp(24), dp(24)),
++                LinearLayout.LayoutParams(dp(22), dp(22)),
 +            )
-+            row.addView(TextView(context).apply { textSize = 14f; setTextColor(Color.WHITE); setShadowLayer(3f, 0f, 0f, Color.BLACK); text = info[1]; isSingleLine = true; ellipsize = android.text.TextUtils.TruncateAt.END; setPadding(dp(6), 0, 0, 0) })
-+            recentBox.addView(row)
++            row.addView(TextView(context).apply { textSize = 12f; setTextColor(Color.WHITE); setShadowLayer(3f, 0f, 0f, Color.BLACK); text = info[1]; isSingleLine = true; ellipsize = android.text.TextUtils.TruncateAt.END; setPadding(dp(4), 0, dp(2), 0) })
++            grid.addView(row, GridLayout.LayoutParams(GridLayout.spec(n / 2), GridLayout.spec(n % 2, 1f)).apply { width = 0 })
 +        }
 +    }
 +
@@ -3747,7 +3754,7 @@ index 0000000..378f91a
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Tracker.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Tracker.kt
 new file mode 100644
-index 0000000..a1239de
+index 0000000..629c0f1
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Tracker.kt
 @@ -0,0 +1,282 @@
@@ -3810,7 +3817,7 @@ index 0000000..a1239de
 +    private const val WRAM_SIZE = 0x20000
 +    private const val SRAM_SIZE = 0x100000
 +    private const val MAX_RECENT = 8
-+    private const val MAX_RECENT_ITEMS = 5
++    private const val MAX_RECENT_ITEMS = 8
 +
 +    private val main = Handler(Looper.getMainLooper())
 +    private var presentation: Smz3Presentation? = null
