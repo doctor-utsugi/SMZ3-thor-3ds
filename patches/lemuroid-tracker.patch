@@ -1566,10 +1566,10 @@ index 0000000..d973310
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Discovery.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Discovery.kt
 new file mode 100644
-index 0000000..413f3f3
+index 0000000..0cf67f4
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Discovery.kt
-@@ -0,0 +1,204 @@
+@@ -0,0 +1,206 @@
 +package com.swordfish.lemuroid.app.shared.game.viewmodel
 +
 +import android.content.Context
@@ -1700,10 +1700,12 @@ index 0000000..413f3f3
 +            position = specialArea[area] ?: lastOverworld ?: position
 +            return
 +        }
-+        val screen = (area and 0x3F) + if (dark) 64 else 0
-+        if (screens.add(screen)) dirty = true
 +        val x = u16(w, 0x22).coerceIn(0, 4095)
 +        val y = u16(w, 0x20).coerceIn(0, 4095)
++        // $8A names a large area (Lake Hylia, Death Mountain...) by its first screen: Link's own 512 px screen counts too
++        val base = if (dark) 64 else 0
++        if (screens.add((area and 0x3F) + base)) dirty = true
++        if (screens.add((y / 512) * 8 + x / 512 + base)) dirty = true
 +        val scale = 958f / 4096f / 2f
 +        position = MapPosition(x * scale, y * scale + if (dark) 479f else 0f).also { lastOverworld = it }
 +    }
@@ -2401,10 +2403,10 @@ index 0000000..a893bff
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3MapView.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3MapView.kt
 new file mode 100644
-index 0000000..ea274fb
+index 0000000..49ae452
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3MapView.kt
-@@ -0,0 +1,349 @@
+@@ -0,0 +1,351 @@
 +package com.swordfish.lemuroid.app.shared.game.viewmodel
 +
 +import android.content.Context
@@ -2602,6 +2604,7 @@ index 0000000..ea274fb
 +
 +    private val iconPaint = Paint(Paint.FILTER_BITMAP_FLAG)
 +    private val markBack = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.argb(215, 12, 16, 22) }
++    private val noteRim = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; color = Color.parseColor("#FF4FB8"); strokeWidth = 5f }
 +    private val markRim = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; color = Color.parseColor("#FFD54A"); strokeWidth = 2.5f }
 +    private val dst = RectF()
 +
@@ -2722,7 +2725,8 @@ index 0000000..ea274fb
 +            val bmp2 = itemIcon(m.icon) ?: continue
 +            val half = markHalf(zoom)
 +            canvas.drawCircle(pts[0], pts[1], half + 2f, markBack)
-+            canvas.drawCircle(pts[0], pts[1], half + 2f, markRim)
++            if (m.note.isNotBlank()) canvas.drawCircle(pts[0], pts[1], half + 2f, noteRim)
++            else canvas.drawCircle(pts[0], pts[1], half + 2f, markRim)
 +            dst.set(pts[0] - half, pts[1] - half, pts[0] + half, pts[1] + half)
 +            iconPaint.alpha = 255
 +            canvas.drawBitmap(bmp2, null, dst, iconPaint)
