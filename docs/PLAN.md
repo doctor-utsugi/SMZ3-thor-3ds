@@ -474,3 +474,5 @@ Clean pass on the final commit: test-fill 10/10, test-patch 10/10, test-modes 40
 ## Items counter after a restart
 
 The Super Metroid items were read only while Metroid ran, so after reopening a run inside Zelda the cache was empty and "Items" dropped (29 to 17 on the owner's run). With Zelda current they are now read from the parked save-slot copy in SRAM (`$09A2` at `+0x2010`, so address + `0x166E`). Checked on the owner's state on the PC (29/54, same as before the restart) and on the Thor after reopening the run (29/54).
+
+The overworld screen that leads into a special area (Lost Woods for the Master Sword grove, the north-east corner for Zora's domain) now counts as discovered, otherwise the player stood on a dimmed, undiscovered part of the map. Seen on the Thor: the area around Zora's domain is lit.

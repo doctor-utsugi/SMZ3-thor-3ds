@@ -1566,10 +1566,10 @@ index 0000000..d973310
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Discovery.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Discovery.kt
 new file mode 100644
-index 0000000..fc93421
+index 0000000..413f3f3
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Discovery.kt
-@@ -0,0 +1,201 @@
+@@ -0,0 +1,204 @@
 +package com.swordfish.lemuroid.app.shared.game.viewmodel
 +
 +import android.content.Context
@@ -1694,6 +1694,9 @@ index 0000000..fc93421
 +        }
 +        val area = w[0x8A].toInt() and 0xFF
 +        if (area >= 0x80) {
++            // the overworld screen that leads in counts as seen: Lost Woods for the Master Sword, the north-east corner for Zora
++            val entry = when (area) { 0x80 -> 0x00; 0x81 -> 0x0F; else -> -1 }
++            if (entry >= 0 && screens.add(entry)) dirty = true
 +            position = specialArea[area] ?: lastOverworld ?: position
 +            return
 +        }
