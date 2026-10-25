@@ -569,4 +569,4 @@ Pressing Start on a new run asks once about the online ladder (`UI_ONLINE`): Yes
 
 ### App logo
 
-The launcher icon is `assets/logo.png` (a Metroid with the Triforce inside). `tools/gen_app_icon.py` (run by `build-android.sh`) crops it into the legacy and round mipmaps, the adaptive foreground (kept inside the safe zone, background colour sampled from the logo's black), and a white monochrome layer for themed icons. The 3DS build still has the default icon.
+The launcher icon is `assets/logo.png` (a Metroid with the Triforce inside). `tools/gen_app_icon.py` (run by `build-android.sh`) crops it into the legacy and round mipmaps, the adaptive foreground (kept inside the safe zone, background colour sampled from the logo's black), and a white monochrome layer for themed icons (the Metroid silhouette with the Triforce cut out, its centre triangle solid). The 3DS build still has the default icon.
