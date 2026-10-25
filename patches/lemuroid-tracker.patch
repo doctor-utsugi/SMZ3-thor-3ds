@@ -2378,10 +2378,10 @@ index 0000000..a893bff
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3MapView.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3MapView.kt
 new file mode 100644
-index 0000000..295736f
+index 0000000..ea274fb
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3MapView.kt
-@@ -0,0 +1,350 @@
+@@ -0,0 +1,349 @@
 +package com.swordfish.lemuroid.app.shared.game.viewmodel
 +
 +import android.content.Context
@@ -2540,8 +2540,7 @@ index 0000000..295736f
 +    })
 +
 +    fun setTheme(theme: Smz3Theme) {
-+        pending.color = theme.pending
-+        done.color = theme.done
++        // the dots keep one look in both games (the theme only tints the rest of the screen)
 +        invalidate()
 +    }
 +
