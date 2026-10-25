@@ -7,9 +7,9 @@ int smz_run_save(const char *path, const SmzRun *r)
 {
     FILE *f = fopen(path, "w");
     if (!f) return -1;
-    fprintf(f, "SMZRUN1\nname=%s\nseed=%s\nrom=%s\ncreated=%lld\nplayed=%lld\nplay_ms=%lld\ngame=%d\nzc=%d\nzt=%d\nmc=%d\nmt=%d\nsettings=%s\n",
+    fprintf(f, "SMZRUN1\nname=%s\nseed=%s\nrom=%s\ncreated=%lld\nplayed=%lld\nplay_ms=%lld\ngame=%d\nzc=%d\nzt=%d\nmc=%d\nmt=%d\nbm=%d\ncm=%d\nsettings=%s\n",
             r->name, r->seed, r->rom_path, (long long)r->created, (long long)r->last_played, (long long)r->play_ms, r->game,
-            r->zelda_cleared, r->zelda_total, r->metroid_cleared, r->metroid_total, r->settings);
+            r->zelda_cleared, r->zelda_total, r->metroid_cleared, r->metroid_total, r->boss_mask, r->crystal_mask, r->settings);
     return fclose(f) ? -1 : 0;
 }
 
@@ -39,6 +39,8 @@ int smz_run_load(const char *path, SmzRun *r)
         else if (!strcmp(line, "zt")) r->zelda_total = atoi(v);
         else if (!strcmp(line, "mc")) r->metroid_cleared = atoi(v);
         else if (!strcmp(line, "mt")) r->metroid_total = atoi(v);
+        else if (!strcmp(line, "bm")) r->boss_mask = atoi(v);
+        else if (!strcmp(line, "cm")) r->crystal_mask = atoi(v);
     }
     fclose(f);
     return r->name[0] ? 0 : -1;

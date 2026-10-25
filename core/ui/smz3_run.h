@@ -12,6 +12,7 @@ typedef struct {
     int64_t created, last_played, play_ms;
     int game;                    /* 0 not started, 1 Zelda, 2 Metroid */
     int zelda_cleared, zelda_total, metroid_cleared, metroid_total;
+    int boss_mask, crystal_mask;  /* bit 0 Kraid, 1 Phantoon, 2 Draygon, 3 Ridley; bit n-1 is crystal n */
 } SmzRun;
 
 /* 0 on success, -1 when the file is missing or unreadable. */

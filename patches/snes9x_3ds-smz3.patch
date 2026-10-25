@@ -174,7 +174,7 @@ index 0000000..88c7fc0
 +#define RUN_DIR SMZ_DIR "/runs"
 +#define SPRITE_DIR SMZ_DIR "/sprites"
 +
-+static const int PALETTE[] = {0x10141C, 0x1D2430, 0x2E4A6B, 0xE8ECF2, 0x8793A6, 0xE9A23B, 0xE05A4F, 0x4CC38A};
++static const int PALETTE[] = {0x10141C, 0x1D2430, 0x2E4A6B, 0xE8ECF2, 0x8793A6, 0xE9A23B, 0xE05A4F, 0x4CC38A, 0x4FC3F7};
 +
 +static unsigned char *readFile(const char *path, size_t *len)
 +{
@@ -334,7 +334,7 @@ index 0000000..88c7fc0
 +    ui_draw(u);
 +    for (int i = 0; i < u->cmd_count; i++) {
 +        const UiCmd *c = &u->cmd[i];
-+        int color = PALETTE[c->color < 8 ? c->color : 3];
++        int color = PALETTE[c->color < 9 ? c->color : 3];
 +        if (c->kind == 0) {
 +            ui3dsDrawRect(c->x, c->y, c->x + c->w, c->y + c->h, color);
 +        } else if (c->kind == 2) {
@@ -358,7 +358,7 @@ index 0000000..88c7fc0
 +        char path[96], sum[64];
 +        snprintf(path, sizeof path, RUN_DIR "/slot%d.run", i);
 +        SmzRun r;
-+        if (smz_run_load(path, &r) == 0) { smz_run_summary(&r, sum, sizeof sum); ui_set_slot(u, i, 1, r.name, sum); ui_set_slot_stats(u, i, r.zelda_cleared, r.zelda_total, r.metroid_cleared, r.metroid_total, r.play_ms, r.game); }
++        if (smz_run_load(path, &r) == 0) { smz_run_summary(&r, sum, sizeof sum); ui_set_slot(u, i, 1, r.name, sum); ui_set_slot_stats(u, i, r.zelda_cleared, r.zelda_total, r.metroid_cleared, r.metroid_total, r.play_ms, r.game, r.boss_mask, r.crystal_mask); }
 +        else ui_set_slot(u, i, 0, "", "");
 +    }
 +}

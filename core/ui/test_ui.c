@@ -246,11 +246,11 @@ int main(void)
     }
     {   /* run list rows with numbers: draw within the command budget, big percent from the totals */
         SmzUi v; ui_init(&v);
-        for (int k = 0; k < 4; k++) { ui_set_slot(&v, k, 1, "Run name long enough", "x"); ui_set_slot_stats(&v, k, 216, 216, 100, 100, 99999999LL, 3); }
+        for (int k = 0; k < 4; k++) { ui_set_slot(&v, k, 1, "Run name long enough", "x"); ui_set_slot_stats(&v, k, 216, 216, 100, 100, 99999999LL, 3, 15, 127); }
         ui_draw(&v);
         assert(v.cmd_count < UI_MAX_CMDS - 40);
         int zero = 0;
-        ui_set_slot(&v, 0, 1, "a", "x"); ui_set_slot_stats(&v, 0, 0, 0, 0, 0, 0, 0);   /* no totals: 0 % without dividing */
+        ui_set_slot(&v, 0, 1, "a", "x"); ui_set_slot_stats(&v, 0, 0, 0, 0, 0, 0, 0, 0, 0);   /* no totals: 0 % without dividing */
         ui_draw(&v);
         (void)zero;
     }

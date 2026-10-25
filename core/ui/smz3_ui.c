@@ -57,12 +57,12 @@ void ui_set_slot(SmzUi *u, int i, int used, const char *name, const char *summar
     snprintf(u->slots[i].summary, sizeof u->slots[i].summary, "%s", summary ? summary : "");
 }
 
-void ui_set_slot_stats(SmzUi *u, int i, int zc, int zt, int mc, int mt, int64_t ms, int game)
+void ui_set_slot_stats(SmzUi *u, int i, int zc, int zt, int mc, int mt, int64_t ms, int game, int bosses, int crystals)
 {
     if (i < 0 || i >= UI_SLOTS) return;
     UiSlot *t = &u->slots[i];
     t->stats = 1; t->zelda_cleared = zc; t->zelda_total = zt; t->metroid_cleared = mc; t->metroid_total = mt;
-    t->play_ms = ms; t->game = game;
+    t->play_ms = ms; t->game = game; t->boss_mask = bosses; t->crystal_mask = crystals;
 }
 
 void ui_set_sprites(SmzUi *u, int game, const char *const *names, int n)
@@ -586,6 +586,20 @@ static void bar(SmzUi *u, int x, int y, int w, int num, int den, int color)
     if (fill) rect(u, x, y, fill, 3, color);
 }
 
+/* a crystal about 9x9 pixels; collected ones are blue (red for the two dark ones) with a highlight, missing ones dark */
+static void gem(SmzUi *u, int x, int y, int have, int red)
+{
+    int c = !have ? C_BG : red ? C_WARN : C_CYAN;
+    rect(u, x + 3, y, 3, 1, c);
+    rect(u, x + 1, y + 1, 7, 1, c);
+    rect(u, x, y + 2, 9, 3, c);
+    rect(u, x + 1, y + 5, 7, 1, c);
+    rect(u, x + 2, y + 6, 5, 1, c);
+    rect(u, x + 3, y + 7, 3, 1, c);
+    rect(u, x + 4, y + 8, 1, 1, c);
+    if (have) rect(u, x + 2, y + 2, 2, 1, C_TEXT);
+}
+
 static void slot_rich(SmzUi *u, int i, int y, int w)
 {
     const UiSlot *t = &u->slots[i];
@@ -596,20 +610,17 @@ static void slot_rich(SmzUi *u, int i, int y, int w)
     int color = pct >= 100 ? C_GREEN : C_ACCENT;
     for (int d = 0, div = digits == 3 ? 100 : digits == 2 ? 10 : 1; d < digits; d++, div /= 10) { big_digit(u, x, y + 9, pct / div % 10, 5, color); x += 18; }
     text(u, x, y + 24, C_DIM, 0, "%");
-    int mx = 92;
-    snprintf(s, sizeof s, "Slot %d  %.14s", i + 1, t->name);
-    text(u, mx, y + 4, C_TEXT, 0, s);
+    /* Link with the seven crystals, Samus with the four bosses; what is missing is dark (the pictures are dimmed) */
+    put(u, 2, 88, y + 3, 13, 19, C_TEXT, 0, "link/Original");     /* the games' own standing sprites (tools/gen_original_icons.py) */
+    for (int n = 1; n <= 7; n++) gem(u, 108 + (n - 1) * 14, y + 6, t->crystal_mask >> (n - 1) & 1, n == 5 || n == 6);
+    put(u, 2, 88, y + 23, 13, 19, C_TEXT, 0, "samus/Original");
+    static const char *const BOSS[4] = {"reward/kraid", "reward/phantoon", "reward/draygon", "reward/ridley"};
+    for (int b = 0; b < 4; b++) put(u, 2, 108 + b * 22, y + 24, 18, 18, t->boss_mask >> b & 1 ? C_TEXT : C_DIM, 0, BOSS[b]);
     long long sec = t->play_ms / 1000;
     snprintf(s, sizeof s, "%lld:%02lld:%02lld", sec / 3600, sec / 60 % 60, sec % 60);
-    text(u, 8 + w - 8, y + 4, C_TEXT, 2, s);
-    put(u, 2, mx, y + 15, 18, 27, C_TEXT, 0, "link/Original");     /* the games' own standing sprites (tools/gen_original_icons.py) */
-    snprintf(s, sizeof s, "%d/%d", t->zelda_cleared, t->zelda_total);
-    text(u, mx + 24, y + 19, C_TEXT, 0, s);
-    bar(u, mx + 24, y + 36, 54, t->zelda_cleared, t->zelda_total, C_GREEN);
-    put(u, 2, mx + 84, y + 15, 18, 27, C_TEXT, 0, "samus/Original");
-    snprintf(s, sizeof s, "%d/%d", t->metroid_cleared, t->metroid_total);
-    text(u, mx + 108, y + 19, C_TEXT, 0, s);
-    bar(u, mx + 108, y + 36, 54, t->metroid_cleared, t->metroid_total, C_ACCENT);
+    text(u, 8 + w - 8, y + 5, C_TEXT, 2, s);
+    bar(u, 214, y + 25, w - 214, t->zelda_cleared, t->zelda_total, C_GREEN);
+    bar(u, 214, y + 33, w - 214, t->metroid_cleared, t->metroid_total, C_ACCENT);
 }
 
 void ui_draw(SmzUi *u)

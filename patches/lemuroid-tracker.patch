@@ -468,10 +468,10 @@ index 0000000..c830243
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/NativeMenuScreen.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/NativeMenuScreen.kt
 new file mode 100644
-index 0000000..679fb5f
+index 0000000..8342efb
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/NativeMenuScreen.kt
-@@ -0,0 +1,248 @@
+@@ -0,0 +1,253 @@
 +package com.swordfish.lemuroid.app.mobile.feature.runs
 +
 +import android.graphics.Paint
@@ -519,12 +519,13 @@ index 0000000..679fb5f
 +import kotlinx.coroutines.launch
 +import kotlinx.coroutines.withContext
 +import org.json.JSONObject
++import android.content.Context
 +import java.io.File
 +
 +private const val W = 320f
 +private const val H = 240f
 +private val palette = listOf(
-+    Color(0xFF10141C), Color(0xFF1D2430), Color(0xFF2E4A6B), Color(0xFFE8ECF2), Color(0xFF8793A6), Color(0xFFE9A23B), Color(0xFFE05A4F), Color(0xFF4CC38A),
++    Color(0xFF10141C), Color(0xFF1D2430), Color(0xFF2E4A6B), Color(0xFFE8ECF2), Color(0xFF8793A6), Color(0xFFE9A23B), Color(0xFFE05A4F), Color(0xFF4CC38A), Color(0xFF4FC3F7),
 +)
 +private enum class Act { NONE, CONTINUE, DELETE, GENERATE }
 +
@@ -533,8 +534,12 @@ index 0000000..679fb5f
 +/** Sprite previews (`<name>.pv` beside the .rdc: u8 width, u8 height, RGBA), decoded once and kept; null when the file is missing. */
 +private val previewCache = HashMap<String, ImageBitmap?>()
 +
-+private fun preview(key: String): ImageBitmap? = previewCache.getOrPut(key) {
++private fun preview(key: String, context: Context): ImageBitmap? = previewCache.getOrPut(key) {
 +    runCatching {
++        if (key.startsWith("reward/")) {   // a boss token of the tracker, from the app's assets
++            val bmp = context.assets.open("smz3/rewards/${key.substringAfter('/')}_boss_token.png").use { android.graphics.BitmapFactory.decodeStream(it) }
++            return@runCatching com.swordfish.lemuroid.app.shared.game.viewmodel.cropToArt(bmp).asImageBitmap()
++        }
 +        val game = if (key.startsWith("link/")) 0 else 1
 +        val bytes = File(spriteDir(game), key.substringAfter('/') + ".pv").readBytes()
 +        val w = bytes[0].toInt() and 255; val h = bytes[1].toInt() and 255
@@ -580,7 +585,7 @@ index 0000000..679fb5f
 +    fun refreshSlots() {
 +        RunStore.loadAll(context).forEachIndexed { i, run ->
 +            Smz3Native.uiSetSlot(i, run != null, run?.name ?: "", run?.let { summary(context, it).replace("\n", " · ").take(38) } ?: "")
-+            if (run != null) Smz3Native.uiSetSlotStats(i, run.zeldaCleared, run.zeldaTotal, run.metroidCleared, run.metroidTotal, run.playTimeMs, run.game)
++            if (run != null) Smz3Native.uiSetSlotStats(i, run.zeldaCleared, run.zeldaTotal, run.metroidCleared, run.metroidTotal, run.playTimeMs, run.game, run.bossMask, run.crystalMask)
 +        }
 +        version++
 +        publishSelection()
@@ -701,12 +706,12 @@ index 0000000..679fb5f
 +                        val r = Math.round(x + f[3].toFloat() * scale).toFloat(); val b = Math.round(y + f[4].toFloat() * scale).toFloat()
 +                        drawRect(color, Offset(l, t), Size(r - l, b - t))
 +                    } else if (kind == 2) {
-+                        preview(f[7])?.let { img ->
++                        preview(f[7], context)?.let { img ->
 +                            val bw = f[3].toFloat() * scale; val bh = f[4].toFloat() * scale
 +                            val k = minOf(bw / img.width, bh / img.height)
 +                            val dw = (img.width * k).toInt(); val dh = (img.height * k).toInt()
 +                            drawImage(img, IntOffset.Zero, IntSize(img.width, img.height),
-+                                IntOffset((x + (bw - dw) / 2).toInt(), (y + (bh - dh) / 2).toInt()), IntSize(dw, dh), filterQuality = FilterQuality.None)
++                                IntOffset((x + (bw - dw) / 2).toInt(), (y + (bh - dh) / 2).toInt()), IntSize(dw, dh), alpha = if (f[5].toInt() == 4) 0.25f else 1f, filterQuality = FilterQuality.None)
 +                        }
 +                    } else {
 +                        paint.color = color.toArgb(); paint.textSize = 12f * scale
@@ -1083,10 +1088,10 @@ index 0000000..91f0bba
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/RunStore.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/RunStore.kt
 new file mode 100644
-index 0000000..ed2a8fe
+index 0000000..fb3ed21
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/RunStore.kt
-@@ -0,0 +1,116 @@
+@@ -0,0 +1,121 @@
 +package com.swordfish.lemuroid.app.mobile.feature.runs
 +
 +import android.content.Context
@@ -1106,6 +1111,9 @@ index 0000000..ed2a8fe
 +    val zeldaTotal: Int = 0,
 +    val metroidCleared: Int = 0,
 +    val metroidTotal: Int = 0,
++    /** Bosses beaten (bit 0 Kraid, 1 Phantoon, 2 Draygon, 3 Ridley) and crystals collected (bit n-1 is crystal n). */
++    val bossMask: Int = 0,
++    val crystalMask: Int = 0,
 +    val logic: String = "Normal",
 +    val keysanity: Boolean = false,
 +    val romPath: String = "",
@@ -1149,6 +1157,8 @@ index 0000000..ed2a8fe
 +                    zeldaTotal = it.optInt("zeldaTotal"),
 +                    metroidCleared = it.optInt("metroidCleared"),
 +                    metroidTotal = it.optInt("metroidTotal"),
++                    bossMask = it.optInt("bossMask"),
++                    crystalMask = it.optInt("crystalMask"),
 +                    logic = it.optString("logic", "Normal"),
 +                    keysanity = it.optBoolean("keysanity"),
 +                    romPath = it.optString("romPath"),
@@ -1169,7 +1179,7 @@ index 0000000..ed2a8fe
 +            .put("name", run.name).put("gameId", run.gameId).put("createdAt", run.createdAt)
 +            .put("lastPlayedAt", run.lastPlayedAt).put("playTimeMs", run.playTimeMs).put("game", run.game)
 +            .put("zeldaCleared", run.zeldaCleared).put("zeldaTotal", run.zeldaTotal)
-+            .put("metroidCleared", run.metroidCleared).put("metroidTotal", run.metroidTotal)
++            .put("metroidCleared", run.metroidCleared).put("metroidTotal", run.metroidTotal).put("bossMask", run.bossMask).put("crystalMask", run.crystalMask)
 +            .put("logic", run.logic).put("keysanity", run.keysanity)
 +            .put("romPath", run.romPath).put("seed", run.seed).put("settings", run.settings).put("mapMode", run.mapMode).put("completedAt", run.completedAt)
 +        file(context, run.slot).writeText(json.toString())
@@ -3327,7 +3337,7 @@ index 0000000..dc5944a
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Native.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Native.kt
 new file mode 100644
-index 0000000..64a5af4
+index 0000000..ad53e0e
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Native.kt
 @@ -0,0 +1,70 @@
@@ -3392,7 +3402,7 @@ index 0000000..64a5af4
 +    @JvmStatic external fun uiSetPlando(yaml: ByteArray?): String
 +    @JvmStatic external fun uiPlandoName(): String
 +    @JvmStatic external fun uiSettingsJson(seedIfRandom: Int): String
-+    @JvmStatic external fun uiSetSlotStats(i: Int, zc: Int, zt: Int, mc: Int, mt: Int, ms: Long, game: Int)
++    @JvmStatic external fun uiSetSlotStats(i: Int, zc: Int, zt: Int, mc: Int, mt: Int, ms: Long, game: Int, bosses: Int, crystals: Int)
 +    @JvmStatic external fun uiSavedLoad(text: String?)
 +    @JvmStatic external fun uiSavedChanged(): String?
 +    @JvmStatic external fun uiOption(opt: Int): Int
@@ -4124,7 +4134,7 @@ index 0000000..9dd6525
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3RewardsView.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3RewardsView.kt
 new file mode 100644
-index 0000000..d8469cc
+index 0000000..3d557e1
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3RewardsView.kt
 @@ -0,0 +1,93 @@
@@ -4141,7 +4151,7 @@ index 0000000..d8469cc
 +import android.view.View
 +
 +/** The token pictures sit in a corner of a 32x32 canvas: keep just the part that is drawn. */
-+private fun cropToArt(bmp: Bitmap): Bitmap {
++internal fun cropToArt(bmp: Bitmap): Bitmap {
 +    var minX = bmp.width; var minY = bmp.height; var maxX = -1; var maxY = -1
 +    for (y in 0 until bmp.height) for (x in 0 until bmp.width) {
 +        if (Color.alpha(bmp.getPixel(x, y)) > 0) { minX = minOf(minX, x); minY = minOf(minY, y); maxX = maxOf(maxX, x); maxY = maxOf(maxY, y) }
@@ -4312,10 +4322,10 @@ index 0000000..378f91a
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Tracker.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Tracker.kt
 new file mode 100644
-index 0000000..3debb6a
+index 0000000..675f4b1
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Tracker.kt
-@@ -0,0 +1,306 @@
+@@ -0,0 +1,308 @@
 +package com.swordfish.lemuroid.app.shared.game.viewmodel
 +
 +import android.app.Presentation
@@ -4594,6 +4604,8 @@ index 0000000..3debb6a
 +                                    zeldaTotal = s[3],
 +                                    metroidCleared = if (started) s[4] else run.metroidCleared,
 +                                    metroidTotal = s[5],
++                                    bossMask = if (started) snapshot.bossMask else run.bossMask,
++                                    crystalMask = if (started) snapshot.crystalMask else run.crystalMask,
 +                                ),
 +                            )
 +                            if (run.completedAt == 0L) baseMs = totalMs
