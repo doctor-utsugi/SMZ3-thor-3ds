@@ -106,6 +106,31 @@ def colour(w):
     return ((w & 31) * 255 // 31, ((w >> 5) & 31) * 255 // 31, ((w >> 10) & 31) * 255 // 31, 255)
 
 
+def room_chests(rom, room):
+    """Tile positions (x, y in the room's 64 x 64 tiles) of the chests of a room, in the order the game numbers them.
+
+    The room's object stream is the game's own: floor and layout bytes, then three layers of 3-byte objects ending in 0xFFFF
+    (chests are the type 3 objects 0x19 and 0x31), then the doors.
+    """
+    ptr = rom.byte(0x1F8000 + room * 3) | rom.byte(0x1F8000 + room * 3 + 1) << 8 | rom.byte(0x1F8000 + room * 3 + 2) << 16
+    p = ptr + 2
+    out, layer = [], 0
+    while layer < 3:
+        w = rom.byte(p) | rom.byte(p + 1) << 8
+        if w == 0xFFFF:
+            layer += 1; p += 2
+            continue
+        if w == 0xFFF0:
+            break
+        b1, b2, b3 = rom.byte(p), rom.byte(p + 1), rom.byte(p + 2)
+        p += 3
+        if b1 & 0xfc != 0xfc and b3 >= 0xf8:
+            idx = (b3 & 7) << 4 | (b2 & 3) << 2 | (b1 & 3)
+            if idx in (0x19, 0x31):
+                out.append([b1 >> 2, b2 >> 2])
+    return out
+
+
 def find_pieces(rom):
     key = struct.pack('<8H', 0xb61, 0x5361, 0x8b61, 0x8b62, 0xb60, 0xb63, 0x8b60, 0xb64)
     i = rom.d.find(key)
@@ -167,7 +192,15 @@ def main():
         meta.append({'below': below, 'above': above, 'floors': floors})
     atlas[0].save(os.path.join(out, 'dungeon_maps.png'))
     atlas[1].save(os.path.join(out, 'dungeon_maps_hint.png'))
-    json.dump({'cell': FLOOR_PX, 'room': ROOM, 'dungeons': meta}, open(os.path.join(out, 'dungeon_maps.json'), 'w'))
+    chests = {}
+    for d in range(14):
+        for grid in meta[d]['floors']:
+            for room in grid:
+                if room != 0xF and str(room) not in chests:
+                    found = room_chests(rom, room)
+                    if found:
+                        chests[str(room)] = found
+    json.dump({'cell': FLOOR_PX, 'room': ROOM, 'dungeons': meta, 'chests': chests}, open(os.path.join(out, 'dungeon_maps.json'), 'w'))
 
 
 main()

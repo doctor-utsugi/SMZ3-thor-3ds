@@ -1785,10 +1785,10 @@ index 0000000..2056545
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3DungeonMaps.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3DungeonMaps.kt
 new file mode 100644
-index 0000000..bcec1c7
+index 0000000..57c8a87
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3DungeonMaps.kt
-@@ -0,0 +1,142 @@
+@@ -0,0 +1,150 @@
 +package com.swordfish.lemuroid.app.shared.game.viewmodel
 +
 +import android.content.Context
@@ -1813,6 +1813,7 @@ index 0000000..bcec1c7
 +
 +    private val cell: Int
 +    private val dungeons: List<Dungeon>
++    private val chests: Map<Int, List<IntArray>>
 +    private val full: Bitmap?
 +    private val hint: Bitmap?
 +    val available: Boolean
@@ -1822,6 +1823,7 @@ index 0000000..bcec1c7
 +        var list = emptyList<Dungeon>()
 +        var f: Bitmap? = null
 +        var h: Bitmap? = null
++        var ch = emptyMap<Int, List<IntArray>>()
 +        runCatching {
 +            val o = JSONObject(context.assets.open("smz3/dungeon_maps.json").use { String(it.readBytes()) })
 +            c = o.getInt("cell")
@@ -1838,12 +1840,18 @@ index 0000000..bcec1c7
 +                if (x1 < 0) { x0 = 0; y0 = 0; x1 = 4; y1 = 4 }
 +                Dungeon(d.getInt("below"), floors, intArrayOf(x0, y0, x1, y1))
 +            }
++            o.optJSONObject("chests")?.let { co ->
++                ch = co.keys().asSequence().associate { k -> k.toInt() to co.getJSONArray(k).let { a -> List(a.length()) { i -> intArrayOf(a.getJSONArray(i).getInt(0), a.getJSONArray(i).getInt(1)) } } }
++            }
 +            f = context.assets.open("smz3/dungeon_maps.png").use { BitmapFactory.decodeStream(it) }
 +            h = context.assets.open("smz3/dungeon_maps_hint.png").use { BitmapFactory.decodeStream(it) }
 +        }
-+        cell = c; dungeons = list; full = f; hint = h
++        cell = c; dungeons = list; full = f; hint = h; chests = ch
 +        available = f != null && h != null && list.size == 14
 +    }
++
++    /** Where the [k]th chest of a room stands, in 0..63 tiles of the room, or null when it is not known. */
++    fun chestPos(room: Int, k: Int): IntArray? = chests[room]?.getOrNull(k)
 +
 +    fun name(d: Int) = NAMES.getOrElse(d) { "Dungeon" }
 +    fun floorCount(d: Int) = dungeons.getOrNull(d)?.floors?.size ?: 0
@@ -1933,10 +1941,10 @@ index 0000000..bcec1c7
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3DungeonPanel.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3DungeonPanel.kt
 new file mode 100644
-index 0000000..8d280d9
+index 0000000..cc831cf
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3DungeonPanel.kt
-@@ -0,0 +1,207 @@
+@@ -0,0 +1,219 @@
 +package com.swordfish.lemuroid.app.shared.game.viewmodel
 +
 +import android.graphics.Canvas
@@ -1959,8 +1967,8 @@ index 0000000..8d280d9
 +        }
 +    var data: DungeonData? = null
 +    var showAll = false
-+    /** Per room: 1 when it holds a check in logic that is not done, 2 for one out of logic. */
-+    var pendingRooms: Map<Int, Int> = emptyMap()
++    /** Per room, its checks still to do: the room flag bit shifted left twice, plus 1 when in logic or 2 when out of logic. */
++    var pendingRooms: Map<Int, List<Int>> = emptyMap()
 +
 +    private var mode = MODE_AUTO
 +    private var pickedD = 2
@@ -2022,11 +2030,11 @@ index 0000000..8d280d9
 +    }
 +
 +    /** The chip that leads from the world map into the dungeon pictures. */
-+    fun drawWorldChip(canvas: Canvas, w: Int) {
++    fun drawWorldChip(canvas: Canvas, h: Int) {
 +        hits.clear()
 +        if (!maps.available) return
 +        val d = density
-+        chip(canvas, RectF(w - 98f * d, 6f * d, w - 6f * d, 38f * d), "DUNGEONS") {
++        chip(canvas, RectF(6f * d, h - 38f * d, 98f * d, h - 6f * d), "DUNGEONS") {
 +            if (live == null) pick(pickedD, pickedIdx) else mode = MODE_AUTO
 +            view.invalidate()
 +        }
@@ -2087,24 +2095,25 @@ index 0000000..8d280d9
 +        title.textSize = 16f * d
 +        canvas.drawText(maps.floorLabel(dn, idx) + "  (" + (idx + 1) + "/" + count + ")", left, areaT - 6f * d, title)
 +
-+        // unopened checks, one dot per room
++        // unopened checks: at their chest when the game's room data places it, else together at the room's centre
 +        val grid = maps.grid(dn, idx)
 +        if (grid != null) for (c in 0 until 25) {
 +            val room = grid[c]
 +            if (room == 0xF) continue
-+            val state = pendingRooms[room] ?: continue
-+            val cx = left + ((c % 5 - b[0]) * Smz3DungeonMaps.ROOM + 8f) * scale
-+            val cy = top + ((c / 5 - b[1]) * Smz3DungeonMaps.ROOM + 8f) * scale
-+            val r = scale * 2.6f
-+            val off = if (state == 3) r * 0.9f else 0f
-+            if (state and 2 != 0) {
-+                canvas.drawCircle(cx + off, cy, r * 0.8f, dimFill)
-+                canvas.drawCircle(cx + off, cy, r * 0.8f, dimRim)
++            val list = pendingRooms[room] ?: continue
++            val originX = left + (c % 5 - b[0]) * Smz3DungeonMaps.ROOM * scale
++            val originY = top + (c / 5 - b[1]) * Smz3DungeonMaps.ROOM * scale
++            var loose = 0
++            for (e in list) {
++                val pos = maps.chestPos(room, (e shr 2) - 4)
++                if (pos == null || (e shr 2) - 4 !in 0..5) { loose = loose or (e and 3); continue }
++                dot(canvas, originX + (pos[0] + 0.5f) / 4f * scale, originY + (pos[1] + 0.5f) / 4f * scale, scale * 2f, e and 3)
 +            }
-+            if (state and 1 != 0) {
-+                canvas.drawCircle(cx - off, cy, r + 2f, pendingRim)
-+                canvas.drawCircle(cx - off, cy, r, pendingFill)
-+                canvas.drawCircle(cx - off, cy, r, blackRim)
++            if (loose != 0) {
++                val r = scale * 2.6f
++                val off = if (loose == 3) r * 0.9f else 0f
++                if (loose and 2 != 0) dot(canvas, originX + 8f * scale + off, originY + 8f * scale, r, 2)
++                if (loose and 1 != 0) dot(canvas, originX + 8f * scale - off, originY + 8f * scale, r, 1)
 +            }
 +        }
 +
@@ -2135,6 +2144,17 @@ index 0000000..8d280d9
 +            val y = top + ((lv.cell / 5 - b[1]) * Smz3DungeonMaps.ROOM + lv.ly + 0.5f) * scale
 +            canvas.drawCircle(x, y, scale * 1.9f, meRing)
 +            canvas.drawCircle(x, y, scale * 1.3f, me)
++        }
++    }
++
++    private fun dot(canvas: Canvas, x: Float, y: Float, r: Float, state: Int) {
++        if (state == 2) {
++            canvas.drawCircle(x, y, r * 0.8f, dimFill)
++            canvas.drawCircle(x, y, r * 0.8f, dimRim)
++        } else {
++            canvas.drawCircle(x, y, r + 2f, pendingRim)
++            canvas.drawCircle(x, y, r, pendingFill)
++            canvas.drawCircle(x, y, r, blackRim)
 +        }
 +    }
 +
@@ -2771,7 +2791,7 @@ index 0000000..a893bff
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3MapView.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3MapView.kt
 new file mode 100644
-index 0000000..5ecaf2d
+index 0000000..e408336
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3MapView.kt
 @@ -0,0 +1,394 @@
@@ -2967,16 +2987,16 @@ index 0000000..5ecaf2d
 +        invalidate()
 +    }
 +
-+    /** The rooms that still hold a check, for the dungeon pictures. */
++    /** The checks still to do in each dungeon room, for the dungeon pictures: per room the flag bit and logic state of each one. */
 +    private fun refreshPendingRooms() {
 +        if (!panel.available()) return
-+        val rooms = HashMap<Int, Int>()
++        val rooms = HashMap<Int, MutableList<Int>>()
 +        for (i in zeldaRoom.indices) {
-+            val room = zeldaRoom[i]
-+            if (room < 0 || i in cleared) continue
++            val code = zeldaRoom[i]
++            if (code < 0 || i in cleared) continue
 +            if (visibleChecks != null && i !in visibleChecks!!) continue
-+            val bit = if (inLogic == null || i in inLogic!!) 1 else 2
-+            rooms[room] = (rooms[room] ?: 0) or bit
++            val state = if (inLogic == null || i in inLogic!!) 1 else 2
++            rooms.getOrPut(code and 0xFFFF) { ArrayList() } += ((code shr 16) shl 2) or state
 +        }
 +        panel.pendingRooms = rooms
 +    }
@@ -3160,7 +3180,7 @@ index 0000000..5ecaf2d
 +                canvas.drawCircle(pts[0], pts[1], pr * 0.45f, me)
 +            }
 +        }
-+        panel.drawWorldChip(canvas, width)
++        panel.drawWorldChip(canvas, height)
 +    }
 +
 +    private companion object {

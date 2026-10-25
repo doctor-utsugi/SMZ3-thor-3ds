@@ -94,12 +94,12 @@ JNIEXPORT jstring JNICALL NATIVE(locationInfo)(JNIEnv *env, jclass cls, jint ind
     return (*env)->NewStringUTF(env, buf);
 }
 
-/* Room number of an ALttP chest location (its flag lives in the room table), or -1. */
+/* Room number of an ALttP chest location (its flag lives in the room table) with its flag bit number in bits 16 and up, or -1. */
 JNIEXPORT jint JNICALL NATIVE(zeldaLocationRoom)(JNIEnv *env, jclass cls, jint index)
 {
     if (index < 0 || (unsigned)index >= smz3_location_count) return -1;
     const smz3_location *l = &smz3_locations[index];
-    return l->game == SMZ3_GAME_ZELDA && !l->zelda_misc ? (jint)l->addr : -1;
+    return l->game == SMZ3_GAME_ZELDA && !l->zelda_misc ? (jint)(l->addr | (l->flag << 16)) : -1;
 }
 
 JNIEXPORT jint JNICALL NATIVE(zeldaRoomLocation)(JNIEnv *env, jclass cls, jint room)
