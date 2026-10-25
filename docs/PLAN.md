@@ -512,3 +512,9 @@ Creating a run now starts at a mode picker (`UI_MODE`): **Chill run**, **Origina
 - Naming uses a d-pad keyboard (A-Z, 0-9, `-.'!`, Space, Delete, Save, Cancel; L deletes, R types a space), so nothing needs touch.
 
 Verified: `core/ui/test_ui.c` (flow, presets, naming, persistence round trip, deletes), the Android release build on the Thor (mode picker, saved list, delete confirm, sprite step with grid and Random, naming screen, list surviving a reinstall) and a 3DS build. Not verified: a run generated through each mode on the device, and the 3DS menu on hardware.
+
+## Run list rows
+
+Each used slot in the run list shows a big total percent (3x5 pixel digits drawn as rectangles, so every frontend renders them the same), the run name and play time, a Link icon with the Zelda counter and a Samus icon with the Metroid counter, each with a thin progress bar, and the game the run is in. The hosts pass the numbers with `ui_set_slot_stats` after `ui_set_slot`; a slot without them keeps the old summary line. The palette gained `C_GREEN`; the Android canvas now snaps rectangle edges to whole pixels so the digit blocks meet without seams.
+
+Verified on the Thor with the existing runs (Android). The 3DS build compiles; the rows were not looked at on a 3DS.

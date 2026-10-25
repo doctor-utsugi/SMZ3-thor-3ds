@@ -12,7 +12,7 @@
 #define UI_SLOTS_SHOWN 4
 #define UI_MAX_SPRITES 640
 #define UI_MAX_OPTS 128
-#define UI_MAX_CMDS 256
+#define UI_MAX_CMDS 512
 #define UI_MAX_HITS 64
 #define UI_MAX_SAVED 16
 #define UI_SPEC_LEN 512
@@ -34,14 +34,18 @@ typedef struct {
     const char *const *names;    /* OPT_ENUM labels, max-min+1 entries */
 } UiOptDef;
 
-typedef struct { int used; char name[24]; char summary[40]; } UiSlot;
+typedef struct {
+    int used; char name[24]; char summary[40];
+    int stats, zelda_cleared, zelda_total, metroid_cleared, metroid_total, game;   /* stats: the numbers below are set; game 0 new, 1 Zelda, 2 Metroid, 3 finished */
+    int64_t play_ms;
+} UiSlot;
 /* A saved custom: a name and its options that differ from the defaults as "Key=value,Key=value" (option keys, so the list survives new options). */
 typedef struct { char name[24]; char spec[UI_SPEC_LEN]; } UiSaved;
 
 /* kind 0 rectangle, 1 text, 2 sprite preview: draw the picture of text ("link/<name>" or "samus/<name>", file <name>.pv beside the
  * .rdc: u8 width, u8 height, then width*height RGBA bytes) centred and scaled to fit the x, y, w, h box. */
 typedef struct { uint8_t kind; int16_t x, y, w, h; uint8_t color; uint8_t align; char text[64]; } UiCmd;
-enum { C_BG, C_PANEL, C_SEL, C_TEXT, C_DIM, C_ACCENT, C_WARN };
+enum { C_BG, C_PANEL, C_SEL, C_TEXT, C_DIM, C_ACCENT, C_WARN, C_GREEN };
 
 typedef struct { int16_t x, y, w, h; uint8_t kind; int16_t idx; } UiHit;
 enum { H_SLOT, H_MENU, H_TAB, H_ROW, H_SPRITE, H_SCROLL, H_CREATE, H_BACK, H_CHEVRON, H_CONFIRM, H_MODE, H_SAVED, H_SAVED_DEL, H_KEY, H_START };
@@ -83,6 +87,8 @@ extern const char *const UI_TABS[LEVEL_ITEMS][24];   /* option keys per tab, in 
 void ui_init(SmzUi *u);
 void ui_set_slot(SmzUi *u, int i, int used, const char *name, const char *summary);
 void ui_set_slot_count(SmzUi *u, int n);
+/* The numbers a used slot shows (percent, counters, time); without them the summary text is drawn. */
+void ui_set_slot_stats(SmzUi *u, int i, int zelda_cleared, int zelda_total, int metroid_cleared, int metroid_total, int64_t play_ms, int game);
 /* Text of an option's current value ("On", "Medium", a sprite name ...). */
 void ui_value_text(const SmzUi *u, int opt, char *out, size_t n);
 /* game 0 Link sprites, 1 Samus sprites, 2 plando files, 3 music packages */

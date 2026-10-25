@@ -244,6 +244,16 @@ int main(void)
         ui_input(&v, BTN_DOWN); ui_input(&v, BTN_A);
         assert(v.action == ACT_DELETE && v.action_slot == 5);
     }
+    {   /* run list rows with numbers: draw within the command budget, big percent from the totals */
+        SmzUi v; ui_init(&v);
+        for (int k = 0; k < 4; k++) { ui_set_slot(&v, k, 1, "Run name long enough", "x"); ui_set_slot_stats(&v, k, 216, 216, 100, 100, 99999999LL, 3); }
+        ui_draw(&v);
+        assert(v.cmd_count < UI_MAX_CMDS - 40);
+        int zero = 0;
+        ui_set_slot(&v, 0, 1, "a", "x"); ui_set_slot_stats(&v, 0, 0, 0, 0, 0, 0, 0);   /* no totals: 0 % without dividing */
+        ui_draw(&v);
+        (void)zero;
+    }
     printf("ui ok, %d draw commands\n", u.cmd_count);
     return 0;
 }

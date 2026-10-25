@@ -52,8 +52,17 @@ void ui_set_slot(SmzUi *u, int i, int used, const char *name, const char *summar
 {
     if (i < 0 || i >= UI_SLOTS) return;
     u->slots[i].used = used;
+    u->slots[i].stats = 0;
     snprintf(u->slots[i].name, sizeof u->slots[i].name, "%s", name ? name : "");
     snprintf(u->slots[i].summary, sizeof u->slots[i].summary, "%s", summary ? summary : "");
+}
+
+void ui_set_slot_stats(SmzUi *u, int i, int zc, int zt, int mc, int mt, int64_t ms, int game)
+{
+    if (i < 0 || i >= UI_SLOTS) return;
+    UiSlot *t = &u->slots[i];
+    t->stats = 1; t->zelda_cleared = zc; t->zelda_total = zt; t->metroid_cleared = mc; t->metroid_total = mt;
+    t->play_ms = ms; t->game = game;
 }
 
 void ui_set_sprites(SmzUi *u, int game, const char *const *names, int n)
@@ -549,6 +558,80 @@ static void fmt_value(const SmzUi *u, int opt, int v, char *out, size_t n)
 
 void ui_value_text(const SmzUi *u, int opt, char *out, size_t n) { fmt_value(u, opt, u->value[opt], out, n); }
 
+
+/* ---- the run list rows: a big percent, Link and Samus counters, name and time */
+
+static const uint16_t DIGIT[10] = {   /* 3x5 pixels, one bit per pixel, row-major from the top-left */
+    0x7B6F, 0x2C97, 0x73E7, 0x73CF, 0x5BC9, 0x79CF, 0x79EF, 0x7249, 0x7BEF, 0x7BCF};
+
+static void big_digit(SmzUi *u, int x, int y, int d, int scale, int color)
+{
+    for (int r = 0; r < 5; r++) {
+        int bits = (DIGIT[d] >> (12 - r * 3)) & 7;
+        for (int c = 0; c < 3;) {
+            if (!(bits & (4 >> c))) { c++; continue; }
+            int e = c;
+            while (e < 3 && (bits & (4 >> e))) e++;
+            rect(u, x + c * scale, y + r * scale, (e - c) * scale, scale, color);
+            c = e;
+        }
+    }
+}
+
+/* 7x7 pictures, one char per pixel: g green, o orange, w white, . empty */
+static const char *const ICON_LINK[7] = {"..ggg..", ".ggggg.", "gwwwwwg", ".wkwkw.", ".wwwww.", ".ggggg.", ".gg.gg."};
+static const char *const ICON_SAMUS[7] = {"..ooo..", ".ooooo.", "ogggggo", "ogggggo", ".ooooo.", "ooo.ooo", ".oo.oo."};
+
+static void icon(SmzUi *u, int x, int y, const char *const *rows, int scale)
+{
+    for (int r = 0; r < 7; r++) {
+        for (int c = 0; c < 7;) {
+            char ch = rows[r][c];
+            int e = c;
+            while (e < 7 && rows[r][e] == ch) e++;
+            int col = ch == 'g' ? C_GREEN : ch == 'o' ? C_ACCENT : ch == 'w' ? C_TEXT : ch == 'k' ? C_BG : -1;
+            if (col >= 0) rect(u, x + c * scale, y + r * scale, (e - c) * scale, scale, col);
+            c = e;
+        }
+    }
+}
+
+static void bar(SmzUi *u, int x, int y, int w, int num, int den, int color)
+{
+    int fill = den > 0 && num > 0 ? (int)((long long)w * (num > den ? den : num) / den) : 0;
+    rect(u, x, y, w, 3, C_BG);
+    if (num > 0 && fill < 1) fill = 1;
+    if (fill) rect(u, x, y, fill, 3, color);
+}
+
+static void slot_rich(SmzUi *u, int i, int y, int w)
+{
+    const UiSlot *t = &u->slots[i];
+    int total = t->zelda_total + t->metroid_total, done = t->zelda_cleared + t->metroid_cleared;
+    int pct = total > 0 ? (int)((long long)done * 100 / total) : 0;
+    char s[48];
+    int digits = pct >= 100 ? 3 : pct >= 10 ? 2 : 1, x = 14;
+    int color = pct >= 100 ? C_GREEN : C_ACCENT;
+    for (int d = 0, div = digits == 3 ? 100 : digits == 2 ? 10 : 1; d < digits; d++, div /= 10) { big_digit(u, x, y + 9, pct / div % 10, 5, color); x += 18; }
+    text(u, x, y + 24, C_DIM, 0, "%");
+    int mx = 92;
+    snprintf(s, sizeof s, "Slot %d  %.14s", i + 1, t->name);
+    text(u, mx, y + 4, C_TEXT, 0, s);
+    long long sec = t->play_ms / 1000;
+    snprintf(s, sizeof s, "%lld:%02lld:%02lld", sec / 3600, sec / 60 % 60, sec % 60);
+    text(u, 8 + w - 8, y + 4, C_TEXT, 2, s);
+    icon(u, mx, y + 22, ICON_LINK, 2);
+    snprintf(s, sizeof s, "%d/%d", t->zelda_cleared, t->zelda_total);
+    text(u, mx + 17, y + 23, C_TEXT, 0, s);
+    bar(u, mx, y + 38, 62, t->zelda_cleared, t->zelda_total, C_GREEN);
+    icon(u, mx + 80, y + 22, ICON_SAMUS, 2);
+    snprintf(s, sizeof s, "%d/%d", t->metroid_cleared, t->metroid_total);
+    text(u, mx + 97, y + 23, C_TEXT, 0, s);
+    bar(u, mx + 80, y + 38, 62, t->metroid_cleared, t->metroid_total, C_ACCENT);
+    static const char *const GAME[4] = {"new", "Zelda", "Metroid", "done"};
+    text(u, 8 + w - 8, y + 24, C_DIM, 2, GAME[t->game >= 0 && t->game < 4 ? t->game : 0]);
+}
+
 void ui_draw(SmzUi *u)
 {
     char buf[64], val[44];
@@ -566,7 +649,8 @@ void ui_draw(SmzUi *u)
             rect(u, 8, y, w, 44, i == u->slot_cursor ? C_SEL : C_PANEL);
             if (used) rect(u, 8, y, 5, 44, C_ACCENT);   /* a run with data has a bar on the left and bright text */
             hit(u, H_SLOT, i, 8, y, w, 44);
-            if (used) {
+            if (used && u->slots[i].stats) slot_rich(u, i, y, w);
+            else if (used) {
                 snprintf(buf, sizeof buf, "Slot %d  %s", i + 1, u->slots[i].name);
                 text(u, 20, y + 7, C_TEXT, 0, buf);
                 text(u, 20, y + 25, C_DIM, 0, u->slots[i].summary);

@@ -468,10 +468,10 @@ index 0000000..c830243
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/NativeMenuScreen.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/NativeMenuScreen.kt
 new file mode 100644
-index 0000000..8b27146
+index 0000000..679fb5f
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/NativeMenuScreen.kt
-@@ -0,0 +1,244 @@
+@@ -0,0 +1,248 @@
 +package com.swordfish.lemuroid.app.mobile.feature.runs
 +
 +import android.graphics.Paint
@@ -524,7 +524,7 @@ index 0000000..8b27146
 +private const val W = 320f
 +private const val H = 240f
 +private val palette = listOf(
-+    Color(0xFF10141C), Color(0xFF1D2430), Color(0xFF2E4A6B), Color(0xFFE8ECF2), Color(0xFF8793A6), Color(0xFFE9A23B), Color(0xFFE05A4F),
++    Color(0xFF10141C), Color(0xFF1D2430), Color(0xFF2E4A6B), Color(0xFFE8ECF2), Color(0xFF8793A6), Color(0xFFE9A23B), Color(0xFFE05A4F), Color(0xFF4CC38A),
 +)
 +private enum class Act { NONE, CONTINUE, DELETE, GENERATE }
 +
@@ -580,6 +580,7 @@ index 0000000..8b27146
 +    fun refreshSlots() {
 +        RunStore.loadAll(context).forEachIndexed { i, run ->
 +            Smz3Native.uiSetSlot(i, run != null, run?.name ?: "", run?.let { summary(context, it).replace("\n", " · ").take(38) } ?: "")
++            if (run != null) Smz3Native.uiSetSlotStats(i, run.zeldaCleared, run.zeldaTotal, run.metroidCleared, run.metroidTotal, run.playTimeMs, run.game)
 +        }
 +        version++
 +        publishSelection()
@@ -695,7 +696,10 @@ index 0000000..8b27146
 +                    val kind = f[0].toInt(); val x = f[1].toFloat() * scale; val y = f[2].toFloat() * scale
 +                    val color = palette[f[5].toInt().coerceIn(0, palette.lastIndex)]
 +                    if (kind == 0) {
-+                        drawRect(color, Offset(x, y), Size(f[3].toFloat() * scale, f[4].toFloat() * scale))
++                        // edges snap to whole pixels so neighbouring rectangles meet without a seam
++                        val l = Math.round(x).toFloat(); val t = Math.round(y).toFloat()
++                        val r = Math.round(x + f[3].toFloat() * scale).toFloat(); val b = Math.round(y + f[4].toFloat() * scale).toFloat()
++                        drawRect(color, Offset(l, t), Size(r - l, b - t))
 +                    } else if (kind == 2) {
 +                        preview(f[7])?.let { img ->
 +                            val bw = f[3].toFloat() * scale; val bh = f[4].toFloat() * scale
@@ -3323,10 +3327,10 @@ index 0000000..dc5944a
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Native.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Native.kt
 new file mode 100644
-index 0000000..76d60dc
+index 0000000..64a5af4
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Native.kt
-@@ -0,0 +1,69 @@
+@@ -0,0 +1,70 @@
 +package com.swordfish.lemuroid.app.shared.game.viewmodel
 +
 +/** JNI bridge to the shared C core (core/smz3_state.c). */
@@ -3388,6 +3392,7 @@ index 0000000..76d60dc
 +    @JvmStatic external fun uiSetPlando(yaml: ByteArray?): String
 +    @JvmStatic external fun uiPlandoName(): String
 +    @JvmStatic external fun uiSettingsJson(seedIfRandom: Int): String
++    @JvmStatic external fun uiSetSlotStats(i: Int, zc: Int, zt: Int, mc: Int, mt: Int, ms: Long, game: Int)
 +    @JvmStatic external fun uiSavedLoad(text: String?)
 +    @JvmStatic external fun uiSavedChanged(): String?
 +    @JvmStatic external fun uiOption(opt: Int): Int

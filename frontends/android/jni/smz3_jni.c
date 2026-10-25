@@ -352,6 +352,11 @@ JNIEXPORT void JNICALL NATIVE(uiSetSlot)(JNIEnv *env, jclass cls, jint i, jboole
     (*env)->ReleaseStringUTFChars(env, summary, s);
 }
 
+JNIEXPORT void JNICALL NATIVE(uiSetSlotStats)(JNIEnv *env, jclass cls, jint i, jint zc, jint zt, jint mc, jint mt, jlong ms, jint game)
+{
+    ui_set_slot_stats(&g_ui, i, zc, zt, mc, mt, ms, game);
+}
+
 JNIEXPORT void JNICALL NATIVE(uiSetSprites)(JNIEnv *env, jclass cls, jint game, jobjectArray names)
 {
     jsize n = (*env)->GetArrayLength(env, names);
