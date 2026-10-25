@@ -556,3 +556,7 @@ The start screen of a new run (Android only, enabled by the host with `ui_player
 ### Online consent
 
 Pressing Start on a new run asks once about the online ladder (`UI_ONLINE`): Yes (then name and flag if missing), Not now (offline this run, asked again next time) or No, don't ask again. The answer is `online_mode` (0 ask, 1 on, 2 off), the third field of `runs/player.txt`. The Player row of the start screen shows the state and reopens the question (when On it has name, flag and an On chip). Only runs generated while On get `runs/slotN.online`; the tracker asks the server for a token only for those, so Not now and Off runs never contact it.
+
+### Monthly seed
+
+`GET /api/monthly` gives the month and its fixed seed (9 digits, derived on the server from a secret and the month, so it cannot be known ahead). The app fetches it when the menu opens, keeps a copy for the same month (`runs/monthly.json`) and calls `ui_set_monthly`; only then the mode list shows "Monthly seed" (Original rules, `Seed` option set to that value, run named "Monthly YYYY-MM"). Without a connection and without a copy of this month the row does not appear (3DS never shows it). A monthly run marked online asks the server for a `monthly` token on its first played tick; the web page has a month selector for past ladders. Ladder per month keeps each install's best time.

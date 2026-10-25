@@ -164,6 +164,14 @@ int main(void)
     ui_touch(&u, UI_W / 2, 180);
     assert(u.action == ACT_GENERATE && u.action_slot == 2);
     u.action = ACT_NONE; u.screen = UI_SLOTS_SCREEN;
+    {   /* monthly seed row appears once the host knows the seed */
+        SmzUi m; ui_init(&m); m.screen = UI_MODE;
+        ui_set_monthly(&m, "2026-10", 123456789);
+        m.mode_cursor = 3 + (m.saved_count > 0); ui_draw(&m); ui_input(&m, BTN_A);
+        assert(m.screen == UI_START && m.run_mode == 4 && ui_run_monthly(&m) && !strcmp(ui_run_label(&m), "Monthly 2026-10"));
+        char js[2048]; ui_settings_json(&m, 77, js, sizeof js);
+        assert(strstr(js, "\"seed\":\"123456789\"") && strstr(js, "\"defaultRules\":true"));
+    }
     {   /* player profile: name keyboard and flag list from the start screen */
         SmzUi p; ui_init(&p); ui_player_enable(&p, 1); ui_player_load(&p, "Ana\tES\t1");
         assert(!strcmp(p.player, "Ana") && !strcmp(p.country, "ES"));

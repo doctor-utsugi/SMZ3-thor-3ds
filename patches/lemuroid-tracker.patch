@@ -468,10 +468,10 @@ index 0000000..c830243
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/NativeMenuScreen.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/NativeMenuScreen.kt
 new file mode 100644
-index 0000000..f12a929
+index 0000000..aba5973
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/NativeMenuScreen.kt
-@@ -0,0 +1,264 @@
+@@ -0,0 +1,267 @@
 +package com.swordfish.lemuroid.app.mobile.feature.runs
 +
 +import android.graphics.Paint
@@ -574,6 +574,7 @@ index 0000000..f12a929
 +    val scope = rememberCoroutineScope()
 +    var version by remember { mutableIntStateOf(0) }
 +    val focus = remember { FocusRequester() }
++    val pendingMonthly = remember { java.util.concurrent.atomic.AtomicReference<Pair<String, Int>?>(null) }
 +    val savedCustoms = remember { File(context.filesDir, "saved_customs.txt") }
 +    val paint = remember { Paint(Paint.ANTI_ALIAS_FLAG).apply { typeface = Typeface.MONOSPACE } }
 +
@@ -608,6 +609,7 @@ index 0000000..f12a929
 +        Smz3Native.uiSetSprites(3, Smz3Music.packages())
 +        Smz3Native.uiSavedLoad(savedCustoms.takeIf { it.exists() }?.readText())
 +        Smz3Native.uiPlayerLoad(OnlineLadder.profileText(context))
++        Thread { pendingMonthly.set(OnlineLadder.monthly(context)) }.start()
 +        refreshSlots()
 +        onDispose { }
 +    }
@@ -649,7 +651,7 @@ index 0000000..f12a929
 +                        settings = settings.toString(), mapMode = settings.optString("mapMode", "all"),
 +                    ),
 +                )
-+                OnlineLadder.markRun(context, slot, Smz3Native.uiOnline() == 1)
++                OnlineLadder.markRun(context, slot, Smz3Native.uiOnline() == 1, Smz3Native.uiRunMonthly() == 1)
 +                val game = RunGenerator.registerGame(context, retrogradeDb, slot, name)
 +                RunStore.load(context, slot)?.let { RunStore.save(context, it.copy(gameId = game.id)) }
 +            }.onFailure { android.util.Log.e("NativeMenu", "generation failed", it) }
@@ -664,6 +666,7 @@ index 0000000..f12a929
 +    }
 +
 +    fun pollActions() {
++        pendingMonthly.getAndSet(null)?.let { (label, seed) -> Smz3Native.uiSetMonthly(label, seed); version++ }
 +        Smz3Native.uiSavedChanged()?.let { runCatching { savedCustoms.writeText(it) } }
 +        Smz3Native.uiPlayerChanged()?.let { OnlineLadder.saveProfile(context, it) }
 +        val (act, slot) = Smz3Native.uiAction().let { Act.values()[it[0]] to it[1] }
@@ -738,10 +741,10 @@ index 0000000..f12a929
 +private fun Color.toArgb(): Int = android.graphics.Color.argb((alpha * 255).toInt(), (red * 255).toInt(), (green * 255).toInt(), (blue * 255).toInt())
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/OnlineLadder.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/OnlineLadder.kt
 new file mode 100644
-index 0000000..556cc5f
+index 0000000..b31a1d9
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/OnlineLadder.kt
-@@ -0,0 +1,122 @@
+@@ -0,0 +1,143 @@
 +package com.swordfish.lemuroid.app.mobile.feature.runs
 +
 +import android.content.Context
@@ -789,16 +792,37 @@ index 0000000..556cc5f
 +    private fun onlineFile(context: Context, slot: Int) = File(dir(context), "slot$slot.online")
 +
 +    /** Records whether the run just generated in [slot] goes to the online ladder; the answer given in the menu then. */
-+    fun markRun(context: Context, slot: Int, online: Boolean) {
++    fun markRun(context: Context, slot: Int, online: Boolean, monthly: Boolean) {
 +        tokenFile(context, slot).delete()
 +        finishFile(context, slot).delete()
-+        if (online) runCatching { onlineFile(context, slot).writeText("1") } else onlineFile(context, slot).delete()
++        if (online) runCatching { onlineFile(context, slot).writeText(if (monthly) "monthly" else "original") } else onlineFile(context, slot).delete()
++    }
++
++    /** This month's label and fixed seed: fetched when possible, else the copy saved for the same month. Call off the main thread. */
++    fun monthly(context: Context): Pair<String, Int>? {
++        val f = File(dir(context), "monthly.json")
++        runCatching {
++            val c = URL("$BASE/api/monthly").openConnection() as HttpURLConnection
++            c.connectTimeout = 8000
++            c.readTimeout = 8000
++            val text = c.inputStream.bufferedReader().use { it.readText() }
++            c.disconnect()
++            JSONObject(text).getString("seed").toInt()
++            f.writeText(text)
++        }
++        return runCatching {
++            val j = JSONObject(f.readText())
++            val month = j.getString("month")
++            val now = java.text.SimpleDateFormat("yyyy-MM", java.util.Locale.US).apply { timeZone = java.util.TimeZone.getTimeZone("UTC") }.format(java.util.Date())
++            if (month == now) month to j.getString("seed").toInt() else null
++        }.getOrNull()
 +    }
 +
 +    /** Asks the server for the run's token the first time it is played; no network means no token and the run stays off the online ladder. */
 +    fun ensureToken(context: Context, slot: Int) {
 +        if (!onlineFile(context, slot).exists() || tokenFile(context, slot).exists()) return
-+        val r = call("/api/start", JSONObject().put("install", installId(context)).put("kind", "original")) ?: return
++        val kind = runCatching { onlineFile(context, slot).readText().trim() }.getOrNull() ?: return
++        val r = call("/api/start", JSONObject().put("install", installId(context)).put("kind", kind)) ?: return
 +        r.optString("token").takeIf { it.isNotEmpty() }?.let { tokenFile(context, slot).writeText(it) }
 +    }
 +
@@ -3491,10 +3515,10 @@ index 0000000..dc5944a
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Native.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Native.kt
 new file mode 100644
-index 0000000..8f848fc
+index 0000000..c169402
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Native.kt
-@@ -0,0 +1,74 @@
+@@ -0,0 +1,76 @@
 +package com.swordfish.lemuroid.app.shared.game.viewmodel
 +
 +/** JNI bridge to the shared C core (core/smz3_state.c). */
@@ -3563,6 +3587,8 @@ index 0000000..8f848fc
 +    @JvmStatic external fun uiPlayerLoad(text: String?)
 +    @JvmStatic external fun uiPlayerChanged(): String?
 +    @JvmStatic external fun uiOnline(): Int
++    @JvmStatic external fun uiSetMonthly(label: String, seed: Int)
++    @JvmStatic external fun uiRunMonthly(): Int
 +    @JvmStatic external fun uiOption(opt: Int): Int
 +    @JvmStatic external fun uiScreen(): Int
 +    @JvmStatic external fun uiSetSlotCount(n: Int)

@@ -68,6 +68,7 @@ typedef struct {
     int player_on, player_dirty; /* the host shows the Player row (it has an online ladder) / the profile changed */
     char player[24], country[3]; /* the profile sent with finished runs; country is an ISO 3166 code or empty */
     int country_cursor, country_scroll;
+    char monthly_label[16]; int monthly_seed;  /* the month's fixed seed (0 until the host knows it) and its label, e.g. 2026-10 */
     int online_mode, online_cursor, online_gen; /* 0 ask before each run, 1 upload, 2 never; the prompt's row; 1 when the prompt came from Start */
     char start_label[24], notice[32];
     int start_cursor, start_col;  /* sprite screen: row (Link, Samus, Start) and column (sprite, Random) */
@@ -113,6 +114,10 @@ int ui_player_text(const SmzUi *u, char *out, size_t cap);
 int ui_player_dirty(SmzUi *u);
 /* 1 when the run being started uploads to the online ladder (read when the host starts generating). */
 int ui_online_now(const SmzUi *u);
+/* The month's fixed seed; once set, the run mode list offers "Monthly seed" (Original rules with that seed). */
+void ui_set_monthly(SmzUi *u, const char *label, int seed);
+/* 1 when the run being started is the monthly seed run. */
+int ui_run_monthly(const SmzUi *u);
 /* The name of the way the run was set up ("Cozy run", "Original", a saved custom's name), for naming the run being created. */
 const char *ui_run_label(const SmzUi *u);
 void ui_busy(SmzUi *u, const char *msg);

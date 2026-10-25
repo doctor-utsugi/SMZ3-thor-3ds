@@ -36,7 +36,7 @@ function save() {
 
 const hmac = s => crypto.createHmac('sha256', SECRET).update(s).digest('hex');
 const monthOf = t => new Date(t).toISOString().slice(0, 7);
-const seedOf = month => parseInt(hmac('seed:' + month).slice(0, 8), 16).toString(36).toUpperCase().padStart(6, '0').slice(0, 6);
+const seedOf = month => String(parseInt(hmac('seed:' + month).slice(0, 8), 16) % 900000000 + 100000000);
 const clean = (v, n) => String(v == null ? '' : v).replace(/[^\p{L}\p{N} _.'!-]/gu, '').trim().slice(0, n);
 
 function onlyKeys(b, keys) {

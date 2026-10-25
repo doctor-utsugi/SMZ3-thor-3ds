@@ -299,6 +299,14 @@ void ui_player_load(SmzUi *u, const char *text)
     u->online_mode = t2 && t2[1] >= '0' && t2[1] <= '2' ? t2[1] - '0' : 0;
 }
 
+void ui_set_monthly(SmzUi *u, const char *label, int seed)
+{
+    snprintf(u->monthly_label, sizeof u->monthly_label, "%s", label ? label : "");
+    u->monthly_seed = seed > 0 ? seed : 0;
+}
+
+int ui_run_monthly(const SmzUi *u) { return u->run_mode == 4; }
+
 int ui_online_now(const SmzUi *u) { return u->player_on && u->online_mode == 1; }
 
 int ui_player_text(const SmzUi *u, char *out, size_t cap)
@@ -368,7 +376,10 @@ static void begin_run(SmzUi *u, int mode, const char *label, const char *spec)
     else goto_start(u);
 }
 
-static int mode_rows(const SmzUi *u) { return u->saved_count > 0 ? 4 : 3; }
+static int mode_rows(const SmzUi *u) { return 3 + (u->saved_count > 0) + (u->monthly_seed > 0); }
+
+/* 0 Cozy, 1 Original, 2 Custom, 3 Saved customs, 4 Monthly seed */
+static int mode_kind(const SmzUi *u, int row) { return row < 3 ? row : row == 3 && u->saved_count > 0 ? 3 : 4; }
 
 #define KEY_CHARS "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-.'!"
 #define KEY_COLS 10
@@ -495,10 +506,17 @@ static void mode_input(SmzUi *u, UiButton b)
     if (b == BTN_UP) u->mode_cursor = (u->mode_cursor + n - 1) % n;
     else if (b == BTN_DOWN) u->mode_cursor = (u->mode_cursor + 1) % n;
     else if (b == BTN_B) u->screen = UI_SLOTS_SCREEN;
-    else if (b == BTN_A) switch (u->mode_cursor) {
+    else if (b == BTN_A) switch (mode_kind(u, u->mode_cursor)) {
     case 0: begin_run(u, 0, CHILL.name, CHILL.spec); break;
     case 1: begin_run(u, 1, ORIGINAL.name, ORIGINAL.spec); break;
     case 2: begin_run(u, 2, "Custom", ""); break;
+    case 4: {
+        char label[24];
+        snprintf(label, sizeof label, "Monthly %s", u->monthly_label);
+        begin_run(u, 4, label, ORIGINAL.spec);
+        for (int i = 0; i < UI_OPT_COUNT; i++) if (!strcmp(UI_OPTS[i].key, "Seed")) u->value[i] = u->monthly_seed;
+        break;
+    }
     default: u->screen = UI_SAVED; u->saved_cursor = u->saved_scroll = u->saved_col = u->saved_confirm = 0; break;
     }
 }
@@ -894,19 +912,21 @@ void ui_draw(SmzUi *u)
     case UI_MODE: {
         snprintf(buf, sizeof buf, "New run  -  Slot %d", u->active_slot + 1);
         title(u, buf);
-        for (int r = 0; r < mode_rows(u); r++) {
-            int y = 36 + r * 50;
-            const char *name = r == 0 ? CHILL.name : r == 1 ? ORIGINAL.name : r == 2 ? "Custom" : "Saved customs";
+        int rows = mode_rows(u), pitch = rows > 4 ? 40 : 50, rh = pitch - 6;
+        for (int r = 0; r < rows; r++) {
+            int y = 34 + r * pitch, k = mode_kind(u, r);
+            const char *name = k == 0 ? CHILL.name : k == 1 ? ORIGINAL.name : k == 2 ? "Custom" : k == 3 ? "Saved customs" : "Monthly seed";
             char desc[48];
-            if (r == 0) snprintf(desc, sizeof desc, "%s", CHILL.desc);
-            else if (r == 1) snprintf(desc, sizeof desc, "%s", ORIGINAL.desc);
-            else if (r == 2) snprintf(desc, sizeof desc, "Pick every option yourself");
-            else snprintf(desc, sizeof desc, "%d saved", u->saved_count);
-            rect(u, 8, y, UI_W - 16, 44, r == u->mode_cursor ? C_SEL : C_PANEL);
-            rect(u, 8, y, 5, 44, C_ACCENT);
-            hit(u, H_MODE, r, 8, y, UI_W - 16, 44);
-            text(u, 20, y + 7, C_TEXT, 0, name);
-            text(u, 20, y + 25, C_DIM, 0, desc);
+            if (k == 0) snprintf(desc, sizeof desc, "%s", CHILL.desc);
+            else if (k == 1) snprintf(desc, sizeof desc, "%s", ORIGINAL.desc);
+            else if (k == 2) snprintf(desc, sizeof desc, "Pick every option yourself");
+            else if (k == 3) snprintf(desc, sizeof desc, "%d saved", u->saved_count);
+            else snprintf(desc, sizeof desc, "%s: the same seed for everyone", u->monthly_label);
+            rect(u, 8, y, UI_W - 16, rh, r == u->mode_cursor ? C_SEL : C_PANEL);
+            rect(u, 8, y, 5, rh, k == 4 ? C_GREEN : C_ACCENT);
+            hit(u, H_MODE, r, 8, y, UI_W - 16, rh);
+            text(u, 20, y + 5, C_TEXT, 0, name);
+            text(u, 20, y + rh - 17, C_DIM, 0, desc);
         }
         text(u, 6, UI_H - 6, C_DIM, 0, "A choose  B back");
         break;
