@@ -751,10 +751,10 @@ static void slot_rich(SmzUi *u, int i, int y, int w)
     if (t->online) {
         char who[24];
         snprintf(who, sizeof who, "%.12s%s%s", u->player[0] ? u->player : "Online", u->country[0] ? " " : "", u->country);
-        text(u, 8 + w - 8, y + 11, t->online == 2 ? C_ACCENT : C_CYAN, 2, who);
+        text(u, 8 + w - 8, y + 14, t->online == 2 ? C_ACCENT : C_CYAN, 2, who);
     }
-    bar(u, 214, y + 22, w - 214, t->zelda_cleared, t->zelda_total, C_GREEN);
-    bar(u, 214, y + 32, w - 214, t->metroid_cleared, t->metroid_total, C_ACCENT);
+    bar(u, 214, y + 27, w - 214, t->zelda_cleared, t->zelda_total, C_GREEN);
+    bar(u, 214, y + 36, w - 214, t->metroid_cleared, t->metroid_total, C_ACCENT);
 }
 
 void ui_draw(SmzUi *u)
