@@ -1785,7 +1785,7 @@ index 0000000..2056545
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3DungeonMaps.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3DungeonMaps.kt
 new file mode 100644
-index 0000000..0edc8fb
+index 0000000..8891013
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3DungeonMaps.kt
 @@ -0,0 +1,155 @@
@@ -1934,8 +1934,8 @@ index 0000000..0edc8fb
 +        val BOSS_SPOT = intArrayOf(-1, -1, 0x808, 8, 0, 8, 0x808, 8, 0x808, 0x800, 0x404, 0x808, 8, 8)
 +        private val ROOM_ALIASES = listOf(137 to 169, 167 to 119, 79 to 190)
 +        private val NAMES = listOf(
-+            "Hyrule Castle", "Sewers", "Eastern Palace", "Desert Palace", "Tower of Hera", "Castle Tower", "Palace of Darkness",
-+            "Swamp Palace", "Skull Woods", "Thieves' Town", "Ice Palace", "Misery Mire", "Turtle Rock", "Ganon's Tower",
++            "Sewers", "Hyrule Castle", "Eastern Palace", "Desert Palace", "Castle Tower", "Swamp Palace", "Palace of Darkness",
++            "Misery Mire", "Skull Woods", "Ice Palace", "Tower of Hera", "Thieves' Town", "Turtle Rock", "Ganon's Tower",
 +        )
 +
 +        @Volatile private var shared: Smz3DungeonMaps? = null
@@ -3393,7 +3393,7 @@ index 0000000..815ecfe
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Presentation.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Presentation.kt
 new file mode 100644
-index 0000000..20c5e91
+index 0000000..9dd6525
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Presentation.kt
 @@ -0,0 +1,715 @@
@@ -3542,15 +3542,19 @@ index 0000000..20c5e91
 +    private fun buildRunPage(): View {
 +        val column = LinearLayout(context).apply {
 +            orientation = LinearLayout.VERTICAL
-+            setPadding(dp(12), dp(8), dp(4), dp(8))
++            setPadding(dp(12), dp(4), dp(4), dp(4))
 +        }
-+        game = label(14f, Role.ACCENT).apply { isSingleLine = true }
-+        percent = label(54f, Role.ACCENT).apply { includeFontPadding = false }
-+        time = label(22f, Role.TEXT)
-+        stats = label(14f, Role.TEXT).apply { setLineSpacing(0f, 1.2f) }
-+        zeldaText = label(14f)
++        // the game name shrinks to fit its line instead of being cut
++        game = label(14f, Role.ACCENT).apply {
++            isSingleLine = true
++            setAutoSizeTextTypeUniformWithConfiguration(8, 14, 1, android.util.TypedValue.COMPLEX_UNIT_SP)
++        }
++        percent = label(46f, Role.ACCENT).apply { includeFontPadding = false }
++        time = label(20f, Role.TEXT)
++        stats = label(13f, Role.TEXT).apply { setLineSpacing(0f, 1.1f) }
++        zeldaText = label(13f)
 +        zeldaBar = bar()
-+        metroidText = label(14f)
++        metroidText = label(13f)
 +        metroidBar = bar()
 +        val head = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.BOTTOM }
 +        head.addView(percent, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT))
@@ -3565,22 +3569,18 @@ index 0000000..20c5e91
 +        )
 +        column.addView(head, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 +        listOf(zeldaText, zeldaBar, metroidText, metroidBar, stats).forEach {
-+            column.addView(it, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, if (it is ProgressBar) dp(8) else ViewGroup.LayoutParams.WRAP_CONTENT).apply { if (it === zeldaText) topMargin = dp(8); if (it === stats) topMargin = dp(6) })
++            column.addView(it, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, if (it is ProgressBar) dp(8) else ViewGroup.LayoutParams.WRAP_CONTENT).apply { if (it === zeldaText) topMargin = dp(4); if (it === stats) topMargin = dp(4) })
 +        }
 +        rewards = Smz3RewardsView(context)
-+        column.addView(rewards, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) })
++        column.addView(rewards, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(4) })
 +        recentBox = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
-+        column.addView(recentBox, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) })
-+        closest = label(13f, Role.DIM).apply { setLineSpacing(0f, 1.15f) }
-+        column.addView(closest, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) })
++        column.addView(recentBox, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(4) })
++        closest = label(12f, Role.DIM).apply { setLineSpacing(0f, 1.05f) }
++        column.addView(closest, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(4) })
 +
 +        val page = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL }
 +        page.addView(ScrollView(context).apply { addView(column) }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 0.46f))
 +        miniMap = Smz3MapView(context, follow = true).also {
-+            it.setOnClickListener {
-+                select(MAP_TAB)
-+                areaBox?.let { box -> map?.fitRect(box) }
-+            }
 +            page.addView(it, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 0.54f))
 +        }
 +        return page
