@@ -1785,10 +1785,10 @@ index 0000000..2056545
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3DungeonMaps.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3DungeonMaps.kt
 new file mode 100644
-index 0000000..e91a263
+index 0000000..bcec1c7
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3DungeonMaps.kt
-@@ -0,0 +1,138 @@
+@@ -0,0 +1,142 @@
 +package com.swordfish.lemuroid.app.shared.game.viewmodel
 +
 +import android.content.Context
@@ -1802,7 +1802,7 @@ index 0000000..e91a263
 +class DungeonLive(val d: Int, val idx: Int, val cell: Int, val lx: Int, val ly: Int)
 +
 +/** What the game remembers about the dungeons: the visited quadrants of every room (`$7EF000`) and the owned dungeon maps. */
-+class DungeonData(val roomFlags: ByteArray, val mapMask: Int)
++class DungeonData(val roomFlags: ByteArray, val mapMask: Int, val compassMask: Int)
 +
 +/**
 + * The game's own dungeon maps (the screen the pause menu shows), rendered from the ROM by tools/zelda-dungeon-maps.py into two
@@ -1879,7 +1879,7 @@ index 0000000..e91a263
 +        val src = if (zeldaRunning) wram else sram
 +        val base = if (zeldaRunning) 0xF000 else 0
 +        if (src.size < base + 0x370) return null
-+        return DungeonData(src.copyOfRange(base, base + 0x200), u16(src, base + 0x368))
++        return DungeonData(src.copyOfRange(base, base + 0x200), u16(src, base + 0x368), u16(src, base + 0x364))
 +    }
 +
 +    private val cache = HashMap<String, Bitmap>()
@@ -1915,6 +1915,10 @@ index 0000000..e91a263
 +    companion object {
 +        const val ROOM = 16
 +        const val FLOOR = 80
++        /** The boss room of each dungeon, the floor it is on (relative to the ground floor), and where the icon sits (x << 8 | y, -1 for none). */
++        val BOSS_ROOM = intArrayOf(15, 15, 200, 51, 32, 6, 90, 144, 41, 222, 7, 172, 164, 13)
++        val BOSS_FLOOR = intArrayOf(-1, -1, 1, 1, 6, -1, -1, -1, -2, -7, 5, -1, -3, 6)
++        val BOSS_SPOT = intArrayOf(-1, -1, 0x808, 8, 0, 8, 0x808, 8, 0x808, 0x800, 0x404, 0x808, 8, 8)
 +        private val ROOM_ALIASES = listOf(137 to 169, 167 to 119, 79 to 190)
 +        private val NAMES = listOf(
 +            "Hyrule Castle", "Sewers", "Eastern Palace", "Desert Palace", "Tower of Hera", "Castle Tower", "Palace of Darkness",
@@ -1929,10 +1933,10 @@ index 0000000..e91a263
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3DungeonPanel.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3DungeonPanel.kt
 new file mode 100644
-index 0000000..30cf507
+index 0000000..8d280d9
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3DungeonPanel.kt
-@@ -0,0 +1,185 @@
+@@ -0,0 +1,207 @@
 +package com.swordfish.lemuroid.app.shared.game.viewmodel
 +
 +import android.graphics.Canvas
@@ -1978,6 +1982,7 @@ index 0000000..30cf507
 +    private val pendingRim = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; color = Color.WHITE; strokeWidth = 3f }
 +    private val dimFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#E6243038") }
 +    private val dimRim = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; color = Color.parseColor("#F0F4F8"); strokeWidth = 2.5f }
++    private val bossFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#D32F2F") }
 +    private val blackRim = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; color = Color.BLACK; strokeWidth = 3f }
 +
 +    /** True when the view should draw the dungeon picture rather than the world map. */
@@ -2100,6 +2105,27 @@ index 0000000..30cf507
 +                canvas.drawCircle(cx - off, cy, r + 2f, pendingRim)
 +                canvas.drawCircle(cx - off, cy, r, pendingFill)
 +                canvas.drawCircle(cx - off, cy, r, blackRim)
++            }
++        }
++
++        // the boss, once the compass says where (or on all-map runs), until it is beaten
++        val spot = Smz3DungeonMaps.BOSS_SPOT[dn]
++        val bossIdx = Smz3DungeonMaps.BOSS_FLOOR[dn] + maps.below(dn)
++        val room = Smz3DungeonMaps.BOSS_ROOM[dn]
++        val dd = data
++        if (spot >= 0 && idx == bossIdx && grid != null && dd != null) {
++            val known = showAll || (dd.compassMask and (0x8000 shr dn)) != 0
++            val beaten = (dd.roomFlags[room * 2 + 1].toInt() and 0x08) != 0
++            val c = grid.indexOf(room)
++            if (known && !beaten && c >= 0) {
++                val x = left + ((c % 5 - b[0]) * Smz3DungeonMaps.ROOM + (spot shr 8) + 4f) * scale
++                val y = top + ((c / 5 - b[1]) * Smz3DungeonMaps.ROOM + (spot and 0xFF) + 4f) * scale
++                val r = scale * 2.8f
++                canvas.drawCircle(x, y, r + 2f, pendingRim)
++                canvas.drawCircle(x, y, r, bossFill)
++                canvas.drawCircle(x, y, r, blackRim)
++                text.textSize = r * 1.5f
++                canvas.drawText("B", x, y + text.textSize * 0.35f, text)
 +            }
 +        }
 +
