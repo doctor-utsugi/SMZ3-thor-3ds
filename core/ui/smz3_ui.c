@@ -648,14 +648,11 @@ void ui_draw(SmzUi *u)
                 snprintf(buf, sizeof buf, "Slot %d  %s", i + 1, u->slots[i].name);
                 text(u, 20, y + 7, C_TEXT, 0, buf);
                 text(u, 20, y + 25, C_DIM, 0, u->slots[i].summary);
-            } else {   /* an empty slot: a plus where the percent goes, an invitation, and only its number */
+            } else {   /* an empty slot: a plus where the percent goes and an invitation */
                 rect(u, 8, y, 5, 44, i == u->slot_cursor ? C_ACCENT : C_DIM);
                 rect(u, 24, y + 20, 26, 5, C_DIM);
                 rect(u, 34, y + 10, 5, 25, C_DIM);
-                text(u, 88, y + 8, C_ACCENT, 0, "New run");
-                text(u, 88, y + 25, C_DIM, 0, "Cozy, Original, Custom ...");
-                snprintf(buf, sizeof buf, "#%d", i + 1);
-                text(u, 8 + w - 8, y + 5, C_DIM, 2, buf);
+                text(u, 88, y + 16, C_ACCENT, 0, "New run");
             }
         }
         if (more) {

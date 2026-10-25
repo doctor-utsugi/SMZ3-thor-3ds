@@ -532,4 +532,4 @@ The row no longer shows "Slot N Run N" nor the Zelda/Metroid counters. Link's li
 - The "Chill run" preset is now **Cozy run**: Keysanity Zelda only, wall jump Easy, light dark rooms and save states on, the rest default (all helps, whole tracker map). The generator has no option that shuffles only the Zelda dungeon chests; Zelda-only keysanity spreads that game's keys, maps and compasses over its whole world, and Super Metroid keeps its own rules. Seeds are always solvable.
 - A new run is named after how it was set up ("Cozy run", "Original", "Custom" or the saved custom's name) via `ui_run_label`, and the row shows that name. Older runs keep their "Run N".
 - The Android run list refreshes on every resume, so progress made in a run (crystals, bosses, time) shows when returning to the list.
-- An empty slot shows a plus, "New run" and its number instead of "Slot N - empty - / + New run (A)".
+- An empty slot shows a plus, "New run" instead of "Slot N - empty - / + New run (A)".
