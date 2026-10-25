@@ -537,3 +537,14 @@ The row no longer shows "Slot N Run N" nor the Zelda/Metroid counters. Link's li
 ## Idle screen starfield loop
 
 The waiting screen of the second display looped its stars with a visible jump: each star moved a fraction of the screen per loop and its twinkle did not complete whole cycles. Stars now cross the screen a whole number of times per 40 s loop, twinkle a whole number of cycles, and fade in and out at the top and bottom edges, so the restart is seamless.
+
+## Online ladder (smz3.indieviral.com)
+
+`server/ladder/` is a dependency-free Node service (pm2 `smz3-ladder`, local port 3360, Apache reverse proxy and TLS from the subdomain script). Data lives in `data/ladder.json`; the HMAC secret in `data/secret` (both ignored by git, never deploy over them).
+
+- `POST /api/start {install, kind}` returns a signed token (and the month's seed for `monthly`). `POST /api/finish {token, timeMs, player}` is the only way to add a run. Unknown keys are refused.
+- Checks on finish: valid signature, token not used before, `10 min <= timeMs <= wall clock time since the token was issued`, per-IP rate limits. One entry per install on each ladder (its best).
+- Ladders: `original` (default rules, all time) and `monthly` (fixed seed derived from the month by the server, a new one every month; `?kind=monthly&month=YYYY-MM` shows past months). The page at `/` has a month selector.
+- Limits, stated honestly: the time is still reported by the app. The token stops forged requests and times shorter than the real time elapsed, not a patient cheater or a modified app.
+- App (`OnlineLadder.kt`): the first played tick of an original-rules run asks for a token (stored as `runs/slotN.token`); at the credits the time is queued and sent, retried on the next idle screen if offline. The bottom screen shows the fetched original ladder tagged ONLINE and keeps the local custom ladder. The player name is `runs/player_name.txt` (default `Player-xxxx`).
+- Not done yet: the Monthly seed mode in the new-run menu (the server side and the seed endpoint exist).

@@ -733,6 +733,107 @@ index 0000000..33b1676
 +}
 +
 +private fun Color.toArgb(): Int = android.graphics.Color.argb((alpha * 255).toInt(), (red * 255).toInt(), (green * 255).toInt(), (blue * 255).toInt())
+diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/OnlineLadder.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/OnlineLadder.kt
+new file mode 100644
+index 0000000..7453e3e
+--- /dev/null
++++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/OnlineLadder.kt
+@@ -0,0 +1,95 @@
++package com.swordfish.lemuroid.app.mobile.feature.runs
++
++import android.content.Context
++import org.json.JSONObject
++import java.io.File
++import java.net.HttpURLConnection
++import java.net.URL
++import java.util.UUID
++
++/**
++ * The shared ladder at [BASE]. The server signs a token when a run starts and only accepts a time for a token it issued,
++ * so a finished run is sent as just that token, the time and the player name. Original-rules runs only.
++ */
++object OnlineLadder {
++    private const val BASE = "https://smz3.indieviral.com"
++
++    private fun dir(context: Context) = File(context.filesDir, "runs").apply { mkdirs() }
++    private fun tokenFile(context: Context, slot: Int) = File(dir(context), "slot$slot.token")
++    private fun finishFile(context: Context, slot: Int) = File(dir(context), "slot$slot.finish")
++
++    private fun installId(context: Context): String {
++        val f = File(dir(context), "install_id")
++        return runCatching { f.readText().trim() }.getOrNull()?.takeIf { it.length in 16..40 }
++            ?: UUID.randomUUID().toString().also { runCatching { f.writeText(it) } }
++    }
++
++    /** Name shown on the ladder; edit `runs/player_name.txt` to change it. */
++    fun playerName(context: Context): String {
++        val f = File(dir(context), "player_name.txt")
++        return runCatching { f.readText().trim() }.getOrNull()?.takeIf { it.isNotEmpty() } ?: "Player-" + installId(context).take(4)
++    }
++
++    /** Asks the server for the run's token the first time it is played; no network means no token and the run stays off the online ladder. */
++    fun ensureToken(context: Context, slot: Int) {
++        if (tokenFile(context, slot).exists()) return
++        val r = call("/api/start", JSONObject().put("install", installId(context)).put("kind", "original")) ?: return
++        r.optString("token").takeIf { it.isNotEmpty() }?.let { tokenFile(context, slot).writeText(it) }
++    }
++
++    /** Remembers the final time of a finished run so it is sent now or at the next chance. */
++    @Synchronized
++    fun queueFinish(context: Context, slot: Int, timeMs: Long) {
++        if (!tokenFile(context, slot).exists()) return
++        finishFile(context, slot).writeText(timeMs.toString())
++    }
++
++    /** Sends every finished run waiting; the server's refusals drop the run, network failures retry later. Call off the main thread. */
++    @Synchronized
++    fun flush(context: Context) {
++        for (slot in 0 until RunStore.SLOTS) {
++            val time = runCatching { finishFile(context, slot).readText().trim().toLong() }.getOrNull() ?: continue
++            val token = runCatching { tokenFile(context, slot).readText().trim() }.getOrNull() ?: continue
++            val code = post("/api/finish", JSONObject().put("token", token).put("timeMs", time).put("player", playerName(context))).first
++            if (code == 200 || code == 400) {
++                finishFile(context, slot).delete()
++                tokenFile(context, slot).delete()
++            }
++        }
++    }
++
++    private fun post(path: String, body: JSONObject): Pair<Int, String> = runCatching {
++        val c = URL(BASE + path).openConnection() as HttpURLConnection
++        c.requestMethod = "POST"
++        c.connectTimeout = 8000
++        c.readTimeout = 8000
++        c.doOutput = true
++        c.setRequestProperty("Content-Type", "application/json")
++        c.outputStream.use { it.write(body.toString().toByteArray()) }
++        val text = runCatching { (if (c.responseCode < 400) c.inputStream else c.errorStream).bufferedReader().use { it.readText() } }.getOrDefault("")
++        Pair(c.responseCode, text).also { c.disconnect() }
++    }.getOrDefault(Pair(-1, ""))
++
++    private fun call(path: String, body: JSONObject): JSONObject? =
++        post(path, body).let { (code, text) -> if (code == 200) runCatching { JSONObject(text) }.getOrNull() else null }
++
++    /** Last original ladder fetched, empty until the first fetch succeeds. */
++    fun cached(context: Context): List<LeaderboardEntry> = runCatching {
++        val a = JSONObject(File(dir(context), "online_ladder.json").readText()).getJSONArray("runs")
++        List(a.length()) { i ->
++            a.getJSONObject(i).let { LeaderboardEntry(it.getString("player"), "", it.getLong("timeMs"), it.optLong("finishedAt"), true) }
++        }
++    }.getOrDefault(emptyList())
++
++    /** Downloads the ladder into the cache and returns whether it worked. Call off the main thread. */
++    fun refresh(context: Context): Boolean = runCatching {
++        val c = URL("$BASE/api/ladder?kind=original").openConnection() as HttpURLConnection
++        c.connectTimeout = 8000
++        c.readTimeout = 8000
++        val text = c.inputStream.bufferedReader().use { it.readText() }
++        c.disconnect()
++        JSONObject(text).getJSONArray("runs")
++        File(dir(context), "online_ladder.json").writeText(text)
++        true
++    }.getOrDefault(false)
++}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/RunGenerator.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/RunGenerator.kt
 new file mode 100644
 index 0000000..3763e1f
@@ -2642,10 +2743,10 @@ index 0000000..3d11f48
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3IdlePresentation.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3IdlePresentation.kt
 new file mode 100644
-index 0000000..7f96c80
+index 0000000..261a6a5
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3IdlePresentation.kt
-@@ -0,0 +1,190 @@
+@@ -0,0 +1,201 @@
 +package com.swordfish.lemuroid.app.shared.game.viewmodel
 +
 +import android.animation.ValueAnimator
@@ -2664,6 +2765,7 @@ index 0000000..7f96c80
 +import android.view.animation.LinearInterpolator
 +import com.swordfish.lemuroid.app.mobile.feature.runs.Leaderboard
 +import com.swordfish.lemuroid.app.mobile.feature.runs.LeaderboardEntry
++import com.swordfish.lemuroid.app.mobile.feature.runs.OnlineLadder
 +import kotlin.math.PI
 +import kotlin.math.sin
 +import kotlin.random.Random
@@ -2698,13 +2800,22 @@ index 0000000..7f96c80
 +        private val stars = List(90) { floatArrayOf(rnd.nextFloat(), rnd.nextFloat(), 0.3f + rnd.nextFloat() * 0.7f) }
 +        private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
 +        private val density = context.resources.displayMetrics.density
-+        private val defaultLadder = Leaderboard.top(context, true)
++        private var online = OnlineLadder.cached(context).isNotEmpty()
++        private var defaultLadder = if (online) OnlineLadder.cached(context).take(5) else Leaderboard.top(context, true)
 +        private val customLadder = Leaderboard.top(context, false)
 +        private var showLadders = false
 +        private val button = android.graphics.RectF()
 +
 +        init {
 +            Smz3MenuSelection.onChange = { postInvalidate() }
++            Thread {
++                OnlineLadder.flush(context)
++                if (OnlineLadder.refresh(context)) {
++                    defaultLadder = OnlineLadder.cached(context).take(5)
++                    online = true
++                    postInvalidate()
++                }
++            }.start()
 +        }
 +
 +        override fun onDetachedFromWindow() {
@@ -2747,13 +2858,14 @@ index 0000000..7f96c80
 +            canvas.drawText("A LINK TO THE PAST  ·  SUPER METROID", w / 2f, h * 0.14f + 22f * density, paint)
 +            paint.typeface = android.graphics.Typeface.DEFAULT
 +            val info = Smz3MenuSelection.info
++            val tag = if (online) "  ·  ONLINE" else ""
 +            if (showLadders) {
-+                drawLadder(canvas, "DEFAULT RULES", defaultLadder, w * 0.25f, h * 0.36f, 5)
-+                drawLadder(canvas, "CUSTOM RULES", customLadder, w * 0.75f, h * 0.36f, 5)
++                drawLadder(canvas, "ORIGINAL" + tag, defaultLadder, w * 0.25f, h * 0.36f, 5)
++                drawLadder(canvas, "CUSTOM (THIS DEVICE)", customLadder, w * 0.75f, h * 0.36f, 5)
 +            } else if (info != null) {
 +                drawRunInfo(canvas, info, w, h)
 +            } else {
-+                drawLadder(canvas, "DEFAULT RULES  ·  TOP 3", defaultLadder, w / 2f, h * 0.36f, 3)
++                drawLadder(canvas, "ORIGINAL  ·  TOP 3" + tag, defaultLadder, w / 2f, h * 0.36f, 3)
 +            }
 +            drawButton(canvas, if (showLadders) "BACK" else "SHOW LADDERS", w, h)
 +        }
@@ -4335,10 +4447,10 @@ index 0000000..378f91a
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Tracker.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Tracker.kt
 new file mode 100644
-index 0000000..675f4b1
+index 0000000..ee84c8d
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Tracker.kt
-@@ -0,0 +1,308 @@
+@@ -0,0 +1,319 @@
 +package com.swordfish.lemuroid.app.shared.game.viewmodel
 +
 +import android.app.Presentation
@@ -4360,6 +4472,7 @@ index 0000000..675f4b1
 +import com.swordfish.lemuroid.app.mobile.feature.runs.RunKeys
 +import com.swordfish.lemuroid.app.mobile.feature.runs.RunLogic
 +import com.swordfish.lemuroid.app.mobile.feature.runs.Leaderboard
++import com.swordfish.lemuroid.app.mobile.feature.runs.OnlineLadder
 +import com.swordfish.lemuroid.app.mobile.feature.runs.LeaderboardEntry
 +import com.swordfish.lemuroid.app.mobile.feature.runs.RunStore
 +import com.swordfish.libretrodroid.GLRetroView
@@ -4414,6 +4527,7 @@ index 0000000..675f4b1
 +    private var baseMs = 0L
 +    private var baseSlot: Int? = null
 +    private var finishedSaved = false
++    private var tokenRequested = false
 +    private var lastPad = 0
 +    private var lastSmState = -1
 +
@@ -4594,6 +4708,11 @@ index 0000000..675f4b1
 +                    if (started && running) {
 +                        val scaled = delta * speed
 +                        pendingPlayTime += scaled
++                        if (!tokenRequested) {
++                            tokenRequested = true
++                            val c = context
++                            Thread { OnlineLadder.ensureToken(c, slot) }.start()
++                        }
 +                    }
 +                    val finishing = s[0] == 3 && !finishedSaved
 +                    if (--saveCountdown <= 0 || finishing) {
@@ -4605,6 +4724,10 @@ index 0000000..675f4b1
 +                            if (finished) {
 +                                val isDefault = runCatching { org.json.JSONObject(run.settings).optBoolean("defaultRules", false) }.getOrDefault(false)
 +                                Leaderboard.add(context, LeaderboardEntry(run.name, run.seed, totalMs, System.currentTimeMillis(), isDefault))
++                                if (isDefault) {
++                                    OnlineLadder.queueFinish(context, slot, totalMs)
++                                    Thread { OnlineLadder.flush(context) }.start()
++                                }
 +                            }
 +                            RunStore.save(
 +                                context,

@@ -9,3 +9,4 @@ tools/gen-cli/obj/
 data/sm_rooms.json
 data/sm_location_tiles.json
 data/*.bin
+server/ladder/data/

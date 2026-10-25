@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SMZ3 Ladder</title>
+<style>
+  :root { --bg:#070b0f; --panel:#101a17; --line:#1d2b26; --text:#e8ecf2; --dim:#8793a6; --gold:#e8c14a; --orange:#ff9a1f; --green:#7fe08a; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:radial-gradient(1200px 600px at 50% -10%, #12261c 0%, var(--bg) 60%); color:var(--text); font:16px/1.4 system-ui, sans-serif; min-height:100vh; }
+  header { text-align:center; padding:48px 16px 16px; }
+  h1 { margin:0; font:700 clamp(40px,8vw,72px) Georgia, serif; color:var(--gold); letter-spacing:.04em; }
+  .sub { color:var(--orange); font:600 13px Georgia, serif; letter-spacing:.12em; text-transform:uppercase; margin-top:6px; }
+  main { display:grid; grid-template-columns:repeat(auto-fit, minmax(320px, 1fr)); gap:20px; max-width:1100px; margin:24px auto; padding:0 16px; }
+  section { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:18px 18px 8px; }
+  h2 { margin:0 0 4px; font-size:14px; letter-spacing:.14em; text-transform:uppercase; color:var(--gold); }
+  .hint { color:var(--dim); font-size:13px; margin-bottom:12px; }
+  ol { list-style:none; margin:0; padding:0; }
+  li { display:grid; grid-template-columns:34px 1fr auto; gap:10px; align-items:baseline; padding:10px 0; border-top:1px solid var(--line); }
+  .rank { color:var(--dim); font-weight:700; text-align:right; }
+  li:nth-child(1) .rank { color:var(--gold); } li:nth-child(2) .rank { color:#c9d1d9; } li:nth-child(3) .rank { color:#c98a4b; }
+  .who { font-weight:600; } .meta { color:var(--dim); font-size:12px; margin-top:2px; }
+  .time { font:600 18px ui-monospace, monospace; color:var(--green); }
+  .empty { color:var(--dim); padding:14px 0 18px; }
+  footer { text-align:center; color:var(--dim); font-size:12px; padding:8px 16px 40px; }
+</style>
+</head>
+<body>
+<header><h1>SMZ3</h1><div class="sub">A Link to the Past · Super Metroid · Ladder</div></header>
+<main>
+  <section><h2>Original</h2><div class="hint">Original rules, all time</div><ol id="original"></ol></section>
+  <section><h2>Monthly seed</h2><div class="hint"><select id="month"></select> &nbsp;<span id="seed"></span></div><ol id="monthly"></ol></section>
+</main>
+<footer>Times are reported by the app when the credits are reached; a run must be started online to count.</footer>
+<script>
+const fmt = ms => { const s = Math.floor(ms / 1000); return Math.floor(s / 3600) + ':' + String(Math.floor(s / 60) % 60).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0'); };
+const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+function draw(id, list) {
+  const ol = document.getElementById(id);
+  if (!list.length) { ol.innerHTML = '<div class="empty">No finished runs yet.</div>'; return; }
+  ol.innerHTML = list.map((r, i) => '<li><span class="rank">' + (i + 1) + '</span><div><div class="who">' + esc(r.player) +
+    '</div><div class="meta">' + new Date(r.finishedAt).toLocaleDateString() +
+    (r.diff && r.diff.length ? '<br>' + r.diff.map(esc).join(' · ') : '') + '</div></div><span class="time">' + fmt(r.timeMs) + '</span></li>').join('');
+}
+async function get(q) { return (await fetch('api/' + q)).json(); }
+async function load() {
+  try {
+    const m = await get('monthly'), sel = document.getElementById('month');
+    if (!sel.options.length) { m.months.forEach(x => sel.add(new Option(x, x))); sel.onchange = load; }
+    document.getElementById('seed').textContent = sel.value === m.month ? 'seed ' + m.seed : '';
+    draw('original', (await get('ladder?kind=original')).runs);
+    draw('monthly', (await get('ladder?kind=monthly&month=' + sel.value)).runs);
+  } catch (e) {}
+}
+load(); setInterval(load, 60000);
+</script>
+</body>
+</html>

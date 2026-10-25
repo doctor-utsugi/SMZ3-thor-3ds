@@ -1,0 +1,129 @@
+// SMZ3 online ladder: a tiny HTTP service with no dependencies.
+//   POST /api/start   {install, kind}              -> {token, seed?}   (kind: original | monthly)
+//   POST /api/finish  {token, timeMs, player}      -> {ok, rank}
+//   GET  /api/ladder  ?kind=original | ?kind=monthly&month=YYYY-MM
+//   GET  /api/monthly                              -> {month, seed, months:[...]}
+// A finished run is only accepted with a token the server signed when the run began, and its time
+// cannot be longer than the wall clock time since then or shorter than MIN_MS.
+const http = require('http');
+const fs = require('fs');
+const path = require('path');
+const crypto = require('crypto');
+
+const PORT = Number(process.env.PORT || 3360);
+const DIR = process.env.LADDER_DIR || path.join(__dirname, 'data');
+const DATA = path.join(DIR, 'ladder.json');
+const SECRET_FILE = path.join(DIR, 'secret');
+const MIN_MS = 10 * 60 * 1000;
+const MAX_MS = 5 * 24 * 3600 * 1000;
+const MAX_BODY = 1024;
+const START_PER_HOUR = 20;
+const FINISH_PER_HOUR = 20;
+
+fs.mkdirSync(DIR, { recursive: true });
+if (!fs.existsSync(SECRET_FILE)) fs.writeFileSync(SECRET_FILE, crypto.randomBytes(32).toString('hex'), { mode: 0o600 });
+const SECRET = fs.readFileSync(SECRET_FILE, 'utf8').trim();
+
+// runs: {kind, month?, player, timeMs, finishedAt, install}; used: finished token ids
+let db = { runs: [], used: [] };
+try { db = JSON.parse(fs.readFileSync(DATA, 'utf8')); } catch (e) {}
+const used = new Set(db.used);
+function save() {
+  db.used = [...used].slice(-5000);
+  fs.writeFileSync(DATA + '.tmp', JSON.stringify(db));
+  fs.renameSync(DATA + '.tmp', DATA);
+}
+
+const hmac = s => crypto.createHmac('sha256', SECRET).update(s).digest('hex');
+const monthOf = t => new Date(t).toISOString().slice(0, 7);
+const seedOf = month => parseInt(hmac('seed:' + month).slice(0, 8), 16).toString(36).toUpperCase().padStart(6, '0').slice(0, 6);
+const clean = (v, n) => String(v == null ? '' : v).replace(/[^\p{L}\p{N} _.'!-]/gu, '').trim().slice(0, n);
+
+function onlyKeys(b, keys) {
+  return b && typeof b === 'object' && !Array.isArray(b) && Object.keys(b).every(k => keys.includes(k));
+}
+
+const hits = new Map();
+function limited(bucket, ip, max) {
+  const now = Date.now(), key = bucket + ip;
+  const list = (hits.get(key) || []).filter(t => now - t < 3600000);
+  list.push(now);
+  hits.set(key, list);
+  return list.length > max;
+}
+
+function ladder(kind, month) {
+  const best = new Map();   // best run per install
+  for (const r of db.runs) {
+    if (r.kind !== kind || (kind === 'monthly' && r.month !== month)) continue;
+    if (!best.has(r.install) || r.timeMs < best.get(r.install).timeMs) best.set(r.install, r);
+  }
+  return [...best.values()].sort((a, b) => a.timeMs - b.timeMs).slice(0, 100)
+    .map(({ install, ...r }) => r);
+}
+
+function send(res, code, body, type = 'application/json') {
+  res.writeHead(code, { 'Content-Type': type + '; charset=utf-8', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store' });
+  res.end(typeof body === 'string' ? body : JSON.stringify(body));
+}
+
+function readJson(req, res, then) {
+  let size = 0; const chunks = [];
+  req.on('data', c => { size += c.length; if (size > MAX_BODY) req.destroy(); else chunks.push(c); });
+  req.on('end', () => {
+    let b; try { b = JSON.parse(Buffer.concat(chunks).toString('utf8')); } catch (e) { return send(res, 400, { error: 'bad json' }); }
+    then(b);
+  });
+}
+
+const page = fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8');
+const months = () => [...new Set(db.runs.filter(r => r.kind === 'monthly').map(r => r.month).concat(monthOf(Date.now())))].sort().reverse();
+
+http.createServer((req, res) => {
+  const url = new URL(req.url, 'http://x');
+  const ip = (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
+  if (url.pathname.startsWith('/api/')) console.log(new Date().toISOString(), req.method, url.pathname);
+  if (req.method === 'OPTIONS') return send(res, 204, '');
+  if (req.method === 'GET' && url.pathname === '/') return send(res, 200, page, 'text/html');
+  if (req.method === 'GET' && url.pathname === '/api/monthly') {
+    const month = monthOf(Date.now());
+    return send(res, 200, { month, seed: seedOf(month), months: months() });
+  }
+  if (req.method === 'GET' && url.pathname === '/api/ladder') {
+    const kind = url.searchParams.get('kind') === 'monthly' ? 'monthly' : 'original';
+    const month = /^\d{4}-\d{2}$/.test(url.searchParams.get('month') || '') ? url.searchParams.get('month') : monthOf(Date.now());
+    return send(res, 200, { kind, month, runs: ladder(kind, month) });
+  }
+  if (req.method === 'POST' && url.pathname === '/api/start') {
+    if (limited('s', ip, START_PER_HOUR)) return send(res, 429, { error: 'slow down' });
+    return readJson(req, res, b => {
+      if (!onlyKeys(b, ['install', 'kind']) || !['original', 'monthly'].includes(b.kind) || !/^[0-9a-f-]{16,40}$/.test(String(b.install))) return send(res, 400, { error: 'invalid' });
+      const now = Date.now(), month = monthOf(now);
+      const id = crypto.randomBytes(8).toString('hex');
+      const body = [id, b.install, b.kind, month, now].join('.');
+      const seed = b.kind === 'monthly' ? seedOf(month) : undefined;
+      send(res, 200, { token: body + '.' + hmac(body), seed });
+    });
+  }
+  if (req.method === 'POST' && url.pathname === '/api/finish') {
+    if (limited('f', ip, FINISH_PER_HOUR)) return send(res, 429, { error: 'slow down' });
+    return readJson(req, res, b => {
+      if (!onlyKeys(b, ['token', 'timeMs', 'player']) || typeof b.token !== 'string') return send(res, 400, { error: 'invalid' });
+      const parts = b.token.split('.');
+      if (parts.length !== 6) return send(res, 400, { error: 'invalid' });
+      const body = parts.slice(0, 5).join('.');
+      const sig = Buffer.from(parts[5]), want = Buffer.from(hmac(body));
+      if (sig.length !== want.length || !crypto.timingSafeEqual(sig, want)) return send(res, 400, { error: 'invalid' });
+      const [id, install, kind, month, startedAt] = parts;
+      const timeMs = b.timeMs, elapsed = Date.now() - Number(startedAt);
+      if (!Number.isInteger(timeMs) || timeMs < MIN_MS || timeMs > MAX_MS || timeMs > elapsed) return send(res, 400, { error: 'invalid time' });
+      if (used.has(id)) return send(res, 200, { ok: true, duplicate: true });
+      used.add(id);
+      db.runs.push({ kind, month: kind === 'monthly' ? month : undefined, player: clean(b.player, 24) || 'Player', timeMs, finishedAt: Date.now(), install });
+      save();
+      const rank = ladder(kind, month).findIndex(r => r.timeMs === timeMs) + 1;
+      send(res, 200, { ok: true, rank });
+    });
+  }
+  send(res, 404, { error: 'not found' });
+}).listen(PORT, '127.0.0.1', () => console.log('smz3 ladder on 127.0.0.1:' + PORT));
