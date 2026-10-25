@@ -1495,7 +1495,7 @@ index 02e981f..c1bfab7 100644
          return currentState.gameData to result
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Bosses.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Bosses.kt
 new file mode 100644
-index 0000000..de6b7df
+index 0000000..d973310
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Bosses.kt
 @@ -0,0 +1,62 @@
@@ -1516,11 +1516,12 @@ index 0000000..de6b7df
 +        Dungeon("Turtle Rock", 164), Dungeon("Castle Tower", 32),
 +    )
 +
-+    // Super Metroid's four bosses: room pointer, event bit in the word at $7ED828, icon.
-+    private class Boss(val room: Int, val bit: Int, val icon: String)
++    // Super Metroid's four bosses: room pointer, the area byte at $7ED828 + area and its flag (Brinstar 1, Norfair 2,
++    // Wrecked Ship 3, Maridia 4; the other flags of those bytes belong to mini bosses such as Spore Spawn), icon.
++    private class Boss(val room: Int, val area: Int, val flag: Int, val icon: String)
 +    private val bosses = listOf(
-+        Boss(0xA59F, 0x0100, "kraid_boss_token.png"), Boss(0xCD13, 0x0200, "phantoon_boss_token.png"),
-+        Boss(0xDA60, 0x0400, "draygon_boss_token.png"), Boss(0xB32E, 0x0800, "ridley_boss_token.png"),
++        Boss(0xA59F, 1, 0x01, "kraid_boss_token.png"), Boss(0xCD13, 3, 0x01, "phantoon_boss_token.png"),
++        Boss(0xDA60, 4, 0x01, "draygon_boss_token.png"), Boss(0xB32E, 2, 0x01, "ridley_boss_token.png"),
 +    )
 +
 +    private fun u16(w: ByteArray, a: Int) = (w[a].toInt() and 0xFF) or ((w[a + 1].toInt() and 0xFF) shl 8)
@@ -1532,20 +1533,19 @@ index 0000000..de6b7df
 +            val box = discovery.zeldaBox(d.region) ?: continue
 +            out += BossMark(box[0] - 12f, box[1] - 12f, "unknown.png", (u16(wram, 0xF000 + 2 * d.room) and 0x0800) != 0)
 +        }
-+        val events = u16(wram, 0xD828)
 +        for (b in bosses) {
 +            val c = discovery.metroidRoomCentre(b.room) ?: continue
-+            out += BossMark(c.x, c.y, b.icon, (events and b.bit) != 0)
++            out += BossMark(c.x, c.y, b.icon, (wram[0xD828 + b.area].toInt() and b.flag) != 0)
 +        }
 +        return out
 +    }
 +
-+    /** Bit 0 Kraid, 1 Phantoon, 2 Draygon, 3 Ridley: the Super Metroid bosses beaten (event word at $7ED828). */
++    /** Bit 0 Kraid, 1 Phantoon, 2 Draygon, 3 Ridley: the Super Metroid bosses beaten (area bytes from $7ED828). */
 +    fun metroidMask(wram: ByteArray, sram: ByteArray, game: Int): Int {
 +        // while Zelda is running the Super Metroid memory is parked in the save RAM ($A16000 block, event word at +$78)
-+        val events = if (game == 2) { if (wram.size < 0xD82A) return 0; u16(wram, 0xD828) } else { if (sram.size < 0x207A) return 0; u16(sram, 0x2078) }
++        val flags = if (game == 2) { if (wram.size < 0xD830) return 0; wram.copyOfRange(0xD828, 0xD830) } else { if (sram.size < 0x2080) return 0; sram.copyOfRange(0x2078, 0x2080) }
 +        var mask = 0
-+        for ((i, b) in bosses.withIndex()) if (events and b.bit != 0) mask = mask or (1 shl i)
++        for ((i, b) in bosses.withIndex()) if (flags[b.area].toInt() and b.flag != 0) mask = mask or (1 shl i)
 +        return mask
 +    }
 +
