@@ -6788,14 +6788,14 @@ index 2820bd6..6a9d297 100644
      <string name="shader_filter_names_sharp">銳利</string>
      <string name="shader_filter_names_smooth">平滑</string>
 diff --git a/lemuroid-app/src/main/res/values/lemuroid_launcher_background.xml b/lemuroid-app/src/main/res/values/lemuroid_launcher_background.xml
-index 86c43c3..5a3379a 100644
+index 86c43c3..3bcede6 100644
 --- a/lemuroid-app/src/main/res/values/lemuroid_launcher_background.xml
 +++ b/lemuroid-app/src/main/res/values/lemuroid_launcher_background.xml
 @@ -1,4 +1,4 @@
  <?xml version="1.0" encoding="utf-8"?>
  <resources>
 -    <color name="lemuroid_launcher_background">@color/main_color</color>
-+    <color name="lemuroid_launcher_background">#101a34</color>
++    <color name="lemuroid_launcher_background">#141414</color>
  </resources>
 diff --git a/lemuroid-app/src/main/res/values/strings.xml b/lemuroid-app/src/main/res/values/strings.xml
 index 861ee9e..c478b43 100644
