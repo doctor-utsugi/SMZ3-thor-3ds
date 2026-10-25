@@ -421,7 +421,7 @@ index 0000000..88c7fc0
 +            mkdir(SMZ_DIR, 0777); mkdir(RUN_DIR, 0777); mkdir(SMZ_DIR "/saves", 0777); mkdir(SMZ_DIR "/savestates", 0777);
 +            SmzRun r;
 +            memset(&r, 0, sizeof r);
-+            snprintf(r.name, sizeof r.name, "Run %d", slot + 1);
++            snprintf(r.name, sizeof r.name, "%s", ui_run_label(u)[0] ? ui_run_label(u) : "Run");
 +            snprintf(r.seed, sizeof r.seed, "%s", job.seedText);
 +            snprintf(r.rom_path, sizeof r.rom_path, RUN_DIR "/%s", name);
 +            snprintf(r.settings, sizeof r.settings, "%s", job.json);

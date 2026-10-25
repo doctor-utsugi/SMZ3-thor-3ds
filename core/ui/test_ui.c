@@ -59,8 +59,8 @@ int main(void)
         u.action = ACT_NONE; u.screen = UI_MODE; u.mode_cursor = 0;
         ui_input(&u, BTN_A);
         assert(u.screen == UI_START && u.run_mode == 0 && u.value[UIO_LINK] == 0);
-        assert(u.value[UIO_MAP] == 1 && u.value[UIO_HELP] == 0);
-        { SmzSettings s; SmzPatchCfg pc; char l[32], sm[32]; ui_settings(&u, 7, &s, &pc, l, sm); assert(s.keysanity == KEYS_Zelda && s.cfg.WallJumpDifficulty == 3); }
+        assert(u.value[UIO_MAP] == 0 && u.value[UIO_HELP] == 0 && u.value[UIO_SAVES] == 1 && !strcmp(ui_run_label(&u), "Cozy run"));
+        { SmzSettings s; SmzPatchCfg pc; char l[32], sm[32]; ui_settings(&u, 7, &s, &pc, l, sm); assert(s.keysanity == KEYS_Zelda && s.cfg.WallJumpDifficulty == 0); }
         ui_input(&u, BTN_B);
         assert(u.screen == UI_MODE);
         ui_input(&u, BTN_DOWN); ui_input(&u, BTN_A);       /* Original */

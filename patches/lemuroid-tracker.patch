@@ -468,10 +468,10 @@ index 0000000..c830243
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/NativeMenuScreen.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/NativeMenuScreen.kt
 new file mode 100644
-index 0000000..8342efb
+index 0000000..33b1676
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/NativeMenuScreen.kt
-@@ -0,0 +1,253 @@
+@@ -0,0 +1,261 @@
 +package com.swordfish.lemuroid.app.mobile.feature.runs
 +
 +import android.graphics.Paint
@@ -591,6 +591,14 @@ index 0000000..8342efb
 +        publishSelection()
 +    }
 +
++    // coming back from a run: its progress changed while this list was waiting
++    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
++    DisposableEffect(lifecycleOwner) {
++        val observer = androidx.lifecycle.LifecycleEventObserver { _, event -> if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) refreshSlots() }
++        lifecycleOwner.lifecycle.addObserver(observer)
++        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
++    }
++
 +    DisposableEffect(Unit) {
 +        Smz3Native.uiInit()
 +        Smz3Native.uiSetSlotCount(RunStore.SLOTS)
@@ -624,7 +632,7 @@ index 0000000..8342efb
 +                fun rdc(game: Int, key: String) = settings.optString(key).takeIf { it.isNotEmpty() }
 +                    ?.let { File(spriteDir(game), "$it.rdc").takeIf(File::exists)?.readBytes() }
 +                val (rom, usedSeed) = RunGenerator.generate(context, sm, z3, settings, rdc(0, "linkSprite"), rdc(1, "samusSprite"))
-+                val name = "Run ${slot + 1}"
++                val name = Smz3Native.uiRunLabel().ifBlank { "Run ${slot + 1}" }
 +                val romFile = RunStore.newRomFile(context, usedSeed, rawSettings)
 +                romFile.writeBytes(rom)
 +                val totals = Smz3Native.summarize(ByteArray(0), ByteArray(0))
@@ -3337,10 +3345,10 @@ index 0000000..dc5944a
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Native.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Native.kt
 new file mode 100644
-index 0000000..ad53e0e
+index 0000000..c709293
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Native.kt
-@@ -0,0 +1,70 @@
+@@ -0,0 +1,71 @@
 +package com.swordfish.lemuroid.app.shared.game.viewmodel
 +
 +/** JNI bridge to the shared C core (core/smz3_state.c). */
@@ -3403,6 +3411,7 @@ index 0000000..ad53e0e
 +    @JvmStatic external fun uiPlandoName(): String
 +    @JvmStatic external fun uiSettingsJson(seedIfRandom: Int): String
 +    @JvmStatic external fun uiSetSlotStats(i: Int, zc: Int, zt: Int, mc: Int, mt: Int, ms: Long, game: Int, bosses: Int, crystals: Int)
++    @JvmStatic external fun uiRunLabel(): String
 +    @JvmStatic external fun uiSavedLoad(text: String?)
 +    @JvmStatic external fun uiSavedChanged(): String?
 +    @JvmStatic external fun uiOption(opt: Int): Int

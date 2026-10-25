@@ -83,6 +83,7 @@ void ui_set_sprites(SmzUi *u, int game, const char *const *names, int n)
 }
 
 void ui_busy(SmzUi *u, const char *msg) { u->screen = UI_BUSY; snprintf(u->status, sizeof u->status, "%s", msg); }
+const char *ui_run_label(const SmzUi *u) { return u->start_label; }
 void ui_idle(SmzUi *u) { u->screen = UI_SLOTS_SCREEN; }
 
 /* indices into UI_OPTS of the options shown at one level */
@@ -138,7 +139,7 @@ static void move(int *cur, int *scroll, int n, int dir)
 /* ---- run modes and saved customs */
 
 typedef struct { const char *name, *desc, *spec; } UiPreset;
-static const UiPreset CHILL = {"Chill run", "Zelda keys, discovered map, hard jumps", "MapMode=1,Keysanity=2,WallJumpDifficulty=3,HelpMode=0,LightDarkRooms=1,SaveStates=1"};
+static const UiPreset CHILL = {"Cozy run", "Zelda keys shuffled, easy wall jumps", "Keysanity=2,WallJumpDifficulty=0,LightDarkRooms=1,SaveStates=1"};
 static const UiPreset ORIGINAL = {"Original", "The default randomizer rules", ""};
 static const UiPreset BUILTIN[] = {
     {"Keysanity (both games)", "", "Keysanity=1"},
@@ -610,17 +611,19 @@ static void slot_rich(SmzUi *u, int i, int y, int w)
     int color = pct >= 100 ? C_GREEN : C_ACCENT;
     for (int d = 0, div = digits == 3 ? 100 : digits == 2 ? 10 : 1; d < digits; d++, div /= 10) { big_digit(u, x, y + 9, pct / div % 10, 5, color); x += 18; }
     text(u, x, y + 24, C_DIM, 0, "%");
-    /* Link with the seven crystals, Samus with the four bosses; what is missing is dark (the pictures are dimmed) */
-    put(u, 2, 88, y + 3, 13, 19, C_TEXT, 0, "link/Original");     /* the games' own standing sprites (tools/gen_original_icons.py) */
-    for (int n = 1; n <= 7; n++) gem(u, 108 + (n - 1) * 14, y + 6, t->crystal_mask >> (n - 1) & 1, n == 5 || n == 6);
-    put(u, 2, 88, y + 23, 13, 19, C_TEXT, 0, "samus/Original");
-    static const char *const BOSS[4] = {"reward/kraid", "reward/phantoon", "reward/draygon", "reward/ridley"};
-    for (int b = 0; b < 4; b++) put(u, 2, 108 + b * 22, y + 24, 18, 18, t->boss_mask >> b & 1 ? C_TEXT : C_DIM, 0, BOSS[b]);
+    snprintf(s, sizeof s, "%.20s", t->name);
+    text(u, 88, y + 2, C_TEXT, 0, s);
     long long sec = t->play_ms / 1000;
     snprintf(s, sizeof s, "%lld:%02lld:%02lld", sec / 3600, sec / 60 % 60, sec % 60);
-    text(u, 8 + w - 8, y + 5, C_TEXT, 2, s);
-    bar(u, 214, y + 25, w - 214, t->zelda_cleared, t->zelda_total, C_GREEN);
-    bar(u, 214, y + 33, w - 214, t->metroid_cleared, t->metroid_total, C_ACCENT);
+    text(u, 8 + w - 8, y + 2, C_DIM, 2, s);
+    /* Link with the seven crystals, Samus with the four bosses; what is missing is dark (the pictures are dimmed) */
+    put(u, 2, 88, y + 15, 10, 14, C_TEXT, 0, "link/Original");     /* the games' own standing sprites (tools/gen_original_icons.py) */
+    for (int n = 1; n <= 7; n++) gem(u, 106 + (n - 1) * 14, y + 17, t->crystal_mask >> (n - 1) & 1, n == 5 || n == 6);
+    put(u, 2, 88, y + 29, 10, 14, C_TEXT, 0, "samus/Original");
+    static const char *const BOSS[4] = {"reward/kraid", "reward/phantoon", "reward/draygon", "reward/ridley"};
+    for (int b = 0; b < 4; b++) put(u, 2, 106 + b * 20, y + 30, 13, 13, t->boss_mask >> b & 1 ? C_TEXT : C_DIM, 0, BOSS[b]);
+    bar(u, 214, y + 22, w - 214, t->zelda_cleared, t->zelda_total, C_GREEN);
+    bar(u, 214, y + 32, w - 214, t->metroid_cleared, t->metroid_total, C_ACCENT);
 }
 
 void ui_draw(SmzUi *u)
@@ -638,17 +641,21 @@ void ui_draw(SmzUi *u)
         for (int r = 0; r < UI_SLOTS_SHOWN && u->slot_scroll + r < u->slot_count; r++) {
             int i = u->slot_scroll + r, y = 36 + r * 50, used = u->slots[i].used;
             rect(u, 8, y, w, 44, i == u->slot_cursor ? C_SEL : C_PANEL);
-            if (used) rect(u, 8, y, 5, 44, C_ACCENT);   /* a run with data has a bar on the left and bright text */
+            if (used) rect(u, 8, y, 5, 44, C_ACCENT);   /* a run with data has an orange bar on the left */
             hit(u, H_SLOT, i, 8, y, w, 44);
             if (used && u->slots[i].stats) slot_rich(u, i, y, w);
             else if (used) {
                 snprintf(buf, sizeof buf, "Slot %d  %s", i + 1, u->slots[i].name);
                 text(u, 20, y + 7, C_TEXT, 0, buf);
                 text(u, 20, y + 25, C_DIM, 0, u->slots[i].summary);
-            } else {
-                snprintf(buf, sizeof buf, "Slot %d  - empty -", i + 1);
-                text(u, 20, y + 7, C_DIM, 0, buf);
-                text(u, 20, y + 25, C_ACCENT, 0, "+ New run (A)");
+            } else {   /* an empty slot: a plus where the percent goes, an invitation, and only its number */
+                rect(u, 8, y, 5, 44, i == u->slot_cursor ? C_ACCENT : C_DIM);
+                rect(u, 24, y + 20, 26, 5, C_DIM);
+                rect(u, 34, y + 10, 5, 25, C_DIM);
+                text(u, 88, y + 8, C_ACCENT, 0, "New run");
+                text(u, 88, y + 25, C_DIM, 0, "Cozy, Original, Custom ...");
+                snprintf(buf, sizeof buf, "#%d", i + 1);
+                text(u, 8 + w - 8, y + 5, C_DIM, 2, buf);
             }
         }
         if (more) {

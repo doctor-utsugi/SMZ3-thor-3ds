@@ -526,3 +526,10 @@ The run list rows and the sprite screens draw the games' own standing Link and S
 ## Run list: crystals and bosses instead of names and counters
 
 The row no longer shows "Slot N Run N" nor the Zelda/Metroid counters. Link's line shows the seven crystals as drawn gems (blue, red for 5 and 6, dark while missing); Samus's line shows the four boss tokens (the tracker's own artwork from the app assets, dimmed while the boss lives). Two thin bars on the right keep the check progress, with the play time above them. The masks (`bm`/`cm` in the 3DS run file, `bossMask`/`crystalMask` in the Android run JSON) are written by the tracker every ten seconds while a run is played, so a run shows its gems and tokens after it has been opened once; older runs start empty. The 3DS run list reads the same fields but its tracker does not write them yet, and its boss tokens need the artwork as `reward/<boss>.pv` previews, so on the 3DS the tokens stay blank.
+
+## Cozy run, run names, list refresh, empty slots
+
+- The "Chill run" preset is now **Cozy run**: Keysanity Zelda only, wall jump Easy, light dark rooms and save states on, the rest default (all helps, whole tracker map). The generator has no option that shuffles only the Zelda dungeon chests; Zelda-only keysanity spreads that game's keys, maps and compasses over its whole world, and Super Metroid keeps its own rules. Seeds are always solvable.
+- A new run is named after how it was set up ("Cozy run", "Original", "Custom" or the saved custom's name) via `ui_run_label`, and the row shows that name. Older runs keep their "Run N".
+- The Android run list refreshes on every resume, so progress made in a run (crystals, bosses, time) shows when returning to the list.
+- An empty slot shows a plus, "New run" and its number instead of "Slot N - empty - / + New run (A)".

@@ -452,6 +452,8 @@ JNIEXPORT jstring JNICALL NATIVE(uiSavedChanged)(JNIEnv *env, jclass cls)
     return (*env)->NewStringUTF(env, buf);
 }
 
+JNIEXPORT jstring JNICALL NATIVE(uiRunLabel)(JNIEnv *env, jclass cls) { return (*env)->NewStringUTF(env, ui_run_label(&g_ui)); }
+
 JNIEXPORT jint JNICALL NATIVE(uiOption)(JNIEnv *env, jclass cls, jint opt) { return opt >= 0 && opt < UI_OPT_COUNT ? g_ui.value[opt] : 0; }
 JNIEXPORT void JNICALL NATIVE(uiSetSlotCount)(JNIEnv *env, jclass cls, jint n) { ui_set_slot_count(&g_ui, n); }
 /* The slot the menu is on: the highlighted one in the list, the opened one in its menus. */

@@ -101,6 +101,8 @@ void ui_touch(SmzUi *u, int x, int y);
 void ui_saved_load(SmzUi *u, const char *text);
 int ui_saved_text(const SmzUi *u, char *out, size_t cap);
 int ui_saved_dirty(SmzUi *u);
+/* The name of the way the run was set up ("Cozy run", "Original", a saved custom's name), for naming the run being created. */
+const char *ui_run_label(const SmzUi *u);
 void ui_busy(SmzUi *u, const char *msg);
 void ui_idle(SmzUi *u);
 /* Rebuilds u->cmd. */
