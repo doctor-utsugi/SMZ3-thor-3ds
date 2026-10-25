@@ -1076,10 +1076,10 @@ index 0000000..91f0bba
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/RunStore.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/RunStore.kt
 new file mode 100644
-index 0000000..4d9fc4a
+index 0000000..ed2a8fe
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/RunStore.kt
-@@ -0,0 +1,113 @@
+@@ -0,0 +1,116 @@
 +package com.swordfish.lemuroid.app.mobile.feature.runs
 +
 +import android.content.Context
@@ -1170,6 +1170,8 @@ index 0000000..4d9fc4a
 +
 +    fun discoveryFile(context: Context, slot: Int) = File(File(context.filesDir, "runs").apply { mkdirs() }, "slot$slot.disc.json")
 +
++    fun recentFile(context: Context, slot: Int) = File(File(context.filesDir, "runs").apply { mkdirs() }, "slot$slot.recent.json")
++
 +    fun marksFile(context: Context, slot: Int) = File(File(context.filesDir, "runs").apply { mkdirs() }, "slot$slot.marks.json")
 +
 +    private fun romDir(context: Context) = File(context.filesDir, "runs").apply { mkdirs() }
@@ -1191,6 +1193,7 @@ index 0000000..4d9fc4a
 +        rom.delete()
 +        discoveryFile(context, slot).delete()
 +        marksFile(context, slot).delete()
++        recentFile(context, slot).delete()
 +    }
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/RunSummary.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/RunSummary.kt
@@ -2375,10 +2378,10 @@ index 0000000..a893bff
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3MapView.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3MapView.kt
 new file mode 100644
-index 0000000..ce15519
+index 0000000..295736f
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3MapView.kt
-@@ -0,0 +1,344 @@
+@@ -0,0 +1,350 @@
 +package com.swordfish.lemuroid.app.shared.game.viewmodel
 +
 +import android.content.Context
@@ -2423,12 +2426,16 @@ index 0000000..ce15519
 +    private val matrix = Matrix()
 +    private val values = FloatArray(9)
 +    private val bitmapPaint = Paint(Paint.FILTER_BITMAP_FLAG)
-+    private val pending = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#FFD54A") }
-+    private val done = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#6FD08C") }
++    // One look for both games, readable on every area colour of the map: pending checks are big amber dots with a black and a
++    // white rim, cleared ones small solid white dots with a black rim, checks out of logic dark dots with a white rim.
++    private val pending = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#FFB300") }
++    private val done = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.WHITE }
++    private val doneRim = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; color = Color.BLACK; strokeWidth = 3f }
++    private val pendingOuter = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; color = Color.WHITE; strokeWidth = 3f }
 +    private val ring = Paint(Paint.ANTI_ALIAS_FLAG).apply {
 +        style = Paint.Style.STROKE
 +        color = Color.BLACK
-+        strokeWidth = 2f
++        strokeWidth = 3f
 +    }
 +    private var cleared: Set<Int> = emptySet()
 +    private var inLogic: Set<Int>? = null
@@ -2660,7 +2667,8 @@ index 0000000..ce15519
 +            if (pts[0] < -20 || pts[1] < -20 || pts[0] > width + 20 || pts[1] > height + 20) continue
 +            if (discoveredOnly && !isSeen(m[1].toFloat(), m[2].toFloat())) continue
 +            if (m[0] in cleared) {
-+                canvas.drawCircle(pts[0], pts[1], radius * 0.6f, done)
++                canvas.drawCircle(pts[0], pts[1], radius * 0.65f, done)
++                canvas.drawCircle(pts[0], pts[1], radius * 0.65f, doneRim)
 +            } else if (visibleChecks != null && m[0] !in visibleChecks!!) {
 +                continue
 +            } else if (inLogic != null && m[0] !in inLogic!!) {
@@ -2670,6 +2678,7 @@ index 0000000..ce15519
 +                // gentle breathing: size and brightness move a little, never blink
 +                val r = radius * (1f + 0.22f * pulse)
 +                pending.alpha = (255 * (0.75f + 0.25f * (1f - pulse))).toInt()
++                canvas.drawCircle(pts[0], pts[1], r + 2f, pendingOuter)
 +                canvas.drawCircle(pts[0], pts[1], r, pending)
 +                canvas.drawCircle(pts[0], pts[1], r, ring)
 +            }
@@ -3754,10 +3763,10 @@ index 0000000..378f91a
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Tracker.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Tracker.kt
 new file mode 100644
-index 0000000..629c0f1
+index 0000000..d890b2e
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Tracker.kt
-@@ -0,0 +1,282 @@
+@@ -0,0 +1,302 @@
 +package com.swordfish.lemuroid.app.shared.game.viewmodel
 +
 +import android.app.Presentation
@@ -3858,6 +3867,7 @@ index 0000000..629c0f1
 +            val recent = ArrayDeque<String>()
 +            val recentItems = ArrayDeque<Int>()
 +            var inventoryBaseline = false
++            var recentSaved = ""
 +            var startedAt = 0L
 +            var liveSummary: IntArray? = null
 +            var liveCleared: Set<Int> = emptySet()
@@ -3946,9 +3956,28 @@ index 0000000..629c0f1
 +                    discoverySlot = slotNow
 +                    slotNow?.let {
 +                        discovery.load(RunStore.discoveryFile(context, it))
++                        // the recent lists belong to the run: restore them instead of starting empty
++                        recent.clear(); recentItems.clear()
++                        runCatching {
++                            val o = org.json.JSONObject(RunStore.recentFile(context, it).readText())
++                            o.optJSONArray("checks")?.let { a -> for (i in 0 until a.length()) recent.addLast(a.getString(i)) }
++                            o.optJSONArray("items")?.let { a -> for (i in 0 until a.length()) recentItems.addLast(a.getInt(i)) }
++                        }
++                        recentSaved = recent.joinToString("|") + "#" + recentItems.joinToString(",")
 +                        discoveredOnly = RunStore.load(context, it)?.mapMode == "discovered"
 +                    }
 +                    seenCount = -1
++                }
++                if (slotNow != null) {
++                    val now = recent.joinToString("|") + "#" + recentItems.joinToString(",")
++                    if (now != recentSaved) {
++                        recentSaved = now
++                        runCatching {
++                            RunStore.recentFile(context, slotNow).writeText(
++                                org.json.JSONObject().put("checks", org.json.JSONArray(recent.toList())).put("items", org.json.JSONArray(recentItems.toList())).toString(),
++                            )
++                        }
++                    }
 +                }
 +                if (started && slotNow != null) {
 +                    discovery.update(wram, s[0])
