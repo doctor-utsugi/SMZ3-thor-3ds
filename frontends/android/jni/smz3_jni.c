@@ -470,6 +470,8 @@ JNIEXPORT void JNICALL NATIVE(uiSetMonthly)(JNIEnv *env, jclass cls, jstring lab
 
 JNIEXPORT jint JNICALL NATIVE(uiRunMonthly)(JNIEnv *env, jclass cls) { return ui_run_monthly(&g_ui); }
 
+JNIEXPORT void JNICALL NATIVE(uiSetSlotOnline)(JNIEnv *env, jclass cls, jint i, jint kind) { ui_set_slot_online(&g_ui, i, kind); }
+
 JNIEXPORT jint JNICALL NATIVE(uiOnline)(JNIEnv *env, jclass cls) { return ui_online_now(&g_ui); }
 
 JNIEXPORT jstring JNICALL NATIVE(uiPlayerChanged)(JNIEnv *env, jclass cls)

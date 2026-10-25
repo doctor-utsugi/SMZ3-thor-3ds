@@ -468,10 +468,10 @@ index 0000000..c830243
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/NativeMenuScreen.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/NativeMenuScreen.kt
 new file mode 100644
-index 0000000..aba5973
+index 0000000..a6529c9
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/NativeMenuScreen.kt
-@@ -0,0 +1,267 @@
+@@ -0,0 +1,273 @@
 +package com.swordfish.lemuroid.app.mobile.feature.runs
 +
 +import android.graphics.Paint
@@ -525,7 +525,7 @@ index 0000000..aba5973
 +private const val W = 320f
 +private const val H = 240f
 +private val palette = listOf(
-+    Color(0xFF10141C), Color(0xFF1D2430), Color(0xFF2E4A6B), Color(0xFFE8ECF2), Color(0xFF8793A6), Color(0xFFE9A23B), Color(0xFFE05A4F), Color(0xFF4CC38A), Color(0xFF4FC3F7),
++    Color(0xFF10141C), Color(0xFF1D2430), Color(0xFF2E4A6B), Color(0xFFE8ECF2), Color(0xFF8793A6), Color(0xFFE9A23B), Color(0xFFE05A4F), Color(0xFF4CC38A), Color(0xFF4FC3F7), Color(0xFF14504A), Color(0xFF1B2F6B), Color(0xFF4B2A7A), Color(0xFF8A6414),
 +)
 +private enum class Act { NONE, CONTINUE, DELETE, GENERATE }
 +
@@ -587,6 +587,7 @@ index 0000000..aba5973
 +        RunStore.loadAll(context).forEachIndexed { i, run ->
 +            Smz3Native.uiSetSlot(i, run != null, run?.name ?: "", run?.let { summary(context, it).replace("\n", " · ").take(38) } ?: "")
 +            if (run != null) Smz3Native.uiSetSlotStats(i, run.zeldaCleared, run.zeldaTotal, run.metroidCleared, run.metroidTotal, run.playTimeMs, run.game, run.bossMask, run.crystalMask)
++            Smz3Native.uiSetSlotOnline(i, if (run != null) OnlineLadder.slotKind(context, i) else 0)
 +        }
 +        version++
 +        publishSelection()
@@ -714,7 +715,12 @@ index 0000000..aba5973
 +                    val f = line.split(",", limit = 8)
 +                    val kind = f[0].toInt(); val x = f[1].toFloat() * scale; val y = f[2].toFloat() * scale
 +                    val color = palette[f[5].toInt().coerceIn(0, palette.lastIndex)]
-+                    if (kind == 0) {
++                    if (kind == 3) {   // translucent gradient from the colour to the one named in the align field
++                        val l = Math.round(x).toFloat(); val t = Math.round(y).toFloat()
++                        val r = Math.round(x + f[3].toFloat() * scale).toFloat(); val b = Math.round(y + f[4].toFloat() * scale).toFloat()
++                        val end = palette[f[6].toInt().coerceIn(0, palette.lastIndex)]
++                        drawRect(androidx.compose.ui.graphics.Brush.horizontalGradient(listOf(color, end), startX = l, endX = r), Offset(l, t), Size(r - l, b - t), alpha = 0.75f)
++                    } else if (kind == 0) {
 +                        // edges snap to whole pixels so neighbouring rectangles meet without a seam
 +                        val l = Math.round(x).toFloat(); val t = Math.round(y).toFloat()
 +                        val r = Math.round(x + f[3].toFloat() * scale).toFloat(); val b = Math.round(y + f[4].toFloat() * scale).toFloat()
@@ -741,10 +747,10 @@ index 0000000..aba5973
 +private fun Color.toArgb(): Int = android.graphics.Color.argb((alpha * 255).toInt(), (red * 255).toInt(), (green * 255).toInt(), (blue * 255).toInt())
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/OnlineLadder.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/OnlineLadder.kt
 new file mode 100644
-index 0000000..b31a1d9
+index 0000000..4e907cf
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/OnlineLadder.kt
-@@ -0,0 +1,143 @@
+@@ -0,0 +1,153 @@
 +package com.swordfish.lemuroid.app.mobile.feature.runs
 +
 +import android.content.Context
@@ -798,6 +804,13 @@ index 0000000..b31a1d9
 +        if (online) runCatching { onlineFile(context, slot).writeText(if (monthly) "monthly" else "original") } else onlineFile(context, slot).delete()
 +    }
 +
++    /** 0 for a run that is not online, 1 for an original-rules run on the online ladder, 2 for a monthly seed run. */
++    fun slotKind(context: Context, slot: Int): Int = when (runCatching { onlineFile(context, slot).readText().trim() }.getOrNull()) {
++        "original" -> 1
++        "monthly" -> 2
++        else -> 0
++    }
++
 +    /** This month's label and fixed seed: fetched when possible, else the copy saved for the same month. Call off the main thread. */
 +    fun monthly(context: Context): Pair<String, Int>? {
 +        val f = File(dir(context), "monthly.json")
@@ -819,11 +832,13 @@ index 0000000..b31a1d9
 +    }
 +
 +    /** Asks the server for the run's token the first time it is played; no network means no token and the run stays off the online ladder. */
-+    fun ensureToken(context: Context, slot: Int) {
-+        if (!onlineFile(context, slot).exists() || tokenFile(context, slot).exists()) return
-+        val kind = runCatching { onlineFile(context, slot).readText().trim() }.getOrNull() ?: return
-+        val r = call("/api/start", JSONObject().put("install", installId(context)).put("kind", kind)) ?: return
-+        r.optString("token").takeIf { it.isNotEmpty() }?.let { tokenFile(context, slot).writeText(it) }
++    fun ensureToken(context: Context, slot: Int): Boolean {
++        if (!onlineFile(context, slot).exists() || tokenFile(context, slot).exists()) return true
++        val kind = runCatching { onlineFile(context, slot).readText().trim() }.getOrNull() ?: return false
++        val r = call("/api/start", JSONObject().put("install", installId(context)).put("kind", kind)) ?: return false
++        val token = r.optString("token").takeIf { it.isNotEmpty() } ?: return false
++        tokenFile(context, slot).writeText(token)
++        return true
 +    }
 +
 +    /** Remembers the final time of a finished run so it is sent now or at the next chance. */
@@ -842,7 +857,8 @@ index 0000000..b31a1d9
 +            val (name, country) = profile(context)
 +            val body = JSONObject().put("token", token).put("timeMs", time).put("player", name)
 +            if (country.length == 2) body.put("country", country)
-+            val code = post("/api/finish", body).first
++            val (code, reply) = post("/api/finish", body)
++            if (code == 400) runCatching { File(dir(context), "last_online_error.txt").writeText("slot ${slot + 1}: $reply") }
 +            if (code == 200 || code == 400) {
 +                finishFile(context, slot).delete()
 +                tokenFile(context, slot).delete()
@@ -3515,10 +3531,10 @@ index 0000000..dc5944a
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Native.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Native.kt
 new file mode 100644
-index 0000000..c169402
+index 0000000..9f43088
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Native.kt
-@@ -0,0 +1,76 @@
+@@ -0,0 +1,77 @@
 +package com.swordfish.lemuroid.app.shared.game.viewmodel
 +
 +/** JNI bridge to the shared C core (core/smz3_state.c). */
@@ -3587,6 +3603,7 @@ index 0000000..c169402
 +    @JvmStatic external fun uiPlayerLoad(text: String?)
 +    @JvmStatic external fun uiPlayerChanged(): String?
 +    @JvmStatic external fun uiOnline(): Int
++    @JvmStatic external fun uiSetSlotOnline(i: Int, kind: Int)
 +    @JvmStatic external fun uiSetMonthly(label: String, seed: Int)
 +    @JvmStatic external fun uiRunMonthly(): Int
 +    @JvmStatic external fun uiOption(opt: Int): Int
@@ -4506,7 +4523,7 @@ index 0000000..378f91a
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Tracker.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Tracker.kt
 new file mode 100644
-index 0000000..ee84c8d
+index 0000000..8084724
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Tracker.kt
 @@ -0,0 +1,319 @@
@@ -4586,7 +4603,7 @@ index 0000000..ee84c8d
 +    private var baseMs = 0L
 +    private var baseSlot: Int? = null
 +    private var finishedSaved = false
-+    private var tokenRequested = false
++    private var nextTokenTry = 0L
 +    private var lastPad = 0
 +    private var lastSmState = -1
 +
@@ -4767,8 +4784,8 @@ index 0000000..ee84c8d
 +                    if (started && running) {
 +                        val scaled = delta * speed
 +                        pendingPlayTime += scaled
-+                        if (!tokenRequested) {
-+                            tokenRequested = true
++                        if (now >= nextTokenTry) {   // retried every minute until the server has answered
++                            nextTokenTry = now + 60_000
 +                            val c = context
 +                            Thread { OnlineLadder.ensureToken(c, slot) }.start()
 +                        }

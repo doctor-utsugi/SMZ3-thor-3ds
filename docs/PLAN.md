@@ -560,3 +560,9 @@ Pressing Start on a new run asks once about the online ladder (`UI_ONLINE`): Yes
 ### Monthly seed
 
 `GET /api/monthly` gives the month and its fixed seed (9 digits, derived on the server from a secret and the month, so it cannot be known ahead). The app fetches it when the menu opens, keeps a copy for the same month (`runs/monthly.json`) and calls `ui_set_monthly`; only then the mode list shows "Monthly seed" (Original rules, `Seed` option set to that value, run named "Monthly YYYY-MM"). Without a connection and without a copy of this month the row does not appear (3DS never shows it). A monthly run marked online asks the server for a `monthly` token on its first played tick; the web page has a month selector for past ladders. Ladder per month keeps each install's best time.
+
+### Online runs in the run list, and hardening
+
+- Runs marked online (`runs/slotN.online`, written at generation) are drawn in the run list over a translucent gradient (teal to navy for Original rules, violet to gold for the monthly seed; draw command kind 3, the palette gained four colours) with the player's name and flag code at the right under the time. Android only; the 3DS never marks a slot online.
+- Server: the client address is the last `X-Forwarded-For` entry (the one Apache appends), so the per-hour limits cannot be dodged by sending the header; the limit table is pruned; only the best time per installation and ladder is stored (growth is bounded by the number of installations); a token is valid for 3 days and a time cannot exceed that; security headers (CSP, nosniff, no-referrer). `admin.js` lists and removes entries (restart the service afterwards).
+- App: the token request is retried every minute until the server answers, and a rejected finish writes the server's reason to `runs/last_online_error.txt`. A run first played offline for a long time is still rejected (its time exceeds the time since the token), as is play time inflated by fast forward.

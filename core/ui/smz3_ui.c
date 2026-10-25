@@ -57,6 +57,8 @@ void ui_set_slot(SmzUi *u, int i, int used, const char *name, const char *summar
     snprintf(u->slots[i].summary, sizeof u->slots[i].summary, "%s", summary ? summary : "");
 }
 
+void ui_set_slot_online(SmzUi *u, int i, int kind) { if (i >= 0 && i < UI_SLOTS) u->slots[i].online = kind; }
+
 void ui_set_slot_stats(SmzUi *u, int i, int zc, int zt, int mc, int mt, int64_t ms, int game, int bosses, int crystals)
 {
     if (i < 0 || i >= UI_SLOTS) return;
@@ -725,6 +727,9 @@ static void gem(SmzUi *u, int x, int y, int have, int red)
 static void slot_rich(SmzUi *u, int i, int y, int w)
 {
     const UiSlot *t = &u->slots[i];
+    if (t->online) {
+        put(u, 3, 13, y, w - 5, 44, t->online == 2 ? C_VIOLET : C_TEAL, t->online == 2 ? C_GOLD : C_NAVY, NULL);
+    }
     int total = t->zelda_total + t->metroid_total, done = t->zelda_cleared + t->metroid_cleared;
     int pct = total > 0 ? (int)((long long)done * 100 / total) : 0;
     char s[48];
@@ -743,6 +748,11 @@ static void slot_rich(SmzUi *u, int i, int y, int w)
     put(u, 2, 88, y + 29, 10, 14, C_TEXT, 0, "samus/Original");
     static const char *const BOSS[4] = {"reward/kraid", "reward/phantoon", "reward/draygon", "reward/ridley"};
     for (int b = 0; b < 4; b++) put(u, 2, 106 + b * 20, y + 30, 13, 13, t->boss_mask >> b & 1 ? C_TEXT : C_DIM, 0, BOSS[b]);
+    if (t->online) {
+        char who[24];
+        snprintf(who, sizeof who, "%.12s%s%s", u->player[0] ? u->player : "Online", u->country[0] ? " " : "", u->country);
+        text(u, 8 + w - 8, y + 11, t->online == 2 ? C_ACCENT : C_CYAN, 2, who);
+    }
     bar(u, 214, y + 22, w - 214, t->zelda_cleared, t->zelda_total, C_GREEN);
     bar(u, 214, y + 32, w - 214, t->metroid_cleared, t->metroid_total, C_ACCENT);
 }

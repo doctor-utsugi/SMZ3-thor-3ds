@@ -38,6 +38,7 @@ typedef struct {
     int used; char name[24]; char summary[40];
     int stats, zelda_cleared, zelda_total, metroid_cleared, metroid_total, game, boss_mask, crystal_mask;   /* stats: the numbers below are set; game 0 new, 1 Zelda, 2 Metroid, 3 finished */
     int64_t play_ms;
+    int online;                  /* 0 offline run, 1 original-rules run on the online ladder, 2 monthly seed run */
 } UiSlot;
 /* A saved custom: a name and its options that differ from the defaults as "Key=value,Key=value" (option keys, so the list survives new options). */
 typedef struct { char name[24]; char spec[UI_SPEC_LEN]; } UiSaved;
@@ -45,7 +46,7 @@ typedef struct { char name[24]; char spec[UI_SPEC_LEN]; } UiSaved;
 /* kind 0 rectangle, 1 text, 2 sprite preview: draw the picture of text ("link/<name>" or "samus/<name>", file <name>.pv beside the
  * .rdc: u8 width, u8 height, then width*height RGBA bytes) centred and scaled to fit the x, y, w, h box. */
 typedef struct { uint8_t kind; int16_t x, y, w, h; uint8_t color; uint8_t align; char text[64]; } UiCmd;
-enum { C_BG, C_PANEL, C_SEL, C_TEXT, C_DIM, C_ACCENT, C_WARN, C_GREEN, C_CYAN };
+enum { C_BG, C_PANEL, C_SEL, C_TEXT, C_DIM, C_ACCENT, C_WARN, C_GREEN, C_CYAN, C_TEAL, C_NAVY, C_VIOLET, C_GOLD };
 
 typedef struct { int16_t x, y, w, h; uint8_t kind; int16_t idx; } UiHit;
 enum { H_SLOT, H_MENU, H_TAB, H_ROW, H_SPRITE, H_SCROLL, H_CREATE, H_BACK, H_CHEVRON, H_CONFIRM, H_MODE, H_SAVED, H_SAVED_DEL, H_KEY, H_START, H_COUNTRY, H_ONLINE };
@@ -95,6 +96,8 @@ void ui_set_slot(SmzUi *u, int i, int used, const char *name, const char *summar
 void ui_set_slot_count(SmzUi *u, int n);
 /* The numbers a used slot shows (percent, counters, time); without them the summary text is drawn. */
 void ui_set_slot_stats(SmzUi *u, int i, int zelda_cleared, int zelda_total, int metroid_cleared, int metroid_total, int64_t play_ms, int game, int boss_mask, int crystal_mask);
+/* Marks a used slot as an online run (see UiSlot.online): it is drawn on a gradient with the player's name. */
+void ui_set_slot_online(SmzUi *u, int i, int kind);
 /* Text of an option's current value ("On", "Medium", a sprite name ...). */
 void ui_value_text(const SmzUi *u, int opt, char *out, size_t n);
 /* game 0 Link sprites, 1 Samus sprites, 2 plando files, 3 music packages */

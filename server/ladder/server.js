@@ -15,7 +15,7 @@ const DIR = process.env.LADDER_DIR || path.join(__dirname, 'data');
 const DATA = path.join(DIR, 'ladder.json');
 const SECRET_FILE = path.join(DIR, 'secret');
 const MIN_MS = 10 * 60 * 1000;
-const MAX_MS = 5 * 24 * 3600 * 1000;
+const MAX_MS = 3 * 24 * 3600 * 1000;      // a token is good for this long after it was issued
 const MAX_BODY = 1024;
 const START_PER_HOUR = 20;
 const FINISH_PER_HOUR = 20;
@@ -52,6 +52,11 @@ function limited(bucket, ip, max) {
   return list.length > max;
 }
 
+setInterval(() => {
+  const now = Date.now();
+  for (const [k, list] of hits) if (!list.some(t => now - t < 3600000)) hits.delete(k);
+}, 600000).unref();
+
 function ladder(kind, month) {
   const best = new Map();   // best run per install
   for (const r of db.runs) {
@@ -63,7 +68,9 @@ function ladder(kind, month) {
 }
 
 function send(res, code, body, type = 'application/json') {
-  res.writeHead(code, { 'Content-Type': type + '; charset=utf-8', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store' });
+  res.writeHead(code, { 'Content-Type': type + '; charset=utf-8', 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store',
+    'X-Content-Type-Options': 'nosniff', 'Referrer-Policy': 'no-referrer',
+    'Content-Security-Policy': "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'self'; base-uri 'none'; frame-ancestors 'none'" });
   res.end(typeof body === 'string' ? body : JSON.stringify(body));
 }
 
@@ -81,7 +88,7 @@ const months = () => [...new Set(db.runs.filter(r => r.kind === 'monthly').map(r
 
 http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x');
-  const ip = (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',')[0].trim();
+  const ip = (req.headers['x-forwarded-for'] || req.socket.remoteAddress || '').split(',').pop().trim();   // the entry the proxy appended
   if (url.pathname.startsWith('/api/')) console.log(new Date().toISOString(), req.method, url.pathname);
   if (req.method === 'OPTIONS') return send(res, 204, '');
   if (req.method === 'GET' && url.pathname === '/') return send(res, 200, page, 'text/html');
@@ -116,10 +123,14 @@ http.createServer((req, res) => {
       if (sig.length !== want.length || !crypto.timingSafeEqual(sig, want)) return send(res, 400, { error: 'invalid' });
       const [id, install, kind, month, startedAt] = parts;
       const timeMs = b.timeMs, elapsed = Date.now() - Number(startedAt);
-      if (!Number.isInteger(timeMs) || timeMs < MIN_MS || timeMs > MAX_MS || timeMs > elapsed) return send(res, 400, { error: 'invalid time' });
+      if (!Number.isInteger(timeMs) || timeMs < MIN_MS || timeMs > MAX_MS || timeMs > elapsed || elapsed > MAX_MS) return send(res, 400, { error: 'invalid time' });
       if (used.has(id)) return send(res, 200, { ok: true, duplicate: true });
       used.add(id);
-      db.runs.push({ kind, month: kind === 'monthly' ? month : undefined, player: clean(b.player, 24) || 'Player', country: /^[A-Z]{2}$/.test(b.country) ? b.country : '', timeMs, finishedAt: Date.now(), install });
+      const mine = db.runs.findIndex(r => r.install === install && r.kind === kind && (kind === 'monthly' ? r.month === month : true));
+      const entry = { kind, month: kind === 'monthly' ? month : undefined, player: clean(b.player, 24) || 'Player', country: /^[A-Z]{2}$/.test(b.country) ? b.country : '', timeMs, finishedAt: Date.now(), install };
+      if (mine < 0) db.runs.push(entry);
+      else if (db.runs[mine].timeMs > timeMs) db.runs[mine] = entry;      // one entry per install and ladder: its best
+      else { db.runs[mine].player = entry.player; db.runs[mine].country = entry.country; }
       save();
       const rank = ladder(kind, month).findIndex(r => r.timeMs === timeMs) + 1;
       send(res, 200, { ok: true, rank });
