@@ -32,7 +32,7 @@ int main(void)
 
     u.level = LEVEL_RUN; u.cursor[0] = 8;      /* "Next" row (the "Helps available" row is hidden unless the mode is Limited) */
     ui_input(&u, BTN_A);
-    assert(u.screen == UI_START && u.start_cursor == 2 && u.action == ACT_NONE);
+    assert(u.screen == UI_START && u.start_cursor == 3 && u.action == ACT_NONE);
     ui_input(&u, BTN_UP); ui_input(&u, BTN_UP);          /* Link row */
     ui_input(&u, BTN_A);
     assert(u.screen == UI_SPRITES && u.back == UI_START);
@@ -164,6 +164,23 @@ int main(void)
     ui_touch(&u, UI_W / 2, 180);
     assert(u.action == ACT_GENERATE && u.action_slot == 2);
     u.action = ACT_NONE; u.screen = UI_SLOTS_SCREEN;
+    {   /* player profile: name keyboard and flag list from the start screen */
+        SmzUi p; ui_init(&p); ui_player_enable(&p, 1); ui_player_load(&p, "Ana\tES");
+        assert(!strcmp(p.player, "Ana") && !strcmp(p.country, "ES"));
+        p.screen = UI_MODE; p.mode_cursor = 1; ui_input(&p, BTN_A);
+        assert(p.screen == UI_START && p.start_cursor == 3);
+        ui_input(&p, BTN_UP); assert(p.start_cursor == 2);
+        ui_draw(&p);
+        ui_input(&p, BTN_RIGHT); ui_input(&p, BTN_A); assert(p.screen == UI_COUNTRY);
+        ui_input(&p, BTN_DOWN); ui_draw(&p); ui_input(&p, BTN_A);
+        assert(p.screen == UI_START && p.country[0] && strcmp(p.country, "ES") && ui_player_dirty(&p));
+        ui_input(&p, BTN_LEFT); ui_input(&p, BTN_A); assert(p.screen == UI_NAME && p.name_for == 1);
+        ui_input(&p, BTN_L); ui_input(&p, BTN_L); ui_input(&p, BTN_L);
+        ui_input(&p, BTN_A);     /* letter A */
+        p.key_cursor = 10 * 4 + 2; ui_input(&p, BTN_A);   /* Save */
+        assert(p.screen == UI_START && !strcmp(p.player, "A"));
+        char out[64]; assert(ui_player_text(&p, out, sizeof out) > 0 && out[0] == 'A' && out[1] == '\t');
+    }
     char js[2048];
     for (int i = 0; i < UI_OPT_COUNT; i++) {          /* the Custom run's options again */
         if (!strcmp(UI_OPTS[i].key, "Keysanity")) u.value[i] = 2;

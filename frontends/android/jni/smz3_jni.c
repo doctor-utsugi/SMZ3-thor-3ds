@@ -452,6 +452,22 @@ JNIEXPORT jstring JNICALL NATIVE(uiSavedChanged)(JNIEnv *env, jclass cls)
     return (*env)->NewStringUTF(env, buf);
 }
 
+/* Player profile ("name<TAB>CC"): shows the Player row in the start screen; same file handling as the saved customs. */
+JNIEXPORT void JNICALL NATIVE(uiPlayerLoad)(JNIEnv *env, jclass cls, jstring text)
+{
+    const char *t = text ? (*env)->GetStringUTFChars(env, text, NULL) : NULL;
+    ui_player_enable(&g_ui, 1);
+    ui_player_load(&g_ui, t);
+    if (t) (*env)->ReleaseStringUTFChars(env, text, t);
+}
+
+JNIEXPORT jstring JNICALL NATIVE(uiPlayerChanged)(JNIEnv *env, jclass cls)
+{
+    char buf[64];
+    if (!ui_player_dirty(&g_ui) || ui_player_text(&g_ui, buf, sizeof buf) < 0) return NULL;
+    return (*env)->NewStringUTF(env, buf);
+}
+
 JNIEXPORT jstring JNICALL NATIVE(uiRunLabel)(JNIEnv *env, jclass cls) { return (*env)->NewStringUTF(env, ui_run_label(&g_ui)); }
 
 JNIEXPORT jint JNICALL NATIVE(uiOption)(JNIEnv *env, jclass cls, jint opt) { return opt >= 0 && opt < UI_OPT_COUNT ? g_ui.value[opt] : 0; }

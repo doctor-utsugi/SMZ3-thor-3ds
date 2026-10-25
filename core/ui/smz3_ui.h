@@ -18,7 +18,7 @@
 #define UI_SPEC_LEN 512
 
 typedef enum { BTN_UP, BTN_DOWN, BTN_LEFT, BTN_RIGHT, BTN_A, BTN_B, BTN_L, BTN_R } UiButton;
-typedef enum { UI_SLOTS_SCREEN, UI_SLOT_MENU, UI_CREATE, UI_SPRITES, UI_BUSY, UI_CONFIRM, UI_MODE, UI_SAVED, UI_NAME, UI_START } UiScreen;
+typedef enum { UI_SLOTS_SCREEN, UI_SLOT_MENU, UI_CREATE, UI_SPRITES, UI_BUSY, UI_CONFIRM, UI_MODE, UI_SAVED, UI_NAME, UI_START, UI_COUNTRY } UiScreen;
 typedef enum { OPT_ENUM, OPT_INT, OPT_BOOL, OPT_SEED, OPT_SPRITE } OptKind;
 /* Tabs of the Create run screen. Only LEVEL_ITEMS is read from UiOptDef.level; the other tabs list their keys in UI_TABS. */
 typedef enum { LEVEL_RUN, LEVEL_ZELDA, LEVEL_METROID, LEVEL_PLAY, LEVEL_ITEMS, LEVEL_COUNT } OptLevel;
@@ -48,7 +48,7 @@ typedef struct { uint8_t kind; int16_t x, y, w, h; uint8_t color; uint8_t align;
 enum { C_BG, C_PANEL, C_SEL, C_TEXT, C_DIM, C_ACCENT, C_WARN, C_GREEN, C_CYAN };
 
 typedef struct { int16_t x, y, w, h; uint8_t kind; int16_t idx; } UiHit;
-enum { H_SLOT, H_MENU, H_TAB, H_ROW, H_SPRITE, H_SCROLL, H_CREATE, H_BACK, H_CHEVRON, H_CONFIRM, H_MODE, H_SAVED, H_SAVED_DEL, H_KEY, H_START };
+enum { H_SLOT, H_MENU, H_TAB, H_ROW, H_SPRITE, H_SCROLL, H_CREATE, H_BACK, H_CHEVRON, H_CONFIRM, H_MODE, H_SAVED, H_SAVED_DEL, H_KEY, H_START, H_COUNTRY };
 
 typedef struct {
     UiScreen screen, back;
@@ -62,8 +62,12 @@ typedef struct {
     int mode_cursor, run_mode;   /* run_mode: 0 Chill run, 1 Original, 2 Custom, 3 Saved custom */
     UiSaved saved[UI_MAX_SAVED];
     int saved_count, saved_cursor, saved_scroll, saved_col, saved_confirm, saved_dirty;
-    char name[24];               /* the name being typed for a new saved custom */
+    char name[24];               /* the name being typed for a new saved custom or for the player */
     int name_len, key_cursor;
+    int name_for;                /* 0 saved custom, 1 player name */
+    int player_on, player_dirty; /* the host shows the Player row (it has an online ladder) / the profile changed */
+    char player[24], country[3]; /* the profile sent with finished runs; country is an ISO 3166 code or empty */
+    int country_cursor, country_scroll;
     char start_label[24], notice[32];
     int start_cursor, start_col;  /* sprite screen: row (Link, Samus, Start) and column (sprite, Random) */
     UiScreen start_from;
@@ -101,6 +105,11 @@ void ui_touch(SmzUi *u, int x, int y);
 void ui_saved_load(SmzUi *u, const char *text);
 int ui_saved_text(const SmzUi *u, char *out, size_t cap);
 int ui_saved_dirty(SmzUi *u);
+/* Player profile: the Player row appears in the start screen once the host enables it. text is "name<TAB>CC" (NULL: empty). */
+void ui_player_enable(SmzUi *u, int on);
+void ui_player_load(SmzUi *u, const char *text);
+int ui_player_text(const SmzUi *u, char *out, size_t cap);
+int ui_player_dirty(SmzUi *u);
 /* The name of the way the run was set up ("Cozy run", "Original", a saved custom's name), for naming the run being created. */
 const char *ui_run_label(const SmzUi *u);
 void ui_busy(SmzUi *u, const char *msg);

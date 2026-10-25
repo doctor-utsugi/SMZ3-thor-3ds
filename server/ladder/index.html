@@ -34,11 +34,12 @@
 <footer>Times are reported by the app when the credits are reached; a run must be started online to count.</footer>
 <script>
 const fmt = ms => { const s = Math.floor(ms / 1000); return Math.floor(s / 3600) + ':' + String(Math.floor(s / 60) % 60).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0'); };
+const flag = c => c && c.length === 2 ? String.fromCodePoint(...[...c].map(x => 0x1F1E6 + x.charCodeAt(0) - 65)) + ' ' : '';
 const esc = s => String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 function draw(id, list) {
   const ol = document.getElementById(id);
   if (!list.length) { ol.innerHTML = '<div class="empty">No finished runs yet.</div>'; return; }
-  ol.innerHTML = list.map((r, i) => '<li><span class="rank">' + (i + 1) + '</span><div><div class="who">' + esc(r.player) +
+  ol.innerHTML = list.map((r, i) => '<li><span class="rank">' + (i + 1) + '</span><div><div class="who">' + flag(r.country) + esc(r.player) +
     '</div><div class="meta">' + new Date(r.finishedAt).toLocaleDateString() +
     (r.diff && r.diff.length ? '<br>' + r.diff.map(esc).join(' · ') : '') + '</div></div><span class="time">' + fmt(r.timeMs) + '</span></li>').join('');
 }

@@ -468,10 +468,10 @@ index 0000000..c830243
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/NativeMenuScreen.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/NativeMenuScreen.kt
 new file mode 100644
-index 0000000..33b1676
+index 0000000..2d29fb7
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/NativeMenuScreen.kt
-@@ -0,0 +1,261 @@
+@@ -0,0 +1,263 @@
 +package com.swordfish.lemuroid.app.mobile.feature.runs
 +
 +import android.graphics.Paint
@@ -607,6 +607,7 @@ index 0000000..33b1676
 +        Smz3Native.uiSetSprites(2, plandoNames())
 +        Smz3Native.uiSetSprites(3, Smz3Music.packages())
 +        Smz3Native.uiSavedLoad(savedCustoms.takeIf { it.exists() }?.readText())
++        Smz3Native.uiPlayerLoad(OnlineLadder.profileText(context))
 +        refreshSlots()
 +        onDispose { }
 +    }
@@ -663,6 +664,7 @@ index 0000000..33b1676
 +
 +    fun pollActions() {
 +        Smz3Native.uiSavedChanged()?.let { runCatching { savedCustoms.writeText(it) } }
++        Smz3Native.uiPlayerChanged()?.let { OnlineLadder.saveProfile(context, it) }
 +        val (act, slot) = Smz3Native.uiAction().let { Act.values()[it[0]] to it[1] }
 +        when (act) {
 +            Act.CONTINUE -> RunStore.load(context, slot)?.let(onContinue)
@@ -735,10 +737,10 @@ index 0000000..33b1676
 +private fun Color.toArgb(): Int = android.graphics.Color.argb((alpha * 255).toInt(), (red * 255).toInt(), (green * 255).toInt(), (blue * 255).toInt())
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/OnlineLadder.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/OnlineLadder.kt
 new file mode 100644
-index 0000000..7453e3e
+index 0000000..5eec9c8
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/OnlineLadder.kt
-@@ -0,0 +1,95 @@
+@@ -0,0 +1,113 @@
 +package com.swordfish.lemuroid.app.mobile.feature.runs
 +
 +import android.content.Context
@@ -765,11 +767,23 @@ index 0000000..7453e3e
 +            ?: UUID.randomUUID().toString().also { runCatching { f.writeText(it) } }
 +    }
 +
-+    /** Name shown on the ladder; edit `runs/player_name.txt` to change it. */
-+    fun playerName(context: Context): String {
-+        val f = File(dir(context), "player_name.txt")
-+        return runCatching { f.readText().trim() }.getOrNull()?.takeIf { it.isNotEmpty() } ?: "Player-" + installId(context).take(4)
++    private fun profileFile(context: Context) = File(dir(context), "player.txt")
++
++    /** The profile as the menu stores it: "name<TAB>CC", null while never set. */
++    fun profileText(context: Context): String? = runCatching { profileFile(context).readText() }.getOrNull()
++
++    fun saveProfile(context: Context, text: String) {
++        runCatching { profileFile(context).writeText(text) }
 +    }
++
++    private fun profile(context: Context): Pair<String, String> {
++        val parts = (profileText(context) ?: "").trimEnd('\n').split('\t')
++        val name = parts.getOrNull(0)?.trim().orEmpty().ifEmpty { "Player-" + installId(context).take(4) }
++        return name to parts.getOrNull(1).orEmpty()
++    }
++
++    /** Name and flag shown on the ladder, set in the start screen of a new run. */
++    fun playerName(context: Context) = profile(context).first
 +
 +    /** Asks the server for the run's token the first time it is played; no network means no token and the run stays off the online ladder. */
 +    fun ensureToken(context: Context, slot: Int) {
@@ -791,7 +805,10 @@ index 0000000..7453e3e
 +        for (slot in 0 until RunStore.SLOTS) {
 +            val time = runCatching { finishFile(context, slot).readText().trim().toLong() }.getOrNull() ?: continue
 +            val token = runCatching { tokenFile(context, slot).readText().trim() }.getOrNull() ?: continue
-+            val code = post("/api/finish", JSONObject().put("token", token).put("timeMs", time).put("player", playerName(context))).first
++            val (name, country) = profile(context)
++            val body = JSONObject().put("token", token).put("timeMs", time).put("player", name)
++            if (country.length == 2) body.put("country", country)
++            val code = post("/api/finish", body).first
 +            if (code == 200 || code == 400) {
 +                finishFile(context, slot).delete()
 +                tokenFile(context, slot).delete()
@@ -814,11 +831,14 @@ index 0000000..7453e3e
 +    private fun call(path: String, body: JSONObject): JSONObject? =
 +        post(path, body).let { (code, text) -> if (code == 200) runCatching { JSONObject(text) }.getOrNull() else null }
 +
++    private fun flag(code: String) =
++        if (code.length == 2) code.map { String(Character.toChars(0x1F1E6 + it.code - 'A'.code)) }.joinToString("") + " " else ""
++
 +    /** Last original ladder fetched, empty until the first fetch succeeds. */
 +    fun cached(context: Context): List<LeaderboardEntry> = runCatching {
 +        val a = JSONObject(File(dir(context), "online_ladder.json").readText()).getJSONArray("runs")
 +        List(a.length()) { i ->
-+            a.getJSONObject(i).let { LeaderboardEntry(it.getString("player"), "", it.getLong("timeMs"), it.optLong("finishedAt"), true) }
++            a.getJSONObject(i).let { LeaderboardEntry(flag(it.optString("country")) + it.getString("player"), "", it.getLong("timeMs"), it.optLong("finishedAt"), true) }
 +        }
 +    }.getOrDefault(emptyList())
 +
@@ -2743,7 +2763,7 @@ index 0000000..3d11f48
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3IdlePresentation.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3IdlePresentation.kt
 new file mode 100644
-index 0000000..261a6a5
+index 0000000..2410812
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3IdlePresentation.kt
 @@ -0,0 +1,201 @@
@@ -2924,7 +2944,7 @@ index 0000000..261a6a5
 +                val y = top + (26f + 22f * i) * density
 +                paint.color = if (i == 0) Color.parseColor("#FFE08A") else Color.parseColor("#D8F6FF")
 +                paint.textAlign = Paint.Align.LEFT
-+                canvas.drawText("${i + 1}. ${e.name.take(12)}", cx - 100f * density, y, paint)
++                canvas.drawText("${i + 1}. ${e.name.take(14)}", cx - 100f * density, y, paint)
 +                paint.textAlign = Paint.Align.RIGHT
 +                canvas.drawText(Leaderboard.format(e.timeMs), cx + 100f * density, y, paint)
 +            }
@@ -3461,10 +3481,10 @@ index 0000000..dc5944a
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Native.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Native.kt
 new file mode 100644
-index 0000000..c709293
+index 0000000..207f0c4
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Native.kt
-@@ -0,0 +1,71 @@
+@@ -0,0 +1,73 @@
 +package com.swordfish.lemuroid.app.shared.game.viewmodel
 +
 +/** JNI bridge to the shared C core (core/smz3_state.c). */
@@ -3530,6 +3550,8 @@ index 0000000..c709293
 +    @JvmStatic external fun uiRunLabel(): String
 +    @JvmStatic external fun uiSavedLoad(text: String?)
 +    @JvmStatic external fun uiSavedChanged(): String?
++    @JvmStatic external fun uiPlayerLoad(text: String?)
++    @JvmStatic external fun uiPlayerChanged(): String?
 +    @JvmStatic external fun uiOption(opt: Int): Int
 +    @JvmStatic external fun uiScreen(): Int
 +    @JvmStatic external fun uiSetSlotCount(n: Int)

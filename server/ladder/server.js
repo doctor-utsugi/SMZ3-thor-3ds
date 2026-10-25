@@ -108,7 +108,7 @@ http.createServer((req, res) => {
   if (req.method === 'POST' && url.pathname === '/api/finish') {
     if (limited('f', ip, FINISH_PER_HOUR)) return send(res, 429, { error: 'slow down' });
     return readJson(req, res, b => {
-      if (!onlyKeys(b, ['token', 'timeMs', 'player']) || typeof b.token !== 'string') return send(res, 400, { error: 'invalid' });
+      if (!onlyKeys(b, ['token', 'timeMs', 'player', 'country']) || typeof b.token !== 'string') return send(res, 400, { error: 'invalid' });
       const parts = b.token.split('.');
       if (parts.length !== 6) return send(res, 400, { error: 'invalid' });
       const body = parts.slice(0, 5).join('.');
@@ -119,7 +119,7 @@ http.createServer((req, res) => {
       if (!Number.isInteger(timeMs) || timeMs < MIN_MS || timeMs > MAX_MS || timeMs > elapsed) return send(res, 400, { error: 'invalid time' });
       if (used.has(id)) return send(res, 200, { ok: true, duplicate: true });
       used.add(id);
-      db.runs.push({ kind, month: kind === 'monthly' ? month : undefined, player: clean(b.player, 24) || 'Player', timeMs, finishedAt: Date.now(), install });
+      db.runs.push({ kind, month: kind === 'monthly' ? month : undefined, player: clean(b.player, 24) || 'Player', country: /^[A-Z]{2}$/.test(b.country) ? b.country : '', timeMs, finishedAt: Date.now(), install });
       save();
       const rank = ladder(kind, month).findIndex(r => r.timeMs === timeMs) + 1;
       send(res, 200, { ok: true, rank });

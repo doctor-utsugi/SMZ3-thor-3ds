@@ -548,3 +548,7 @@ The waiting screen of the second display looped its stars with a visible jump: e
 - Limits, stated honestly: the time is still reported by the app. The token stops forged requests and times shorter than the real time elapsed, not a patient cheater or a modified app.
 - App (`OnlineLadder.kt`): the first played tick of an original-rules run asks for a token (stored as `runs/slotN.token`); at the credits the time is queued and sent, retried on the next idle screen if offline. The bottom screen shows the fetched original ladder tagged ONLINE and keeps the local custom ladder. The player name is `runs/player_name.txt` (default `Player-xxxx`).
 - Not done yet: the Monthly seed mode in the new-run menu (the server side and the seed endpoint exist).
+
+## Player name and flag
+
+The start screen of a new run (Android only, enabled by the host with `ui_player_enable`) has a Player row: the name opens the same d-pad keyboard as saved customs (`name_for = 1`), the flag chip opens a scrolling list of 41 countries (`UI_COUNTRY`, ISO codes, first entry "No flag"). The profile is one per device, stored by the host as `name<TAB>CC` in `runs/player.txt` (`ui_player_load/text/dirty`, JNI `uiPlayerLoad/Changed`) and sent with the finished run (`country` is optional on `/api/finish`). The web page and the bottom screen show it as a regional-indicator emoji flag before the name. It is set before starting, not at the credits, because the game process has no menu at that moment; it can be changed for the next run at any time.

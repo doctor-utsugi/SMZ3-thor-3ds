@@ -273,10 +273,62 @@ static void saved_remove(SmzUi *u, int i)
     u->saved_dirty = 1;
 }
 
+static const struct { const char *code, *name; } COUNTRIES[] = {
+    {"", "No flag"}, {"AR","Argentina"}, {"AU","Australia"}, {"AT","Austria"}, {"BE","Belgium"}, {"BR","Brazil"}, {"CA","Canada"},
+    {"CL","Chile"}, {"CN","China"}, {"CO","Colombia"}, {"CZ","Czechia"}, {"DK","Denmark"}, {"FI","Finland"}, {"FR","France"},
+    {"DE","Germany"}, {"GR","Greece"}, {"HU","Hungary"}, {"IN","India"}, {"IE","Ireland"}, {"IT","Italy"}, {"JP","Japan"},
+    {"MX","Mexico"}, {"NL","Netherlands"}, {"NZ","New Zealand"}, {"NO","Norway"}, {"PE","Peru"}, {"PL","Poland"}, {"PT","Portugal"},
+    {"RO","Romania"}, {"RU","Russia"}, {"ZA","South Africa"}, {"KR","South Korea"}, {"ES","Spain"}, {"SE","Sweden"}, {"CH","Switzerland"},
+    {"TR","Turkey"}, {"UA","Ukraine"}, {"GB","United Kingdom"}, {"US","United States"}, {"UY","Uruguay"}, {"VE","Venezuela"},
+};
+#define COUNTRY_COUNT ((int)(sizeof COUNTRIES / sizeof COUNTRIES[0]))
+#define COUNTRY_ROWS 8
+
+void ui_player_enable(SmzUi *u, int on) { u->player_on = on; }
+
+void ui_player_load(SmzUi *u, const char *text)
+{
+    u->player[0] = u->country[0] = 0;
+    if (!text) return;
+    const char *tab = strchr(text, '\t');
+    size_t n = tab ? (size_t)(tab - text) : strcspn(text, "\n");
+    if (n >= sizeof u->player) n = sizeof u->player - 1;
+    memcpy(u->player, text, n); u->player[n] = 0;
+    if (tab && tab[1] >= 'A' && tab[1] <= 'Z' && tab[2] >= 'A' && tab[2] <= 'Z') { u->country[0] = tab[1]; u->country[1] = tab[2]; u->country[2] = 0; }
+}
+
+int ui_player_text(const SmzUi *u, char *out, size_t cap)
+{
+    int w = snprintf(out, cap, "%s\t%s\n", u->player, u->country);
+    return w < 0 || (size_t)w >= cap ? -1 : w;
+}
+
+int ui_player_dirty(SmzUi *u) { int d = u->player_dirty; u->player_dirty = 0; return d; }
+
+static void country_input(SmzUi *u, UiButton b)
+{
+    int n = COUNTRY_COUNT, *c = &u->country_cursor;
+    if (b == BTN_B) { u->screen = UI_START; return; }
+    if (b == BTN_UP) *c = (*c + n - 1) % n;
+    else if (b == BTN_DOWN) *c = (*c + 1) % n;
+    else if (b == BTN_L) *c = *c - COUNTRY_ROWS < 0 ? 0 : *c - COUNTRY_ROWS;
+    else if (b == BTN_R) *c = *c + COUNTRY_ROWS >= n ? n - 1 : *c + COUNTRY_ROWS;
+    else if (b == BTN_A) {
+        snprintf(u->country, sizeof u->country, "%s", COUNTRIES[*c].code);
+        u->player_dirty = 1;
+        u->screen = UI_START;
+        return;
+    }
+    if (*c < u->country_scroll) u->country_scroll = *c;
+    if (*c >= u->country_scroll + COUNTRY_ROWS) u->country_scroll = *c - COUNTRY_ROWS + 1;
+}
+
+#define START_ROW 3
+
 static void goto_start(SmzUi *u)
 {
     u->screen = UI_START;
-    u->start_cursor = 2;
+    u->start_cursor = START_ROW;
     u->start_col = 0;
     u->start_from = u->run_mode == 2 ? UI_CREATE : u->run_mode == 3 ? UI_SAVED : UI_MODE;
 }
@@ -302,7 +354,8 @@ static int mode_rows(const SmzUi *u) { return u->saved_count > 0 ? 4 : 3; }
 static void name_input(SmzUi *u, UiButton b)
 {
     int c = u->key_cursor;
-    if (b == BTN_B) { u->screen = UI_CREATE; return; }
+    UiScreen back = u->name_for ? UI_START : UI_CREATE;
+    if (b == BTN_B) { u->screen = back; return; }
     if (b == BTN_L) { if (u->name_len) u->name[--u->name_len] = 0; return; }
     if (b == BTN_R) { if (u->name_len < (int)sizeof u->name - 1) { u->name[u->name_len++] = ' '; u->name[u->name_len] = 0; } return; }
     if (b == BTN_LEFT || b == BTN_RIGHT) {
@@ -328,13 +381,19 @@ static void name_input(SmzUi *u, UiButton b)
             int len = u->name_len;
             while (len && u->name[len - 1] == ' ') u->name[--len] = 0;
             if (!len) break;
+            if (u->name_for) {
+                snprintf(u->player, sizeof u->player, "%s", u->name);
+                u->player_dirty = 1;
+                u->screen = UI_START;
+                break;
+            }
             make_spec(u, spec, sizeof spec);
             saved_add(u, u->name, spec);
             snprintf(u->notice, sizeof u->notice, "Saved: %.20s", u->name);
             u->screen = UI_CREATE;
             break;
         }
-        default: u->screen = UI_CREATE; break;
+        default: u->screen = back; break;
         }
     }
 }
@@ -374,21 +433,29 @@ static void random_sprite(SmzUi *u, int game)
 
 static void start_input(SmzUi *u, UiButton b)
 {
+    int rows = START_ROW + 1, *cur = &u->start_cursor;
     if (b == BTN_B) { u->screen = u->start_from; return; }
-    if (b == BTN_UP) u->start_cursor = (u->start_cursor + 2) % 3;
-    else if (b == BTN_DOWN) u->start_cursor = (u->start_cursor + 1) % 3;
+    if (b == BTN_UP || b == BTN_DOWN) {
+        int d = b == BTN_UP ? rows - 1 : 1;
+        *cur = (*cur + d) % rows;
+        if (*cur == 2 && !u->player_on) *cur = (*cur + d) % rows;
+    }
     else if (b == BTN_LEFT) u->start_col = 0;
-    else if (b == BTN_RIGHT) u->start_col = u->start_cursor < 2;
+    else if (b == BTN_RIGHT) u->start_col = *cur < START_ROW;
     else if (b == BTN_A) {
-        if (u->start_cursor == 2) { u->action = ACT_GENERATE; u->action_slot = u->active_slot; }
-        else if (u->start_col) random_sprite(u, u->start_cursor);
+        if (*cur == START_ROW) { u->action = ACT_GENERATE; u->action_slot = u->active_slot; }
+        else if (*cur == 2) {
+            if (u->start_col) { u->country_cursor = 0; for (int i = 0; i < COUNTRY_COUNT; i++) if (!strcmp(COUNTRIES[i].code, u->country)) u->country_cursor = i; u->country_scroll = u->country_cursor < COUNTRY_ROWS ? 0 : u->country_cursor - COUNTRY_ROWS + 1; u->screen = UI_COUNTRY; }
+            else { u->name_for = 1; snprintf(u->name, sizeof u->name, "%s", u->player); u->name_len = (int)strlen(u->name); u->key_cursor = 0; u->screen = UI_NAME; }
+        }
+        else if (u->start_col) random_sprite(u, *cur);
         else {
-            u->sprite_game = u->start_cursor;
-            u->sprite_cursor = u->value[u->start_cursor ? UIO_SAMUS : UIO_LINK];
+            u->sprite_game = *cur;
+            u->sprite_cursor = u->value[*cur ? UIO_SAMUS : UIO_LINK];
             u->back = UI_START; u->screen = UI_SPRITES;
         }
     }
-    if (u->start_cursor == 2) u->start_col = 0;
+    if (*cur == START_ROW) u->start_col = 0;
 }
 
 static void mode_input(SmzUi *u, UiButton b)
@@ -449,6 +516,7 @@ void ui_input(SmzUi *u, UiButton b)
         else if (b == BTN_R) { if (u->level < LEVEL_ITEMS) u->level++; }
         else if (*cur == n) {
             if (b == BTN_A) {
+                u->name_for = 0;
                 snprintf(u->name, sizeof u->name, "Custom %d", u->saved_count + 1);
                 u->name_len = (int)strlen(u->name);
                 u->key_cursor = 0;
@@ -494,6 +562,7 @@ void ui_input(SmzUi *u, UiButton b)
     case UI_SAVED: saved_input(u, b); break;
     case UI_NAME: name_input(u, b); break;
     case UI_START: start_input(u, b); break;
+    case UI_COUNTRY: country_input(u, b); break;
     case UI_BUSY: break;
     }
 }
@@ -526,9 +595,10 @@ void ui_touch(SmzUi *u, int x, int y)
         case H_SAVED: u->saved_cursor = t->idx; u->saved_col = 0; u->saved_confirm = 0; ui_input(u, BTN_A); break;
         case H_SAVED_DEL: u->saved_cursor = t->idx; u->saved_col = 1; ui_input(u, BTN_A); break;
         case H_KEY: u->key_cursor = t->idx; ui_input(u, BTN_A); break;
-        case H_START: {   /* 0, 1 sprite rows, 2, 3 their Random chips, 4 Start */
-            u->start_cursor = t->idx == 4 ? 2 : t->idx & 1;
-            u->start_col = t->idx == 2 || t->idx == 3;
+        case H_COUNTRY: u->country_cursor = t->idx; ui_input(u, BTN_A); break;
+        case H_START: {   /* 0, 1 sprite rows, 2, 3 their Random chips, 4 Start, 5 player name, 6 country */
+            u->start_cursor = t->idx == 4 ? START_ROW : t->idx >= 5 ? 2 : t->idx & 1;
+            u->start_col = t->idx == 2 || t->idx == 3 || t->idx == 6;
             ui_input(u, BTN_A);
             break;
         }
@@ -833,7 +903,7 @@ void ui_draw(SmzUi *u)
         break;
     }
     case UI_NAME: {
-        title(u, "Save custom as");
+        title(u, u->name_for ? "Player name" : "Save custom as");
         char field[40];
         snprintf(field, sizeof field, "%s_", u->name);
         rect(u, 10, 32, UI_W - 20, 24, C_PANEL);
@@ -858,26 +928,50 @@ void ui_draw(SmzUi *u)
     case UI_START: {
         snprintf(buf, sizeof buf, "%s  -  Sprites", u->start_label);
         title(u, buf);
+        int rh = u->player_on ? 46 : 56, step = rh + 6;
         for (int g = 0; g < 2; g++) {
-            int y = 34 + g * 62, v = u->value[g ? UIO_SAMUS : UIO_LINK];
+            int y = 34 + g * step, v = u->value[g ? UIO_SAMUS : UIO_LINK];
             if (v >= u->sprite_count[g]) v = 0;
-            rect(u, 8, y, 218, 56, u->start_cursor == g && !u->start_col ? C_SEL : C_PANEL);
-            hit(u, H_START, g, 8, y, 218, 56);
-            rect(u, 232, y, 80, 56, u->start_cursor == g && u->start_col ? C_SEL : C_PANEL);
-            hit(u, H_START, 2 + g, 232, y, 80, 56);
+            rect(u, 8, y, 218, rh, u->start_cursor == g && !u->start_col ? C_SEL : C_PANEL);
+            hit(u, H_START, g, 8, y, 218, rh);
+            rect(u, 232, y, 80, rh, u->start_cursor == g && u->start_col ? C_SEL : C_PANEL);
+            hit(u, H_START, 2 + g, 232, y, 80, rh);
             {
                 char key[64];
                 snprintf(key, sizeof key, "%s/%s", g ? "samus" : "link", u->sprites[g][v]);
-                put(u, 2, 14, y + 4, 48, 48, C_TEXT, 0, key);
+                put(u, 2, 14, y + 4, rh - 8, rh - 8, C_TEXT, 0, key);
             }
-            text(u, 72, y + 10, C_DIM, 0, g ? "Samus" : "Link");
-            text(u, 72, y + 30, C_ACCENT, 0, u->sprites[g][v]);
-            text(u, 272, y + 22, C_ACCENT, 1, "Random");
+            text(u, 72, y + rh / 2 - 16, C_DIM, 0, g ? "Samus" : "Link");
+            text(u, 72, y + rh / 2 + 4, C_ACCENT, 0, u->sprites[g][v]);
+            text(u, 272, y + rh / 2 - 6, C_ACCENT, 1, "Random");
         }
-        rect(u, 8, 164, UI_W - 16, 44, u->start_cursor == 2 ? C_SEL : C_PANEL);
-        hit(u, H_START, 4, 8, 164, UI_W - 16, 44);
-        text(u, UI_W / 2, 180, C_ACCENT, 1, "Start");
+        if (u->player_on) {
+            int y = 34 + 2 * step;
+            rect(u, 8, y, 218, 36, u->start_cursor == 2 && !u->start_col ? C_SEL : C_PANEL);
+            hit(u, H_START, 5, 8, y, 218, 36);
+            rect(u, 232, y, 80, 36, u->start_cursor == 2 && u->start_col ? C_SEL : C_PANEL);
+            hit(u, H_START, 6, 232, y, 80, 36);
+            text(u, 16, y + 4, C_DIM, 0, "Player");
+            text(u, 16, y + 19, u->player[0] ? C_ACCENT : C_DIM, 0, u->player[0] ? u->player : "Set your name");
+            text(u, 272, y + 12, u->country[0] ? C_ACCENT : C_DIM, 1, u->country[0] ? u->country : "Flag");
+        }
+        int sy = u->player_on ? 188 : 164, sh = u->player_on ? 34 : 44;
+        rect(u, 8, sy, UI_W - 16, sh, u->start_cursor == START_ROW ? C_SEL : C_PANEL);
+        hit(u, H_START, 4, 8, sy, UI_W - 16, sh);
+        text(u, UI_W / 2, sy + sh / 2 - 6, C_ACCENT, 1, "Start");
         text(u, 6, UI_H - 6, C_DIM, 0, "A choose  Right: Random  B back");
+        break;
+    }
+    case UI_COUNTRY: {
+        title(u, "Flag");
+        for (int r = 0; r < COUNTRY_ROWS && u->country_scroll + r < COUNTRY_COUNT; r++) {
+            int i = u->country_scroll + r, y = 32 + r * 25;
+            rect(u, 6, y, UI_W - 12, 23, i == u->country_cursor ? C_SEL : C_PANEL);
+            hit(u, H_COUNTRY, i, 6, y, UI_W - 12, 23);
+            text(u, 14, y + 6, C_ACCENT, 0, COUNTRIES[i].code[0] ? COUNTRIES[i].code : "--");
+            text(u, 54, y + 6, C_TEXT, 0, COUNTRIES[i].name);
+        }
+        text(u, 6, UI_H - 6, C_DIM, 0, "A choose  L R page  B back");
         break;
     }
     case UI_BUSY:
