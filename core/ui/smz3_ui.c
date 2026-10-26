@@ -400,6 +400,15 @@ static void begin_run(SmzUi *u, int mode, const char *label, const char *spec)
     else goto_start(u);
 }
 
+void ui_preset(SmzUi *u, int mode)
+{
+    if (mode == 0) begin_run(u, 0, CHILL.name, CHILL.spec);
+    else begin_run(u, mode == 1 ? 1 : 2, mode == 1 ? ORIGINAL.name : "Custom", mode == 1 ? ORIGINAL.spec : "");
+    u->screen = UI_SLOTS_SCREEN;
+}
+
+void ui_apply_spec(SmzUi *u, const char *spec) { apply_spec(u, spec); }
+
 static int mode_rows(const SmzUi *u) { return 3 + (u->saved_count > 0) + (u->monthly_seed > 0); }
 
 /* 0 Cozy, 1 Original, 2 Custom, 3 Saved customs, 4 Monthly seed */

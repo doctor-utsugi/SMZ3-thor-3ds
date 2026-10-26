@@ -124,6 +124,10 @@ void ui_set_monthly(SmzUi *u, const char *label, int seed, int days_left);
 /* Asks which to load for a slot whose save state is ahead of its game save (times in play-time ms, counts of checks done);
  * the answer comes back as ACT_LOAD_SAVE or ACT_LOAD_STATE with the slot in action_slot. */
 void ui_load_choice(SmzUi *u, int slot, int64_t save_ms, int save_z, int save_m, int64_t state_ms, int state_z, int state_m, int zelda_total, int metroid_total);
+/* Sets every option as the given way of starting a run does (0 Cozy, 1 Original, 2 Custom defaults), without opening any screen. */
+void ui_preset(SmzUi *u, int mode);
+/* Applies "Key=value,Key=value" on top of the current options (the format of saved customs; Seed is set through value[0]). */
+void ui_apply_spec(SmzUi *u, const char *spec);
 /* 1 when the run being started is the monthly seed run. */
 int ui_run_monthly(const SmzUi *u);
 /* The name of the way the run was set up ("Cozy run", "Original", a saved custom's name), for naming the run being created. */
