@@ -12,6 +12,7 @@
 #include "pc_assets.h"
 #include "pc_gfx.h"
 #include "pc_map.h"
+#include "pc_online.h"
 #include "pc_store.h"
 #include "smz3_host.h"
 #include "smz3_md5.h"
@@ -175,6 +176,16 @@ static int cmd_new(int argc, char **argv)
     return 0;
 }
 
+static int cmd_online(void)
+{
+    char label[16];
+    int seed;
+    if (online_monthly(label, &seed)) printf("monthly seed %d (%s), %d days left\n", seed, label, online_days_left());
+    else printf("no monthly seed (no connection, or curl is missing)\n");
+    for (int i = 1; i <= UI_SLOTS; i++) if (online_slot_kind(i)) printf("slot %d is on the %s ladder\n", i, online_slot_kind(i) == 2 ? "monthly" : "original");
+    return 0;
+}
+
 static int cmd_runs(void)
 {
     int n = 0;
@@ -249,6 +260,7 @@ static void usage(void)
          "  smz3 play N                   open the window and continue run N\n"
          "  smz3 runs                     list the saved runs\n"
          "  smz3 new [--preset P] [--seed N] [--name S] [--set Key=value]   make a run in the first free slot\n"
+         "  smz3 online                   show the monthly seed and which runs are on the online ladder\n"
          "  smz3 config [--sm F] [--z3 F] show or set the base ROM files (Super Metroid JU, ALttP JP v1.0)\n"
          "  smz3 gen --out FILE [--preset cozy|original|custom] [--seed N] [--set Key=value ...]\n"
          "                                make a randomized ROM file without opening a window\n\n"
@@ -332,6 +344,15 @@ static void present(void)
 }
 
 static int g_quit;
+
+/* the monthly seed is fetched in the background; the menu takes it when it arrives */
+static char g_month[16];
+static int g_month_seed, g_month_ready;
+static void *monthly_thread(void *arg) { (void)arg; char l[16]; int s; if (online_monthly(l, &s)) { snprintf(g_month, sizeof g_month, "%s", l); g_month_seed = s; g_month_ready = 1; } return NULL; }
+static void *flush_thread(void *arg) { (void)arg; online_flush(); return NULL; }
+static void *token_thread(void *arg) { online_ensure_token((int)(intptr_t)arg); return NULL; }
+static void detach(void *(*fn)(void *), void *arg) { pthread_t t; if (!pthread_create(&t, NULL, fn, arg)) pthread_detach(t); }
+static void refill_slots(void) { store_fill_slots(&ui); for (int i = 0; i < UI_SLOTS; i++) ui_set_slot_online(&ui, i, online_slot_kind(i + 1)); }
 static char g_note[200];
 static Uint32 g_note_until;
 static void note(const char *msg) { snprintf(g_note, sizeof g_note, "%s", msg); g_note_until = SDL_GetTicks() + 6000; }
@@ -612,6 +633,8 @@ static void play(int slot, int game_save_only)
         have_logic = lj.rc == 0;
     }
     uint32_t logic_key = 0;
+    Uint32 next_token = 0;
+    int is_default = json_flag(run.settings, "defaultRules", 0), queued = 0;
     memset(in_logic, 0, sizeof in_logic);
     static SmzTracker trk;
     smz_tracker_reset(&trk, run.play_ms, run.save_ms, run.save_zelda, run.save_metroid);
@@ -693,6 +716,12 @@ static void play(int slot, int game_save_only)
                 smz_tracker_tick(&trk, wram, wl, sram, sl, dt, fast ? 4 : 1);
                 if (trk.save_changed) store_write(store_path("runs/slot%d.srm", slot + 1), sram, sl);
                 if (trk.game == 3) finished = 1;
+                if (trk.started && trk.running && SDL_GetTicks() >= next_token && online_slot_kind(slot + 1)) { next_token = SDL_GetTicks() + 60000; detach(token_thread, (void *)(intptr_t)(slot + 1)); }
+                if (finished && !queued && is_default && online_slot_kind(slot + 1)) {
+                    queued = 1;
+                    online_queue_finish(slot + 1, trk.base_ms + trk.pending_ms);
+                    detach(flush_thread, NULL);
+                }
                 if (trk.started && !hold) smz_disc_update(&disc, wram, wl, (int)trk.game);
                 if (have_logic && (trk.started || getenv("SMZ3_LOGIC_ALWAYS"))) {
                     int items[SMZ_TRK_MAX_ITEMS];
@@ -796,7 +825,10 @@ static void window_main(int start_slot)
     SDL_Window *w = win; (void)w;
     ui_init(&ui);
     refill_sprites();
-    store_fill_slots(&ui);
+    refill_slots();
+    online_init(&ui);
+    detach(monthly_thread, NULL);
+    detach(flush_thread, NULL);
     {
         size_t n;
         char *saved = (char *)store_read(store_path("saved.txt"), &n);
@@ -807,7 +839,7 @@ static void window_main(int start_slot)
         if (pending_play >= 0) {
             play(pending_play, pending_state_only);
             pending_play = -1;
-            store_fill_slots(&ui);
+            refill_slots();
             if (g_quit) break;
         }
         SDL_Event e;
@@ -840,6 +872,8 @@ static void window_main(int start_slot)
             } else if (e.type == SDL_CONTROLLERDEVICEADDED && !pad) pad = SDL_GameControllerOpen(e.cdevice.which);
         }
 
+        if (g_month_ready) { g_month_ready = 0; ui_set_monthly(&ui, g_month, g_month_seed, online_days_left()); }
+        online_save_profile(&ui);
         if (ui_saved_dirty(&ui)) {
             char text[8192];
             if (ui_saved_text(&ui, text, sizeof text) > 0) store_write(store_path("saved.txt"), text, strlen(text));
@@ -848,7 +882,7 @@ static void window_main(int start_slot)
             UiAction act = ui.action;
             int slot = ui.action_slot;
             ui.action = ACT_NONE;
-            if (act == ACT_DELETE) { store_run_delete(slot + 1); store_fill_slots(&ui); }
+            if (act == ACT_DELETE) { store_run_delete(slot + 1); refill_slots(); }
             else if (act == ACT_CONTINUE) {
                 SmzRun r;
                 if (store_run_load(slot + 1, &r) == 0 && json_flag(r.settings, "saveStates", 0) && r.save_ms > 0 && r.play_ms - r.save_ms > 10000
@@ -875,10 +909,12 @@ static void window_main(int start_slot)
                     ui_idle(&ui);
                     if (j.rc) note(j.err);
                     else {
+                        int on = ui_online_now(&ui), monthly = ui_run_monthly(&ui);
                         rom_file(&j.run, j.run.rom_path, sizeof j.run.rom_path);
                         j.run.created = j.run.last_played = (int64_t)time(NULL) * 1000;
                         if (store_write(j.run.rom_path, j.rom, SMZ_HOST_ROM_SIZE) == 0 && store_run_save(slot + 1, &j.run) == 0) {
-                            store_fill_slots(&ui);
+                            online_mark_run(slot + 1, on, monthly);
+                            refill_slots();
                             pending_play = slot; pending_state_only = 0;
                         } else note("cannot write the run files");
                     }
@@ -908,6 +944,7 @@ int main(int argc, char **argv)
     if (argc > 1) {
         if (!strcmp(argv[1], "gen")) return cmd_gen(argc - 2, argv + 2);
         if (!strcmp(argv[1], "runs")) return cmd_runs();
+        if (!strcmp(argv[1], "online")) return cmd_online();
         if (!strcmp(argv[1], "new")) return cmd_new(argc - 2, argv + 2);
         if (!strcmp(argv[1], "selftest")) return cmd_selftest(argc - 2, argv + 2);
         if (!strcmp(argv[1], "config")) return cmd_config(argc - 2, argv + 2);
