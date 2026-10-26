@@ -461,10 +461,15 @@ JNIEXPORT void JNICALL NATIVE(uiPlayerLoad)(JNIEnv *env, jclass cls, jstring tex
     if (t) (*env)->ReleaseStringUTFChars(env, text, t);
 }
 
-JNIEXPORT void JNICALL NATIVE(uiSetMonthly)(JNIEnv *env, jclass cls, jstring label, jint seed)
+JNIEXPORT void JNICALL NATIVE(uiLoadChoice)(JNIEnv *env, jclass cls, jint slot, jlong saveMs, jint saveZ, jint saveM, jlong stateMs, jint stateZ, jint stateM, jint zt, jint mt)
+{
+    ui_load_choice(&g_ui, slot, saveMs, saveZ, saveM, stateMs, stateZ, stateM, zt, mt);
+}
+
+JNIEXPORT void JNICALL NATIVE(uiSetMonthly)(JNIEnv *env, jclass cls, jstring label, jint seed, jint days)
 {
     const char *l = (*env)->GetStringUTFChars(env, label, NULL);
-    ui_set_monthly(&g_ui, l, seed);
+    ui_set_monthly(&g_ui, l, seed, days);
     (*env)->ReleaseStringUTFChars(env, label, l);
 }
 

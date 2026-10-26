@@ -301,8 +301,9 @@ void ui_player_load(SmzUi *u, const char *text)
     u->online_mode = t2 && t2[1] >= '0' && t2[1] <= '2' ? t2[1] - '0' : 0;
 }
 
-void ui_set_monthly(SmzUi *u, const char *label, int seed)
+void ui_set_monthly(SmzUi *u, const char *label, int seed, int days_left)
 {
+    u->monthly_days = days_left;
     snprintf(u->monthly_label, sizeof u->monthly_label, "%s", label ? label : "");
     u->monthly_seed = seed > 0 ? seed : 0;
 }
@@ -335,6 +336,27 @@ static void country_input(SmzUi *u, UiButton b)
     }
     if (*c < u->country_scroll) u->country_scroll = *c;
     if (*c >= u->country_scroll + COUNTRY_ROWS) u->country_scroll = *c - COUNTRY_ROWS + 1;
+}
+
+void ui_load_choice(SmzUi *u, int slot, int64_t save_ms, int save_z, int save_m, int64_t state_ms, int state_z, int state_m, int zelda_total, int metroid_total)
+{
+    u->lc.save_ms = save_ms; u->lc.state_ms = state_ms;
+    u->lc.save_z = save_z; u->lc.save_m = save_m; u->lc.state_z = state_z; u->lc.state_m = state_m;
+    u->lc.zt = zelda_total; u->lc.mt = metroid_total;
+    u->lc.cursor = 1;                       /* the save state is the newest */
+    u->active_slot = slot;
+    u->screen = UI_LOADCHOICE;
+}
+
+static void loadchoice_input(SmzUi *u, UiButton b)
+{
+    if (b == BTN_B) u->screen = UI_SLOTS_SCREEN;
+    else if (b == BTN_LEFT || b == BTN_RIGHT) u->lc.cursor = b == BTN_LEFT ? 0 : 1;
+    else if (b == BTN_A) {
+        u->action = u->lc.cursor ? ACT_LOAD_STATE : ACT_LOAD_SAVE;
+        u->action_slot = u->active_slot;
+        u->screen = UI_SLOTS_SCREEN;
+    }
 }
 
 #define START_ROW 3
@@ -615,6 +637,7 @@ void ui_input(SmzUi *u, UiButton b)
     case UI_START: start_input(u, b); break;
     case UI_COUNTRY: country_input(u, b); break;
     case UI_ONLINE: online_input(u, b); break;
+    case UI_LOADCHOICE: loadchoice_input(u, b); break;
     case UI_BUSY: break;
     }
 }
@@ -647,6 +670,7 @@ void ui_touch(SmzUi *u, int x, int y)
         case H_SAVED: u->saved_cursor = t->idx; u->saved_col = 0; u->saved_confirm = 0; ui_input(u, BTN_A); break;
         case H_SAVED_DEL: u->saved_cursor = t->idx; u->saved_col = 1; ui_input(u, BTN_A); break;
         case H_KEY: u->key_cursor = t->idx; ui_input(u, BTN_A); break;
+        case H_LOADCHOICE: u->lc.cursor = t->idx; ui_input(u, BTN_A); break;
         case H_ONLINE: u->online_cursor = t->idx; ui_input(u, BTN_A); break;
         case H_COUNTRY: u->country_cursor = t->idx; ui_input(u, BTN_A); break;
         case H_START: {   /* 0, 1 sprite rows, 2, 3 their Random chips, 4 Start, 5 player name, 6 country */
@@ -931,7 +955,8 @@ void ui_draw(SmzUi *u)
             else if (k == 1) snprintf(desc, sizeof desc, "%s", ORIGINAL.desc);
             else if (k == 2) snprintf(desc, sizeof desc, "Pick every option yourself");
             else if (k == 3) snprintf(desc, sizeof desc, "%d saved", u->saved_count);
-            else snprintf(desc, sizeof desc, "%s: the same seed for everyone", u->monthly_label);
+            else if (u->monthly_days <= 0) snprintf(desc, sizeof desc, "%s: ends today", u->monthly_label);
+            else snprintf(desc, sizeof desc, "%s: %d day%s left", u->monthly_label, u->monthly_days, u->monthly_days == 1 ? "" : "s");
             rect(u, 8, y, UI_W - 16, rh, r == u->mode_cursor ? C_SEL : C_PANEL);
             rect(u, 8, y, 5, rh, k == 4 ? C_GREEN : C_ACCENT);
             hit(u, H_MODE, r, 8, y, UI_W - 16, rh);
@@ -1033,6 +1058,57 @@ void ui_draw(SmzUi *u)
         hit(u, H_START, 4, 8, sy, UI_W - 16, sh);
         text(u, UI_W / 2, sy + sh / 2 - 6, C_ACCENT, 1, "Start");
         text(u, 6, UI_H - 6, C_DIM, 0, "A choose  Right: Random  B back");
+        break;
+    }
+    case UI_LOADCHOICE: {
+        snprintf(buf, sizeof buf, "Slot %d  -  Which to load?", u->active_slot + 1);
+        title(u, buf);
+        int64_t smax = u->lc.state_ms > u->lc.save_ms ? u->lc.state_ms : u->lc.save_ms;
+        int x0 = 44, x1 = 252, y = 66;
+        int xs = x0, xt = x1;
+        if (smax > 0) {
+            xs = x0 + (int)((x1 - x0) * u->lc.save_ms / smax * 85 / 100);
+            xt = x0 + (int)((x1 - x0) * u->lc.state_ms / smax * 85 / 100) + (x1 - x0) * 15 / 100;
+            if (xt - xs < 84) xt = xs + 84;
+            if (xt > x1) { xt = x1; xs = x1 - 84; }
+        }
+        rect(u, 20, y - 1, 280, 3, C_DIM);                           /* the time line */
+        rect(u, 292, y - 4, 8, 9, C_DIM);
+        rect(u, xs, y - 4, xt - xs, 9, C_PANEL);                      /* the stretch the save state is ahead */
+        rect(u, xs - 1, y - 12, 3, 25, C_ACCENT);
+        rect(u, xs - 5, y - 5, 11, 11, C_ACCENT);
+        rect(u, xt - 1, y - 12, 3, 25, C_GREEN);
+        rect(u, xt - 6, y - 3, 12, 7, C_GREEN);
+        rect(u, xt - 3, y - 6, 6, 13, C_GREEN);
+        text(u, xs, y - 26, C_ACCENT, 1, "GAME SAVE");
+        text(u, xt, y - 26, C_GREEN, 1, "SAVE STATE");
+        char t[32];
+        long long a = u->lc.save_ms / 1000, d = u->lc.state_ms / 1000;
+        snprintf(t, sizeof t, "%lld:%02lld:%02lld", a / 3600, a / 60 % 60, a % 60); text(u, xs, y + 16, C_TEXT, 1, t);
+        snprintf(t, sizeof t, "%lld:%02lld:%02lld", d / 3600, d / 60 % 60, d % 60); text(u, xt, y + 16, C_TEXT, 1, t);
+        long long gap = (u->lc.state_ms - u->lc.save_ms) / 1000;
+        snprintf(t, sizeof t, "+%lld:%02lld further on", gap / 60, gap % 60);
+        text(u, (xs + xt) / 2, y + 32, C_CYAN, 1, t);
+        for (int k = 0; k < 2; k++) {
+            int x = 8 + k * 156, cy = 112, z = k ? u->lc.state_z : u->lc.save_z, m = k ? u->lc.state_m : u->lc.save_m;
+            int total = u->lc.zt + u->lc.mt, pct = total > 0 ? (z + m) * 100 / total : 0;
+            rect(u, x, cy, 148, 98, k == u->lc.cursor ? C_SEL : C_PANEL);
+            rect(u, x, cy, 148, 3, k ? C_GREEN : C_ACCENT);
+            hit(u, H_LOADCHOICE, k, x, cy, 148, 98);
+            text(u, x + 8, cy + 8, k ? C_GREEN : C_ACCENT, 0, k ? "Save state" : "Game save");
+            text(u, x + 8, cy + 22, C_DIM, 0, k ? "Where you left off" : "Where it last saved");
+            snprintf(t, sizeof t, "%d%%", pct); text(u, x + 8, cy + 40, C_TEXT, 2 - 2, t);
+            rect(u, x + 8, cy + 56, 132, 4, C_BG);
+            if (total > 0) rect(u, x + 8, cy + 56, 132 * (z + m) / total, 4, C_GREEN);
+            snprintf(t, sizeof t, "Zelda %d/%d", z, u->lc.zt);
+            text(u, x + 8, cy + 66, C_DIM, 0, t);
+            snprintf(t, sizeof t, "Metroid %d/%d", m, u->lc.mt);
+            text(u, x + 8, cy + 80, C_DIM, 0, t);
+            if (k && u->lc.state_z > u->lc.save_z) { snprintf(t, sizeof t, "+%d", u->lc.state_z - u->lc.save_z); text(u, x + 140, cy + 66, C_CYAN, 2, t); }
+            if (k && u->lc.state_m > u->lc.save_m) { snprintf(t, sizeof t, "+%d", u->lc.state_m - u->lc.save_m); text(u, x + 140, cy + 80, C_CYAN, 2, t); }
+        }
+        text(u, 6, UI_H - 24, C_DIM, 0, "Left Right choose  A load  B cancel");
+        text(u, 6, UI_H - 11, C_DIM, 0, "The other is replaced when you quit");
         break;
     }
     case UI_ONLINE: {

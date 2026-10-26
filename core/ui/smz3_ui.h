@@ -18,11 +18,11 @@
 #define UI_SPEC_LEN 512
 
 typedef enum { BTN_UP, BTN_DOWN, BTN_LEFT, BTN_RIGHT, BTN_A, BTN_B, BTN_L, BTN_R } UiButton;
-typedef enum { UI_SLOTS_SCREEN, UI_SLOT_MENU, UI_CREATE, UI_SPRITES, UI_BUSY, UI_CONFIRM, UI_MODE, UI_SAVED, UI_NAME, UI_START, UI_COUNTRY, UI_ONLINE } UiScreen;
+typedef enum { UI_SLOTS_SCREEN, UI_SLOT_MENU, UI_CREATE, UI_SPRITES, UI_BUSY, UI_CONFIRM, UI_MODE, UI_SAVED, UI_NAME, UI_START, UI_COUNTRY, UI_ONLINE, UI_LOADCHOICE } UiScreen;
 typedef enum { OPT_ENUM, OPT_INT, OPT_BOOL, OPT_SEED, OPT_SPRITE } OptKind;
 /* Tabs of the Create run screen. Only LEVEL_ITEMS is read from UiOptDef.level; the other tabs list their keys in UI_TABS. */
 typedef enum { LEVEL_RUN, LEVEL_ZELDA, LEVEL_METROID, LEVEL_PLAY, LEVEL_ITEMS, LEVEL_COUNT } OptLevel;
-typedef enum { ACT_NONE, ACT_CONTINUE, ACT_DELETE, ACT_GENERATE } UiAction;
+typedef enum { ACT_NONE, ACT_CONTINUE, ACT_DELETE, ACT_GENERATE, ACT_LOAD_SAVE, ACT_LOAD_STATE } UiAction;
 
 typedef struct {
     const char *key;             /* C# property name for logic options */
@@ -49,7 +49,7 @@ typedef struct { uint8_t kind; int16_t x, y, w, h; uint8_t color; uint8_t align;
 enum { C_BG, C_PANEL, C_SEL, C_TEXT, C_DIM, C_ACCENT, C_WARN, C_GREEN, C_CYAN, C_TEAL, C_NAVY, C_VIOLET, C_GOLD };
 
 typedef struct { int16_t x, y, w, h; uint8_t kind; int16_t idx; } UiHit;
-enum { H_SLOT, H_MENU, H_TAB, H_ROW, H_SPRITE, H_SCROLL, H_CREATE, H_BACK, H_CHEVRON, H_CONFIRM, H_MODE, H_SAVED, H_SAVED_DEL, H_KEY, H_START, H_COUNTRY, H_ONLINE };
+enum { H_SLOT, H_MENU, H_TAB, H_ROW, H_SPRITE, H_SCROLL, H_CREATE, H_BACK, H_CHEVRON, H_CONFIRM, H_MODE, H_SAVED, H_SAVED_DEL, H_KEY, H_START, H_COUNTRY, H_ONLINE, H_LOADCHOICE };
 
 typedef struct {
     UiScreen screen, back;
@@ -70,6 +70,8 @@ typedef struct {
     char player[24], country[3]; /* the profile sent with finished runs; country is an ISO 3166 code or empty */
     int country_cursor, country_scroll;
     char monthly_label[16]; int monthly_seed;  /* the month's fixed seed (0 until the host knows it) and its label, e.g. 2026-10 */
+    int monthly_days;                   /* days left until the month's seed changes */
+    struct { int64_t save_ms, state_ms; int save_z, save_m, state_z, state_m, zt, mt, cursor; } lc;   /* the load choice shown by UI_LOADCHOICE */
     int online_mode, online_cursor, online_gen; /* 0 ask before each run, 1 upload, 2 never; the prompt's row; 1 when the prompt came from Start */
     char start_label[24], notice[32];
     int start_cursor, start_col;  /* sprite screen: row (Link, Samus, Start) and column (sprite, Random) */
@@ -118,7 +120,10 @@ int ui_player_dirty(SmzUi *u);
 /* 1 when the run being started uploads to the online ladder (read when the host starts generating). */
 int ui_online_now(const SmzUi *u);
 /* The month's fixed seed; once set, the run mode list offers "Monthly seed" (Original rules with that seed). */
-void ui_set_monthly(SmzUi *u, const char *label, int seed);
+void ui_set_monthly(SmzUi *u, const char *label, int seed, int days_left);
+/* Asks which to load for a slot whose save state is ahead of its game save (times in play-time ms, counts of checks done);
+ * the answer comes back as ACT_LOAD_SAVE or ACT_LOAD_STATE with the slot in action_slot. */
+void ui_load_choice(SmzUi *u, int slot, int64_t save_ms, int save_z, int save_m, int64_t state_ms, int state_z, int state_m, int zelda_total, int metroid_total);
 /* 1 when the run being started is the monthly seed run. */
 int ui_run_monthly(const SmzUi *u);
 /* The name of the way the run was set up ("Cozy run", "Original", a saved custom's name), for naming the run being created. */

@@ -579,3 +579,10 @@ The launcher icon is `assets/logo.png` (a Metroid with the Triforce inside). `to
 ### Position while changing rooms
 
 On a room change the room number ($A0) and Link's coordinates ($20, $22) are not updated together, so the dungeon map could show Link on the opposite side of the new room for a moment. `Smz3DungeonMaps.live` now keeps the last settled place while the underworld module ($10 = 7) has a submodule running ($11 != 0) in the same dungeon. This is based on the known RAM layout and was not checked against a recording of a transition; if Link seems stuck on the map, the submodule test is the place to look.
+
+### Load choice and monthly expiry
+
+- Continue on a slot used to load the autosave state even when the game save was older. The tracker now hashes the 1 MB save RAM every 500 ms and, when it changes during play, stores the play time and the Zelda/Metroid counts of that save in the run (`saveMs`, `saveZelda`, `saveMetroid`).
+- When the run's play time is more than 10 s past the last save, Continue shows `UI_LOADCHOICE` (`ui_load_choice`): a timeline with the game save (orange) and the save state (green), the gap as "+m:ss further on", and a card per option with percent, bars and counts (+N for what the state has beyond the save). Left/Right choose, A loads, B cancels; the default is the save state. "Game save" loads SRAM only (`onGameRestart`), "save state" loads the autosave. The other one is replaced when the game is left, and the dialog says so. Otherwise Continue loads as before.
+- Limits: runs created before this have `saveMs = 0` and get no dialog until a save is observed; the save time comes from any change of the save RAM, so a write that is not a player save would also move it. The dialog itself was checked by rendering the command list on the PC, not seen on the device. 3DS is untouched.
+- The Monthly mode row shows how long the seed lasts: "Monthly: N days left", "1 day left" or "ends today" (`ui_set_monthly(label, seed, days_left)`, days counted in UTC to the end of the month). A monthly run started near the end of the month still counts for its start month while its token is valid (3 days).

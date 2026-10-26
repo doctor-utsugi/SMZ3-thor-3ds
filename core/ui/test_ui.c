@@ -166,11 +166,23 @@ int main(void)
     u.action = ACT_NONE; u.screen = UI_SLOTS_SCREEN;
     {   /* monthly seed row appears once the host knows the seed */
         SmzUi m; ui_init(&m); m.screen = UI_MODE;
-        ui_set_monthly(&m, "2026-10", 123456789);
+        ui_set_monthly(&m, "2026-10", 123456789, 5);
         m.mode_cursor = 3 + (m.saved_count > 0); ui_draw(&m); ui_input(&m, BTN_A);
         assert(m.screen == UI_START && m.run_mode == 4 && ui_run_monthly(&m) && !strcmp(ui_run_label(&m), "Monthly 2026-10"));
         char js[2048]; ui_settings_json(&m, 77, js, sizeof js);
         assert(strstr(js, "\"seed\":\"123456789\"") && strstr(js, "\"defaultRules\":true"));
+    }
+    {   /* load choice: save state ahead of the game save */
+        SmzUi l; ui_init(&l);
+        ui_load_choice(&l, 1, 83 * 60 * 1000 + 45000, 78, 30, 91 * 60 * 1000 + 2000, 84, 36, 216, 100);
+        assert(l.screen == UI_LOADCHOICE && l.lc.cursor == 1);
+        ui_draw(&l);
+        ui_input(&l, BTN_LEFT); ui_input(&l, BTN_A);
+        assert(l.action == ACT_LOAD_SAVE && l.action_slot == 1 && l.screen == UI_SLOTS_SCREEN);
+        l.action = ACT_NONE; ui_load_choice(&l, 2, 0, 0, 0, 5000, 1, 0, 216, 100); ui_draw(&l);
+        ui_touch(&l, 240, 150); assert(l.action == ACT_LOAD_STATE && l.action_slot == 2);
+        l.action = ACT_NONE; ui_load_choice(&l, 3, 1000, 1, 0, 2000, 2, 0, 216, 100);
+        ui_draw(&l); ui_input(&l, BTN_B); assert(l.screen == UI_SLOTS_SCREEN && l.action == ACT_NONE);
     }
     {   /* player profile: name keyboard and flag list from the start screen */
         SmzUi p; ui_init(&p); ui_player_enable(&p, 1); ui_player_load(&p, "Ana\tES\t1");
