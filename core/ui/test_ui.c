@@ -172,6 +172,18 @@ int main(void)
         char js[2048]; ui_settings_json(&m, 77, js, sizeof js);
         assert(strstr(js, "\"seed\":\"123456789\"") && strstr(js, "\"defaultRules\":true"));
     }
+    {   /* weekly run: limited goals, the week's seed, rules count as unchanged */
+        SmzUi w; ui_init(&w); w.screen = UI_MODE;
+        ui_set_monthly(&w, "2026-10", 123456789, 5);
+        ui_set_weekly(&w, "2026-W44", 359721838, 6);
+        w.mode_cursor = 4 + (w.saved_count > 0); ui_draw(&w); ui_input(&w, BTN_A);
+        assert(w.screen == UI_START && w.run_mode == 5 && ui_run_weekly(&w) && !strcmp(ui_run_label(&w), "Weekly 2026-W44"));
+        char js[2048]; ui_settings_json(&w, 77, js, sizeof js);
+        assert(strstr(js, "\"seed\":\"359721838\"") && strstr(js, "\"defaultRules\":true"));
+        assert(strstr(js, "\"ganonCrystals\":2") && strstr(js, "\"ganonsTowerCrystals\":2") && strstr(js, "\"tourianBosses\":1"));
+        w.value[3] = 7; ui_settings_json(&w, 77, js, sizeof js);   /* changing a goal leaves the weekly rules */
+        assert(strstr(js, "\"defaultRules\":false"));
+    }
     {   /* load choice: save state ahead of the game save */
         SmzUi l; ui_init(&l);
         ui_load_choice(&l, 1, 83 * 60 * 1000 + 45000, 78, 30, 91 * 60 * 1000 + 2000, 84, 36, 216, 100);

@@ -182,7 +182,8 @@ static int cmd_online(void)
     int seed;
     if (online_monthly(label, &seed)) printf("monthly seed %d (%s), %d days left\n", seed, label, online_days_left());
     else printf("no monthly seed (no connection, or curl is missing)\n");
-    for (int i = 1; i <= UI_SLOTS; i++) if (online_slot_kind(i)) printf("slot %d is on the %s ladder\n", i, online_slot_kind(i) == 2 ? "monthly" : "original");
+    if (online_weekly(label, &seed)) printf("weekly seed %d (%s), %d days left\n", seed, label, online_weekly_days_left());
+    for (int i = 1; i <= UI_SLOTS; i++) if (online_slot_kind(i)) printf("slot %d is on the %s ladder\n", i, online_slot_kind(i) == 3 ? "weekly" : online_slot_kind(i) == 2 ? "monthly" : "original");
     return 0;
 }
 
@@ -348,7 +349,10 @@ static int g_quit;
 /* the monthly seed is fetched in the background; the menu takes it when it arrives */
 static char g_month[16];
 static int g_month_seed, g_month_ready;
-static void *monthly_thread(void *arg) { (void)arg; char l[16]; int s; if (online_monthly(l, &s)) { snprintf(g_month, sizeof g_month, "%s", l); g_month_seed = s; g_month_ready = 1; } return NULL; }
+static char g_week[16];
+static int g_week_seed, g_week_ready;
+static void *monthly_thread(void *arg) { (void)arg; char l[16]; int s; if (online_monthly(l, &s)) { snprintf(g_month, sizeof g_month, "%s", l); g_month_seed = s; g_month_ready = 1; }
+    if (online_weekly(l, &s)) { snprintf(g_week, sizeof g_week, "%s", l); g_week_seed = s; g_week_ready = 1; } return NULL; }
 static void *flush_thread(void *arg) { (void)arg; online_flush(); return NULL; }
 static void *token_thread(void *arg) { online_ensure_token((int)(intptr_t)arg); return NULL; }
 static void detach(void *(*fn)(void *), void *arg) { pthread_t t; if (!pthread_create(&t, NULL, fn, arg)) pthread_detach(t); }
@@ -827,6 +831,7 @@ static void window_main(int start_slot)
     refill_sprites();
     refill_slots();
     online_init(&ui);
+    if (getenv("SMZ3_MODE_MENU")) ui.screen = UI_MODE;   /* test hook: open the run mode list */
     detach(monthly_thread, NULL);
     detach(flush_thread, NULL);
     {
@@ -873,6 +878,7 @@ static void window_main(int start_slot)
         }
 
         if (g_month_ready) { g_month_ready = 0; ui_set_monthly(&ui, g_month, g_month_seed, online_days_left()); }
+        if (g_week_ready) { g_week_ready = 0; ui_set_weekly(&ui, g_week, g_week_seed, online_weekly_days_left()); }
         online_save_profile(&ui);
         if (ui_saved_dirty(&ui)) {
             char text[8192];
@@ -909,11 +915,11 @@ static void window_main(int start_slot)
                     ui_idle(&ui);
                     if (j.rc) note(j.err);
                     else {
-                        int on = ui_online_now(&ui), monthly = ui_run_monthly(&ui);
+                        int on = ui_online_now(&ui), kind = ui_run_weekly(&ui) ? 3 : ui_run_monthly(&ui) ? 2 : 1;
                         rom_file(&j.run, j.run.rom_path, sizeof j.run.rom_path);
                         j.run.created = j.run.last_played = (int64_t)time(NULL) * 1000;
                         if (store_write(j.run.rom_path, j.rom, SMZ_HOST_ROM_SIZE) == 0 && store_run_save(slot + 1, &j.run) == 0) {
-                            online_mark_run(slot + 1, on, monthly);
+                            online_mark_run(slot + 1, on, kind);
                             refill_slots();
                             pending_play = slot; pending_state_only = 0;
                         } else note("cannot write the run files");

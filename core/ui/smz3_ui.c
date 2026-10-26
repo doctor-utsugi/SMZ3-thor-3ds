@@ -143,6 +143,8 @@ static void move(int *cur, int *scroll, int n, int dir)
 typedef struct { const char *name, *desc, *spec; } UiPreset;
 static const UiPreset CHILL = {"Cozy run", "Zelda keys shuffled, easy wall jumps", "Keysanity=2,WallJumpDifficulty=0,LightDarkRooms=1,SaveStates=1"};
 static const UiPreset ORIGINAL = {"Original", "The default randomizer rules", ""};
+static const UiPreset WEEKLY = {"Weekly run", "Short run: 2 crystals, 1 boss", "GanonCrystals=2,GtCrystals=2,TourianBosses=1"};
+static void spec_values(int *value, const char *spec);
 static const UiPreset BUILTIN[] = {
     {"Keysanity (both games)", "", "Keysanity=1"},
     {"Dungeons + Metroid", "", "ItemPlacement=1"},
@@ -164,9 +166,17 @@ static int opt_by_key(const char *key, size_t len)
 /* the choices a saved custom does not carry: they depend on the files of this device */
 static int spec_skips(int i) { return i == 0 || i == UIO_LINK || i == UIO_SAMUS || i == UIO_PLANDO || i == UIO_MUSIC; }
 
+void ui_expected_values(const SmzUi *u, int *want)
+{
+    for (int i = 0; i < UI_OPT_COUNT; i++) want[i] = UI_OPTS[i].def;
+    if (u->run_mode == 5) spec_values(want, WEEKLY.spec);   /* the weekly run's own rules */
+}
+
 static void reset_values(SmzUi *u) { for (int i = 0; i < UI_OPT_COUNT; i++) u->value[i] = UI_OPTS[i].def; }
 
-static void apply_spec(SmzUi *u, const char *spec)
+static void apply_spec(SmzUi *u, const char *spec) { spec_values(u->value, spec); }
+
+static void spec_values(int *value, const char *spec)
 {
     while (*spec) {
         const char *eq = strchr(spec, '='), *end = strchr(spec, ',');
@@ -176,7 +186,7 @@ static void apply_spec(SmzUi *u, const char *spec)
             int i = opt_by_key(spec, (size_t)(eq - spec));
             if (i >= 0 && !spec_skips(i)) {
                 int v = atoi(eq + 1);
-                u->value[i] = v < UI_OPTS[i].min ? UI_OPTS[i].min : v > UI_OPTS[i].max ? UI_OPTS[i].max : v;
+                value[i] = v < UI_OPTS[i].min ? UI_OPTS[i].min : v > UI_OPTS[i].max ? UI_OPTS[i].max : v;
             }
         }
         spec = *end ? end + 1 : end;
@@ -309,6 +319,14 @@ void ui_set_monthly(SmzUi *u, const char *label, int seed, int days_left)
 }
 
 int ui_run_monthly(const SmzUi *u) { return u->run_mode == 4; }
+int ui_run_weekly(const SmzUi *u) { return u->run_mode == 5; }
+
+void ui_set_weekly(SmzUi *u, const char *label, int seed, int days_left)
+{
+    u->weekly_days = days_left;
+    snprintf(u->weekly_label, sizeof u->weekly_label, "%s", label ? label : "");
+    u->weekly_seed = seed > 0 ? seed : 0;
+}
 
 int ui_online_now(const SmzUi *u) { return u->player_on && u->online_mode == 1; }
 
@@ -409,10 +427,17 @@ void ui_preset(SmzUi *u, int mode)
 
 void ui_apply_spec(SmzUi *u, const char *spec) { apply_spec(u, spec); }
 
-static int mode_rows(const SmzUi *u) { return 3 + (u->saved_count > 0) + (u->monthly_seed > 0); }
+static int mode_rows(const SmzUi *u) { return 3 + (u->saved_count > 0) + (u->monthly_seed > 0) + (u->weekly_seed > 0); }
 
-/* 0 Cozy, 1 Original, 2 Custom, 3 Saved customs, 4 Monthly seed */
-static int mode_kind(const SmzUi *u, int row) { return row < 3 ? row : row == 3 && u->saved_count > 0 ? 3 : 4; }
+/* 0 Cozy, 1 Original, 2 Custom, 3 Saved customs, 4 Monthly seed, 5 Weekly run (the rows that apply, in this order) */
+static int mode_kind(const SmzUi *u, int row)
+{
+    int kinds[6] = {0, 1, 2}, n = 3;
+    if (u->saved_count > 0) kinds[n++] = 3;
+    if (u->monthly_seed > 0) kinds[n++] = 4;
+    if (u->weekly_seed > 0) kinds[n++] = 5;
+    return kinds[row < n ? row : n - 1];
+}
 
 #define KEY_CHARS "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-.'!"
 #define KEY_COLS 10
@@ -550,6 +575,11 @@ static void mode_input(SmzUi *u, UiButton b)
         for (int i = 0; i < UI_OPT_COUNT; i++) if (!strcmp(UI_OPTS[i].key, "Seed")) u->value[i] = u->monthly_seed;
         break;
     }
+    case 5:
+        begin_run(u, 5, "Weekly", WEEKLY.spec);
+        snprintf(u->start_label, sizeof u->start_label, "Weekly %s", u->weekly_label);
+        for (int i = 0; i < UI_OPT_COUNT; i++) if (!strcmp(UI_OPTS[i].key, "Seed")) u->value[i] = u->weekly_seed;
+        break;
     default: u->screen = UI_SAVED; u->saved_cursor = u->saved_scroll = u->saved_col = u->saved_confirm = 0; break;
     }
 }
@@ -761,7 +791,7 @@ static void slot_rich(SmzUi *u, int i, int y, int w)
 {
     const UiSlot *t = &u->slots[i];
     if (t->online) {
-        put(u, 3, 13, y, w - 5, 44, t->online == 2 ? C_VIOLET : C_TEAL, t->online == 2 ? C_GOLD : C_NAVY, NULL);
+        put(u, 3, 13, y, w - 5, 44, t->online == 2 ? C_VIOLET : t->online == 3 ? C_NAVY : C_TEAL, t->online == 2 ? C_GOLD : t->online == 3 ? C_TEAL : C_NAVY, NULL);
     }
     int total = t->zelda_total + t->metroid_total, done = t->zelda_cleared + t->metroid_cleared;
     int pct = total > 0 ? (int)((long long)done * 100 / total) : 0;
@@ -784,7 +814,7 @@ static void slot_rich(SmzUi *u, int i, int y, int w)
     if (t->online) {
         char who[24];
         snprintf(who, sizeof who, "%.12s%s%s", u->player[0] ? u->player : "Online", u->country[0] ? " " : "", u->country);
-        text(u, 8 + w - 8, y + 14, t->online == 2 ? C_ACCENT : C_CYAN, 2, who);
+        text(u, 8 + w - 8, y + 14, t->online == 2 ? C_ACCENT : t->online == 3 ? C_GREEN : C_CYAN, 2, who);
     }
     bar(u, 214, y + 27, w - 214, t->zelda_cleared, t->zelda_total, C_GREEN);
     bar(u, 214, y + 36, w - 214, t->metroid_cleared, t->metroid_total, C_ACCENT);
@@ -955,22 +985,24 @@ void ui_draw(SmzUi *u)
     case UI_MODE: {
         snprintf(buf, sizeof buf, "New run  -  Slot %d", u->active_slot + 1);
         title(u, buf);
-        int rows = mode_rows(u), pitch = rows > 4 ? 40 : 50, rh = pitch - 6;
+        int rows = mode_rows(u), pitch = rows > 5 ? 34 : rows > 4 ? 40 : 50, rh = pitch - 6, dy = rows > 5 ? 3 : 5;
         for (int r = 0; r < rows; r++) {
             int y = 34 + r * pitch, k = mode_kind(u, r);
-            const char *name = k == 0 ? CHILL.name : k == 1 ? ORIGINAL.name : k == 2 ? "Custom" : k == 3 ? "Saved customs" : "Monthly seed";
+            const char *name = k == 0 ? CHILL.name : k == 1 ? ORIGINAL.name : k == 2 ? "Custom" : k == 3 ? "Saved customs" : k == 4 ? "Monthly seed" : WEEKLY.name;
             char desc[48];
             if (k == 0) snprintf(desc, sizeof desc, "%s", CHILL.desc);
             else if (k == 1) snprintf(desc, sizeof desc, "%s", ORIGINAL.desc);
             else if (k == 2) snprintf(desc, sizeof desc, "Pick every option yourself");
             else if (k == 3) snprintf(desc, sizeof desc, "%d saved", u->saved_count);
+            else if (k == 5 && u->weekly_days <= 0) snprintf(desc, sizeof desc, "%s: ends today, 2 crystals, 1 boss", u->weekly_label);
+            else if (k == 5) snprintf(desc, sizeof desc, "%s: %dd left, 2 crystals, 1 boss", u->weekly_label, u->weekly_days);
             else if (u->monthly_days <= 0) snprintf(desc, sizeof desc, "%s: ends today", u->monthly_label);
             else snprintf(desc, sizeof desc, "%s: %d day%s left", u->monthly_label, u->monthly_days, u->monthly_days == 1 ? "" : "s");
             rect(u, 8, y, UI_W - 16, rh, r == u->mode_cursor ? C_SEL : C_PANEL);
-            rect(u, 8, y, 5, rh, k == 4 ? C_GREEN : C_ACCENT);
+            rect(u, 8, y, 5, rh, k == 4 ? C_GREEN : k == 5 ? C_CYAN : C_ACCENT);
             hit(u, H_MODE, r, 8, y, UI_W - 16, rh);
-            text(u, 20, y + 5, C_TEXT, 0, name);
-            text(u, 20, y + rh - 17, C_DIM, 0, desc);
+            text(u, 20, y + dy - (rows > 5 ? 2 : 0), C_TEXT, 0, name);
+            text(u, 20, y + rh - (rows > 5 ? 14 : 17), C_DIM, 0, desc);
         }
         text(u, 6, UI_H - 6, C_DIM, 0, "A choose  B back");
         break;

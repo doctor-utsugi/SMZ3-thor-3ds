@@ -1,8 +1,9 @@
 // SMZ3 online ladder: a tiny HTTP service with no dependencies.
-//   POST /api/start   {install, kind}              -> {token, seed?}   (kind: original | monthly)
+//   POST /api/start   {install, kind}              -> {token, seed?}   (kind: original | monthly | weekly)
 //   POST /api/finish  {token, timeMs, player}      -> {ok, rank}
-//   GET  /api/ladder  ?kind=original | ?kind=monthly&month=YYYY-MM
+//   GET  /api/ladder  ?kind=original | ?kind=monthly&month=YYYY-MM | ?kind=weekly&week=YYYY-Www
 //   GET  /api/monthly                              -> {month, seed, months:[...]}
+//   GET  /api/weekly                               -> {week, seed, weeks:[...], endsAt}
 // A finished run is only accepted with a token the server signed when the run began, and its time
 // cannot be longer than the wall clock time since then or shorter than MIN_MS.
 const http = require('http');
@@ -36,6 +37,18 @@ function save() {
 
 const hmac = s => crypto.createHmac('sha256', SECRET).update(s).digest('hex');
 const monthOf = t => new Date(t).toISOString().slice(0, 7);
+// ISO week of a time, e.g. 2026-W44 (weeks start on Monday, UTC)
+function weekOf(t) {
+  const d = new Date(t); d.setUTCHours(0, 0, 0, 0);
+  d.setUTCDate(d.getUTCDate() + 4 - (d.getUTCDay() || 7));
+  const week = Math.ceil(((d - Date.UTC(d.getUTCFullYear(), 0, 1)) / 86400000 + 1) / 7);
+  return d.getUTCFullYear() + '-W' + String(week).padStart(2, '0');
+}
+function weekEnd(t) {
+  const d = new Date(t); d.setUTCHours(0, 0, 0, 0);
+  return d.setUTCDate(d.getUTCDate() + 8 - (d.getUTCDay() || 7));
+}
+const periodNow = (kind, t) => kind === 'weekly' ? weekOf(t) : monthOf(t);
 const seedOf = month => String(parseInt(hmac('seed:' + month).slice(0, 8), 16) % 900000000 + 100000000);
 const clean = (v, n) => String(v == null ? '' : v).replace(/[^\p{L}\p{N} _.'!-]/gu, '').trim().slice(0, n);
 
@@ -57,10 +70,11 @@ setInterval(() => {
   for (const [k, list] of hits) if (!list.some(t => now - t < 3600000)) hits.delete(k);
 }, 600000).unref();
 
+const periodOfRun = r => r.period || r.month;
 function ladder(kind, month) {
   const best = new Map();   // best run per install
   for (const r of db.runs) {
-    if (r.kind !== kind || (kind === 'monthly' && r.month !== month)) continue;
+    if (r.kind !== kind || (kind !== 'original' && periodOfRun(r) !== month)) continue;
     if (!best.has(r.install) || r.timeMs < best.get(r.install).timeMs) best.set(r.install, r);
   }
   return [...best.values()].sort((a, b) => a.timeMs - b.timeMs).slice(0, 100)
@@ -84,7 +98,8 @@ function readJson(req, res, then) {
 }
 
 const page = fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8');
-const months = () => [...new Set(db.runs.filter(r => r.kind === 'monthly').map(r => r.month).concat(monthOf(Date.now())))].sort().reverse();
+const periods = kind => [...new Set(db.runs.filter(r => r.kind === kind).map(periodOfRun).concat(periodNow(kind, Date.now())))].sort().reverse();
+const months = () => periods('monthly');
 
 http.createServer((req, res) => {
   const url = new URL(req.url, 'http://x');
@@ -96,19 +111,28 @@ http.createServer((req, res) => {
     const month = monthOf(Date.now());
     return send(res, 200, { month, seed: seedOf(month), months: months() });
   }
+  if (req.method === 'GET' && url.pathname === '/api/weekly') {
+    const week = weekOf(Date.now());
+    return send(res, 200, { week, seed: seedOf(week), weeks: periods('weekly'), endsAt: weekEnd(Date.now()) });
+  }
   if (req.method === 'GET' && url.pathname === '/api/ladder') {
-    const kind = url.searchParams.get('kind') === 'monthly' ? 'monthly' : 'original';
+    const k = url.searchParams.get('kind');
+    const kind = k === 'monthly' || k === 'weekly' ? k : 'original';
+    if (kind === 'weekly') {
+      const week = /^\d{4}-W\d{2}$/.test(url.searchParams.get('week') || '') ? url.searchParams.get('week') : weekOf(Date.now());
+      return send(res, 200, { kind, week, runs: ladder(kind, week) });
+    }
     const month = /^\d{4}-\d{2}$/.test(url.searchParams.get('month') || '') ? url.searchParams.get('month') : monthOf(Date.now());
     return send(res, 200, { kind, month, runs: ladder(kind, month) });
   }
   if (req.method === 'POST' && url.pathname === '/api/start') {
     if (limited('s', ip, START_PER_HOUR)) return send(res, 429, { error: 'slow down' });
     return readJson(req, res, b => {
-      if (!onlyKeys(b, ['install', 'kind']) || !['original', 'monthly'].includes(b.kind) || !/^[0-9a-f-]{16,40}$/.test(String(b.install))) return send(res, 400, { error: 'invalid' });
-      const now = Date.now(), month = monthOf(now);
+      if (!onlyKeys(b, ['install', 'kind']) || !['original', 'monthly', 'weekly'].includes(b.kind) || !/^[0-9a-f-]{16,40}$/.test(String(b.install))) return send(res, 400, { error: 'invalid' });
+      const now = Date.now(), month = periodNow(b.kind, now);
       const id = crypto.randomBytes(8).toString('hex');
       const body = [id, b.install, b.kind, month, now].join('.');
-      const seed = b.kind === 'monthly' ? seedOf(month) : undefined;
+      const seed = b.kind === 'original' ? undefined : seedOf(month);
       send(res, 200, { token: body + '.' + hmac(body), seed });
     });
   }
@@ -126,8 +150,8 @@ http.createServer((req, res) => {
       if (!Number.isInteger(timeMs) || timeMs < MIN_MS || timeMs > MAX_MS || timeMs > elapsed || elapsed > MAX_MS) return send(res, 400, { error: 'invalid time' });
       if (used.has(id)) return send(res, 200, { ok: true, duplicate: true });
       used.add(id);
-      const mine = db.runs.findIndex(r => r.install === install && r.kind === kind && (kind === 'monthly' ? r.month === month : true));
-      const entry = { kind, month: kind === 'monthly' ? month : undefined, player: clean(b.player, 24) || 'Player', country: /^[A-Z]{2}$/.test(b.country) ? b.country : '', timeMs, finishedAt: Date.now(), install };
+      const mine = db.runs.findIndex(r => r.install === install && r.kind === kind && (kind !== 'original' ? periodOfRun(r) === month : true));
+      const entry = { kind, month: kind === 'monthly' ? month : undefined, period: kind === 'weekly' ? month : undefined, player: clean(b.player, 24) || 'Player', country: /^[A-Z]{2}$/.test(b.country) ? b.country : '', timeMs, finishedAt: Date.now(), install };
       if (mine < 0) db.runs.push(entry);
       else if (db.runs[mine].timeMs > timeMs) db.runs[mine] = entry;      // one entry per install and ladder: its best
       else { db.runs[mine].player = entry.player; db.runs[mine].country = entry.country; }

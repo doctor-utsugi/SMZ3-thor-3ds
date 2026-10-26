@@ -38,7 +38,7 @@ typedef struct {
     int used; char name[24]; char summary[40];
     int stats, zelda_cleared, zelda_total, metroid_cleared, metroid_total, game, boss_mask, crystal_mask;   /* stats: the numbers below are set; game 0 new, 1 Zelda, 2 Metroid, 3 finished */
     int64_t play_ms;
-    int online;                  /* 0 offline run, 1 original-rules run on the online ladder, 2 monthly seed run */
+    int online;                  /* 0 offline run, 1 original-rules run on the online ladder, 2 monthly seed run, 3 weekly run */
 } UiSlot;
 /* A saved custom: a name and its options that differ from the defaults as "Key=value,Key=value" (option keys, so the list survives new options). */
 typedef struct { char name[24]; char spec[UI_SPEC_LEN]; } UiSaved;
@@ -71,6 +71,7 @@ typedef struct {
     int country_cursor, country_scroll;
     char monthly_label[16]; int monthly_seed;  /* the month's fixed seed (0 until the host knows it) and its label, e.g. 2026-10 */
     int monthly_days;                   /* days left until the month's seed changes */
+    char weekly_label[16]; int weekly_seed, weekly_days;   /* the week's fixed seed, its label (e.g. 2026-W44) and the days left */
     struct { int64_t save_ms, state_ms; int save_z, save_m, state_z, state_m, zt, mt, cursor; } lc;   /* the load choice shown by UI_LOADCHOICE */
     int online_mode, online_cursor, online_gen; /* 0 ask before each run, 1 upload, 2 never; the prompt's row; 1 when the prompt came from Start */
     char start_label[24], notice[32];
@@ -128,6 +129,11 @@ void ui_load_choice(SmzUi *u, int slot, int64_t save_ms, int save_z, int save_m,
 void ui_preset(SmzUi *u, int mode);
 /* Applies "Key=value,Key=value" on top of the current options (the format of saved customs; Seed is set through value[0]). */
 void ui_apply_spec(SmzUi *u, const char *spec);
+/* The week's fixed seed; once set, the run mode list offers the Weekly run (limited goals, own ladder). */
+void ui_set_weekly(SmzUi *u, const char *label, int seed, int days_left);
+int ui_run_weekly(const SmzUi *u);
+/* The option values a run of the current mode must keep to count as rules-unchanged (defaults, except what the weekly run limits). */
+void ui_expected_values(const SmzUi *u, int *want);
 /* 1 when the run being started is the monthly seed run. */
 int ui_run_monthly(const SmzUi *u);
 /* The name of the way the run was set up ("Cozy run", "Original", a saved custom's name), for naming the run being created. */

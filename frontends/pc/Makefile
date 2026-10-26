@@ -30,10 +30,12 @@ $(OUT)/map_data.c: $(ROOT)/tools/gen_pc_assets.py
 VPATH := $(sort $(dir $(SRC)))
 $(OUT)/o/%.o: %.c
 	@mkdir -p $(OUT)/o
-	$(CC) $(CFLAGS) -c $< -o $@
+	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
 
 $(OUT)/smz3: $(OBJ) $(OUT)/libsnes9x.a
 	$(CC) $(OBJ) $(OUT)/libsnes9x.a -o $@ $(LIBS)
+
+-include $(OBJ:.o=.d)
 
 clean:
 	rm -rf $(OUT)

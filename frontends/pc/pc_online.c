@@ -121,16 +121,19 @@ static void profile(char name[32], char country[4])
 int online_slot_kind(int slot)
 {
     char *t = read_text(store_path("runs/slot%d.online", slot));
-    int k = !t ? 0 : !strncmp(t, "original", 8) ? 1 : !strncmp(t, "monthly", 7) ? 2 : 0;
+    int k = !t ? 0 : !strncmp(t, "original", 8) ? 1 : !strncmp(t, "monthly", 7) ? 2 : !strncmp(t, "weekly", 6) ? 3 : 0;
     free(t);
     return k;
 }
 
-void online_mark_run(int slot, int online, int monthly)
+void online_mark_run(int slot, int online, int kind)
 {
     remove(store_path("runs/slot%d.token", slot));
     remove(store_path("runs/slot%d.finish", slot));
-    if (online) store_write(store_path("runs/slot%d.online", slot), monthly ? "monthly" : "original", monthly ? 7 : 8);
+    if (online) {
+        const char *k = kind == 3 ? "weekly" : kind == 2 ? "monthly" : "original";
+        store_write(store_path("runs/slot%d.online", slot), k, strlen(k));
+    }
     else remove(store_path("runs/slot%d.online", slot));
 }
 
@@ -145,25 +148,38 @@ int online_days_left(void)
     return (int)((end - now) / 86400);
 }
 
-int online_monthly(char label[16], int *seed)
+/* The fixed seed of this period: fetched, or the copy saved for the same period. */
+static int fetch_period(const char *path, const char *file, const char *key, int weekly, char label[16], int *seed)
 {
-    char body[512];
-    int code = http("GET", "/api/monthly", NULL, body, sizeof body);
-    char s[32], m[16];
-    if (code == 200 && json_str(body, "seed", s, sizeof s) && json_str(body, "month", m, sizeof m) && atoi(s) > 0)
-        store_write(store_path("runs/monthly.json"), body, strlen(body));
-    char *t = read_text(store_path("runs/monthly.json"));
+    char body[512], s[32], m[16];
+    int code = http("GET", path, NULL, body, sizeof body);
+    if (code == 200 && json_str(body, "seed", s, sizeof s) && json_str(body, key, m, sizeof m) && atoi(s) > 0)
+        store_write(store_path("runs/%s", file), body, strlen(body));
+    char *t = read_text(store_path("runs/%s", file));
     int ok = 0;
-    if (t && json_str(t, "seed", s, sizeof s) && json_str(t, "month", m, sizeof m)) {
+    if (t && json_str(t, "seed", s, sizeof s) && json_str(t, key, m, sizeof m)) {
         time_t now = time(NULL);
         struct tm g;
         gmtime_r(&now, &g);
         char cur[16];
-        strftime(cur, sizeof cur, "%Y-%m", &g);
+        if (weekly) { strftime(cur, sizeof cur, "%G-W%V", &g); }
+        else strftime(cur, sizeof cur, "%Y-%m", &g);
         if (!strcmp(cur, m) && atoi(s) > 0) { snprintf(label, 16, "%s", m); *seed = atoi(s); ok = 1; }
     }
     free(t);
     return ok;
+}
+
+int online_monthly(char label[16], int *seed) { return fetch_period("/api/monthly", "monthly.json", "month", 0, label, seed); }
+int online_weekly(char label[16], int *seed) { return fetch_period("/api/weekly", "weekly.json", "week", 1, label, seed); }
+
+int online_weekly_days_left(void)
+{
+    time_t now = time(NULL);
+    struct tm t;
+    gmtime_r(&now, &t);
+    int to_monday = 8 - (t.tm_wday ? t.tm_wday : 7);           /* days to the next Monday 00:00 UTC, counting today */
+    return (int)(to_monday * 86400L - (t.tm_hour * 3600 + t.tm_min * 60 + t.tm_sec)) / 86400;
 }
 
 int online_ensure_token(int slot)

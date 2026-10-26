@@ -10,13 +10,15 @@
 void online_init(SmzUi *u);
 /* Writes the profile when the menu changed it. */
 void online_save_profile(SmzUi *u);
-/* 0 offline, 1 original-rules ladder, 2 monthly seed. */
+/* 0 offline, 1 original-rules ladder, 2 monthly seed, 3 weekly run. */
 int online_slot_kind(int slot);
 /* Records what the menu answered for the run just generated. */
-void online_mark_run(int slot, int online, int monthly);
+void online_mark_run(int slot, int online, int kind);   /* kind as online_slot_kind (1 when online is set and nothing else applies) */
 /* This month's label and seed (fetched, or the copy of the same month); 0 on none. Blocks up to a few seconds. */
 int online_monthly(char label[16], int *seed);
 int online_days_left(void);
+int online_weekly(char label[16], int *seed);
+int online_weekly_days_left(void);
 /* Asks for the token of an online run once; 1 when the slot has one (or is not online). Blocks. */
 int online_ensure_token(int slot);
 void online_queue_finish(int slot, int64_t time_ms);

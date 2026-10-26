@@ -159,10 +159,12 @@ void ui_settings(const SmzUi *u, int32_t seed_if_random, SmzSettings *s, SmzPatc
 /* 1 when every option that changes the run's rules is at its default; the seed, sprites, screen, map view and jingle are cosmetic. */
 static int ui_is_default(const SmzUi *u)
 {
+    int want[UI_MAX_OPTS];
+    ui_expected_values(u, want);
     for (int i = 0; i < UI_OPT_COUNT; i++) {
         if (i == O_SEED || i == O_LINK || i == O_SAMUS || i == O_MAP || i == O_FILTER || i == O_SHAPE || i == O_JINGLE || i == O_MORPH || i == O_MUSIC) continue;
         if (UI_OPTS[i].kind == OPT_SPRITE) { if (u->value[i] != 0) return 0; continue; }
-        if (u->value[i] != UI_OPTS[i].def) return 0;
+        if (u->value[i] != want[i]) return 0;
     }
     return 1;
 }

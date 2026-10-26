@@ -29,6 +29,7 @@
 <header><h1>SMZ3</h1><div class="sub">A Link to the Past · Super Metroid · Ladder</div></header>
 <main>
   <section><h2>Original</h2><div class="hint">Original rules, all time</div><ol id="original"></ol></section>
+  <section><h2>Weekly run</h2><div class="hint">Short run, fewer goals. <select id="week"></select> &nbsp;<span id="wseed"></span></div><ol id="weekly"></ol></section>
   <section><h2>Monthly seed</h2><div class="hint"><select id="month"></select> &nbsp;<span id="seed"></span></div><ol id="monthly"></ol></section>
 </main>
 <footer>Times are reported by the app when the credits are reached; a run must be started online to count.</footer>
@@ -49,6 +50,10 @@ async function load() {
     const m = await get('monthly'), sel = document.getElementById('month');
     if (!sel.options.length) { m.months.forEach(x => sel.add(new Option(x, x))); sel.onchange = load; }
     document.getElementById('seed').textContent = sel.value === m.month ? 'seed ' + m.seed : '';
+    const w = await get('weekly'), wsel = document.getElementById('week');
+    if (!wsel.options.length) { w.weeks.forEach(x => wsel.add(new Option(x, x))); wsel.onchange = load; }
+    document.getElementById('wseed').textContent = wsel.value === w.week ? 'seed ' + w.seed + ' · ends ' + new Date(w.endsAt).toLocaleDateString() : '';
+    draw('weekly', (await get('ladder?kind=weekly&week=' + wsel.value)).runs);
     draw('original', (await get('ladder?kind=original')).runs);
     draw('monthly', (await get('ladder?kind=monthly&month=' + sel.value)).runs);
   } catch (e) {}
