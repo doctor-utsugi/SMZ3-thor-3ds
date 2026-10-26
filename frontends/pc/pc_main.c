@@ -16,6 +16,7 @@
 #include "smz3_host.h"
 #include "smz3_md5.h"
 #include "smz3_discovery.h"
+#include "smz3_runlogic.h"
 #include "smz3_tracker.h"
 #include "smz3_ui_gen.h"
 
@@ -66,15 +67,24 @@ static void *generate_thread(void *arg)
 }
 
 /* The generator needs more stack than a default thread has. */
-static void generate(GenJob *j)
+static int run_big(void *(*fn)(void *), void *arg)
 {
     pthread_attr_t at;
     pthread_t t;
     pthread_attr_init(&at);
     pthread_attr_setstacksize(&at, 64u << 20);
-    if (pthread_create(&t, &at, generate_thread, j)) { j->rc = -1; snprintf(j->err, sizeof j->err, "cannot start the generator"); return; }
+    if (pthread_create(&t, &at, fn, arg)) return -1;
     pthread_join(t, NULL);
+    return 0;
 }
+
+static void generate(GenJob *j)
+{
+    if (run_big(generate_thread, j)) { j->rc = -1; snprintf(j->err, sizeof j->err, "cannot start the generator"); }
+}
+
+typedef struct { SmzLogic *logic; const char *json; int rc; } LogicJob;
+static void *logic_thread(void *arg) { LogicJob *j = arg; j->rc = smz_logic_build(j->logic, j->json); return NULL; }
 
 static void rom_file(const SmzRun *r, char *out, size_t cap)
 {
@@ -455,7 +465,7 @@ enum { TAB_RUN, TAB_ITEMS, TAB_CHECKS, TAB_MAP, TAB_HELP, TAB_COUNT };
 static const char *const TAB_NAMES[TAB_COUNT] = {"RUN", "ITEMS", "CHECKS", "MAP", "HELP"};
 
 static void overlay(const SmzTracker *t, const SmzRun *r, int tab, int scroll, int pause, int win_w, int win_h, MapView *mv,
-                    const SmzDiscovery *disc, int discovered_only, const uint8_t *wram, size_t wram_len)
+                    const SmzDiscovery *disc, int discovered_only, const uint8_t *in_logic, const uint8_t *wram, size_t wram_len)
 {
     float u = win_h / 720.0f, x0 = win_w * 0.08f, w = win_w * 0.84f, y0 = 40 * u;
     SDL_Color back = {0x10, 0x14, 0x1C, 235};
@@ -501,13 +511,13 @@ static void overlay(const SmzTracker *t, const SmzRun *r, int tab, int scroll, i
             const smz3_location *l = &smz3_locations[first + i];
             int done = t->cleared[first + i];
             snprintf(s, sizeof s, "%s %s  -  %s", done ? "[x]" : "[ ]", l->game == SMZ3_GAME_ZELDA ? "Z" : "M", l->name);
-            gfx_text(x0, y + i * line, 19 * u, done ? C(0x4C, 0xC3, 0x8A) : C(0xE8, 0xEC, 0xF2), 0, s);
+            gfx_text(x0, y + i * line, 19 * u, done ? C(0x4C, 0xC3, 0x8A) : in_logic && !in_logic[first + i] ? C(0x5A, 0x66, 0x78) : C(0xE8, 0xEC, 0xF2), 0, s);
         }
         snprintf(s, sizeof s, "%d-%d of %u   Up/Down PgUp/PgDn", first + 1, first + rows, smz3_location_count);
         gfx_text(x0 + w, bottom, 18 * u, C(0x87, 0x93, 0xA6), 2, s);
     } else if (tab == TAB_MAP) {
         SDL_Rect area = {(int)x0, (int)y, (int)w, (int)(bottom - y - 30 * u)};
-        map_draw(ren, mv, area, t, disc, discovered_only, wram, wram_len, SDL_GetTicks());
+        map_draw(ren, mv, area, t, disc, discovered_only, in_logic, wram, wram_len, SDL_GetTicks());
         gfx_text(x0 + w - 6, bottom - 24 * u, 18 * u, C(0xE8, 0xEC, 0xF2), 2, mv->follow ? "Arrows pan   +/- zoom   F: following Samus/Link" : "Arrows pan   +/- zoom   F: follow Samus/Link");
     } else {
         static const char *const HELP[] = {
@@ -575,6 +585,17 @@ static void play(int slot, int game_save_only)
     int discovered_only = strstr(run.settings, "\"mapMode\":\"discovered\"") != NULL;
     MapView mv;
     map_view_init(&mv);
+    /* checks in logic: only when the run lets the tracker show them (all helps) and its seed can be rebuilt */
+    static SmzLogic logic;
+    uint8_t in_logic[512];
+    int have_logic = 0, keysanity = strstr(run.settings, "\"keysanity\":\"Both\"") ? 3 : strstr(run.settings, "\"keysanity\":\"SuperMetroid\"") ? 2 : strstr(run.settings, "\"keysanity\":\"Zelda\"") ? 1 : 0;
+    if (strstr(run.settings, "\"helpMode\":\"all\"")) {
+        LogicJob lj = {&logic, run.settings, -1};
+        run_big(logic_thread, &lj);
+        have_logic = lj.rc == 0;
+    }
+    uint32_t logic_key = 0;
+    memset(in_logic, 0, sizeof in_logic);
     static SmzTracker trk;
     smz_tracker_reset(&trk, run.play_ms, run.save_ms, run.save_zelda, run.save_metroid);
     float aspect = shape_aspect(run.settings);
@@ -656,6 +677,14 @@ static void play(int slot, int game_save_only)
                 if (trk.save_changed) store_write(store_path("runs/slot%d.srm", slot + 1), sram, sl);
                 if (trk.game == 3) finished = 1;
                 if (trk.started && !hold) smz_disc_update(&disc, wram, wl, (int)trk.game);
+                if (have_logic && (trk.started || getenv("SMZ3_LOGIC_ALWAYS"))) {
+                    int items[SMZ_TRK_MAX_ITEMS];
+                    int ni = smz_tracker_logic_items(&trk, wram, wl, sram, sl, keysanity, items, SMZ_TRK_MAX_ITEMS), key = 17;
+                    uint32_t h = 2166136261u;
+                    for (int q = 0; q < ni; q++) h = (h ^ (uint32_t)items[q]) * 16777619u;
+                    (void)key;
+                    if (h != logic_key) { logic_key = h; smz_logic_reachable(&logic, items, ni, in_logic, 512); }
+                }
             }
         }
         if ((now - last_save) * 1000 / freq >= 5000) {
@@ -694,7 +723,7 @@ static void play(int slot, int game_save_only)
         if (show) {
             size_t owl;
             const uint8_t *ow = emu_wram(&owl);
-            overlay(&trk, &run, tab, scroll, pause_on_overlay, ww, wh, &mv, &disc, discovered_only, ow, owl);
+            overlay(&trk, &run, tab, scroll, pause_on_overlay, ww, wh, &mv, &disc, discovered_only, have_logic ? in_logic : NULL, ow, owl);
         }
         if (leaving) {
             gfx_rect(0, 0, (float)ww, (float)wh, (SDL_Color){0, 0, 0, 170});

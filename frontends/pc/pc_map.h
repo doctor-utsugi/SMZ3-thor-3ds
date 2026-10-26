@@ -12,6 +12,6 @@ void map_view_init(MapView *v);
 /* dx, dy in map pixels per call; dz multiplies the zoom. Any pan turns follow off. */
 void map_view_move(MapView *v, float dx, float dy, float dz);
 void map_draw(SDL_Renderer *r, MapView *v, SDL_Rect area, const SmzTracker *t, const SmzDiscovery *d, int discovered_only,
-              const uint8_t *wram, size_t wram_len, Uint32 ticks);
+              const uint8_t *in_logic, const uint8_t *wram, size_t wram_len, Uint32 ticks);
 
 #endif

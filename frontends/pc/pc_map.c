@@ -92,7 +92,7 @@ static int seen_at(const SmzRect *rects, int n, float x, float y)
 }
 
 void map_draw(SDL_Renderer *r, MapView *v, SDL_Rect area, const SmzTracker *t, const SmzDiscovery *d, int discovered_only,
-              const uint8_t *wram, size_t wram_len, Uint32 ticks)
+              const uint8_t *in_logic, const uint8_t *wram, size_t wram_len, Uint32 ticks)
 {
     if (!ready) load(r);
     if (v->follow && d->has_position) { v->cx = d->x; v->cy = d->y; }
@@ -135,7 +135,14 @@ void map_draw(SDL_Renderer *r, MapView *v, SDL_Rect area, const SmzTracker *t, c
             done = 1;
             for (unsigned j = 0; j < smz3_location_count && j < 512; j++) if (stack_head[j] == head && !t->cleared[j]) done = 0;
         } else done = t->cleared[i];
+        int reachable = 1;
+        if (!done && in_logic) {
+            reachable = 0;
+            if (stacked) { for (unsigned j = 0; j < smz3_location_count && j < 512; j++) if (stack_head[j] == head && !t->cleared[j] && in_logic[j]) reachable = 1; }
+            else reachable = in_logic[i];
+        }
         if (done) { circle(r, px, py, rad * 0.65f * 1.15f, black, 0); circle(r, px, py, rad * 0.65f, white, 0); }
+        else if (!reachable) { circle(r, px, py, rad * 0.7f, dim, 0); circle(r, px, py, rad * 0.7f, (SDL_Color){0xF0, 0xF4, 0xF8, 240}, 1); }
         else {
             float rr = rad * (1 + 0.22f * pulse);
             circle(r, px, py, rr + 2, white, 0);
