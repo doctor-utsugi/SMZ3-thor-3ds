@@ -2142,10 +2142,10 @@ index 0000000..8891013
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3DungeonPanel.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3DungeonPanel.kt
 new file mode 100644
-index 0000000..99c0655
+index 0000000..9d072d4
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3DungeonPanel.kt
-@@ -0,0 +1,232 @@
+@@ -0,0 +1,243 @@
 +package com.swordfish.lemuroid.app.shared.game.viewmodel
 +
 +import android.graphics.Canvas
@@ -2164,6 +2164,7 @@ index 0000000..99c0655
 +    var live: DungeonLive? = null
 +        set(value) {
 +            if (value == null && field != null && mode == MODE_WORLD) mode = MODE_AUTO
++            if (!interactive && mode == MODE_PICKED && (value == null || value.d != field?.d)) mode = MODE_AUTO   // a floor picked on the mini map belongs to one dungeon visit
 +            field = value
 +        }
 +    var data: DungeonData? = null
@@ -2208,7 +2209,7 @@ index 0000000..99c0655
 +    fun available() = maps.available
 +
 +    private fun shownD() = if (interactive && mode == MODE_PICKED) pickedD else live?.d ?: pickedD
-+    private fun shownIdx() = if (interactive && mode == MODE_PICKED) pickedIdx else live?.idx ?: pickedIdx
++    private fun shownIdx() = if (mode == MODE_PICKED && (interactive || live != null)) pickedIdx else live?.idx ?: pickedIdx
 +
 +    private fun pick(d: Int, idx: Int) {
 +        pickedD = d.coerceIn(0, 13)
@@ -2252,7 +2253,7 @@ index 0000000..99c0655
 +        val count = maps.floorCount(dn)
 +        val lv = live
 +
-+        val colW = if (interactive) 50f * d else 0f
++        val colW = if (interactive) 50f * d else if (count > 1) 38f * d else 0f
 +        val barH = if (interactive) 40f * d else 0f
 +        if (interactive) {
 +        // floor list, top floor first
@@ -2279,6 +2280,16 @@ index 0000000..99c0655
 +            chip(canvas, RectF(6f * d, 44f * d + count * 38f * d, 6f * d + 44f * d, 44f * d + count * 38f * d + 32f * d), "HERE") { mode = MODE_AUTO; view.invalidate() }
 +        }
 +
++        } else if (count > 1) {
++            // the mini map: the floors of the dungeon Link is in, top floor first, to look at the other levels
++            for (i in count - 1 downTo 0) {
++                val row = count - 1 - i
++                val r = RectF(4f * d, 30f * d + row * 34f * d, 4f * d + 32f * d, 30f * d + row * 34f * d + 28f * d)
++                chip(canvas, r, maps.floorLabel(dn, i), on = i == idx) { pick(dn, i) }
++            }
++            if (lv != null && idx != lv.idx) {
++                chip(canvas, RectF(4f * d, 30f * d + count * 34f * d, 4f * d + 32f * d, 30f * d + count * 34f * d + 28f * d), "HERE") { mode = MODE_AUTO; view.invalidate() }
++            }
 +        }
 +
 +        // the floor, cropped to the part of the grid this dungeon uses
@@ -3020,10 +3031,10 @@ index 0000000..2410812
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3MapView.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3MapView.kt
 new file mode 100644
-index 0000000..156f7ff
+index 0000000..8abb799
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3MapView.kt
-@@ -0,0 +1,438 @@
+@@ -0,0 +1,475 @@
 +package com.swordfish.lemuroid.app.shared.game.viewmodel
 +
 +import android.content.Context
@@ -3236,6 +3247,19 @@ index 0000000..156f7ff
 +        if (follow) centerOnPlayer()
 +        invalidate()
 +    }
++    /** Zelda checks that share one spot of the map (the chests of a dungeon): each index to everything at that spot, the first index drawing it. */
++    private val stacks: Map<Int, IntArray> by lazy {
++        val groups = HashMap<String, MutableList<Int>>()
++        for (m in markers) {
++            val info = Smz3Native.locationInfo(m[0]).split("|")
++            if (info.size < 2 || info[0] != "1") continue
++            groups.getOrPut(info[1] + "@" + m[1] + "," + m[2]) { ArrayList() } += m[0]
++        }
++        val out = HashMap<Int, IntArray>()
++        for (list in groups.values) if (list.size >= 2) { val all = list.toIntArray(); for (i in all) out[i] = all }
++        out
++    }
++
 +    private val zeldaRoom: IntArray by lazy { IntArray(Smz3Native.locationCount()) { Smz3Native.zeldaLocationRoom(it) } }
 +
 +    /** Link's place in a dungeon (null outside) and what the game remembers about the dungeons. */
@@ -3390,6 +3414,30 @@ index 0000000..156f7ff
 +            matrix.mapPoints(pts)
 +            if (pts[0] < -20 || pts[1] < -20 || pts[0] > width + 20 || pts[1] > height + 20) continue
 +            if (discoveredOnly && !isSeen(m[1].toFloat(), m[2].toFloat())) continue
++            val stack = stacks[m[0]]
++            if (stack != null) {
++                // a dungeon is one dot: finished only when every check inside is, as pending as its remaining checks
++                if (stack[0] != m[0]) continue
++                val shown = stack.filter { visibleChecks == null || it in visibleChecks!! || it in cleared }
++                if (shown.isEmpty()) continue
++                val left = shown.filter { it !in cleared }
++                if (left.isEmpty()) {
++                    canvas.drawCircle(pts[0], pts[1], radius * 0.65f, done)
++                    canvas.drawCircle(pts[0], pts[1], radius * 0.65f, doneRim)
++                    continue
++                }
++                if (inLogic != null && left.none { it in inLogic!! }) {
++                    canvas.drawCircle(pts[0], pts[1], radius * 0.7f, dim)
++                    canvas.drawCircle(pts[0], pts[1], radius * 0.7f, dimRim)
++                    continue
++                }
++                val r = radius * (1f + 0.22f * pulse)
++                pending.alpha = (255 * (0.75f + 0.25f * (1f - pulse))).toInt()
++                canvas.drawCircle(pts[0], pts[1], r + 2f, pendingOuter)
++                canvas.drawCircle(pts[0], pts[1], r, pending)
++                canvas.drawCircle(pts[0], pts[1], r, ring)
++                continue
++            }
 +            if (m[0] in cleared) {
 +                canvas.drawCircle(pts[0], pts[1], radius * 0.65f, done)
 +                canvas.drawCircle(pts[0], pts[1], radius * 0.65f, doneRim)

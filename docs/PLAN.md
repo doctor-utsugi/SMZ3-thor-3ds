@@ -570,3 +570,8 @@ Pressing Start on a new run asks once about the online ladder (`UI_ONLINE`): Yes
 ### App logo
 
 The launcher icon is `assets/logo.png` (a Metroid with the Triforce inside). `tools/gen_app_icon.py` (run by `build-android.sh`) crops it into the legacy and round mipmaps, the adaptive foreground (kept inside the safe zone, background colour sampled from the logo's black), and a white monochrome layer for themed icons (the Metroid silhouette with the Triforce cut out, its centre triangle solid). The 3DS build still has the default icon.
+
+### Dungeon dots and floors on the mini map
+
+- World map: the Zelda checks that share one spot (the chests of a dungeon, found by grouping by region and marker position) are drawn as one dot. It is the small white "done" dot only when every check of the dungeon is cleared; otherwise it is pending (amber), or dark when what is left is out of logic. Before, the stacked dots overlapped and the last one drawn decided how the dungeon looked.
+- The RUN tab's mini map showed only the floor Link is on. When the dungeon has several floors it now has a column of floor chips (top floor first) to look at the others, and a HERE chip to go back to Link's floor. A picked floor lasts until Link changes dungeon.
