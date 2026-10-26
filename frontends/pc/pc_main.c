@@ -9,10 +9,13 @@
 #include <dirent.h>
 #include <SDL.h>
 #include "pc_emu.h"
+#include "pc_assets.h"
 #include "pc_gfx.h"
+#include "pc_map.h"
 #include "pc_store.h"
 #include "smz3_host.h"
 #include "smz3_md5.h"
+#include "smz3_discovery.h"
 #include "smz3_tracker.h"
 #include "smz3_ui_gen.h"
 
@@ -447,10 +450,11 @@ static void panel_right(const SmzTracker *t, float x, float w, float h)
         gfx_text(x + pad, y, 18 * u, C(0xE8, 0xEC, 0xF2), 0, smz3_inventory_items[t->recent_items[i]].name);
 }
 
-enum { TAB_RUN, TAB_ITEMS, TAB_CHECKS, TAB_HELP, TAB_COUNT };
-static const char *const TAB_NAMES[TAB_COUNT] = {"RUN", "ITEMS", "CHECKS", "HELP"};
+enum { TAB_RUN, TAB_ITEMS, TAB_CHECKS, TAB_MAP, TAB_HELP, TAB_COUNT };
+static const char *const TAB_NAMES[TAB_COUNT] = {"RUN", "ITEMS", "CHECKS", "MAP", "HELP"};
 
-static void overlay(const SmzTracker *t, const SmzRun *r, int tab, int scroll, int pause, int win_w, int win_h)
+static void overlay(const SmzTracker *t, const SmzRun *r, int tab, int scroll, int pause, int win_w, int win_h, MapView *mv,
+                    const SmzDiscovery *disc, int discovered_only, const uint8_t *wram, size_t wram_len)
 {
     float u = win_h / 720.0f, x0 = win_w * 0.08f, w = win_w * 0.84f, y0 = 40 * u;
     SDL_Color back = {0x10, 0x14, 0x1C, 235};
@@ -500,14 +504,18 @@ static void overlay(const SmzTracker *t, const SmzRun *r, int tab, int scroll, i
         }
         snprintf(s, sizeof s, "%d-%d of %u   Up/Down PgUp/PgDn", first + 1, first + rows, smz3_location_count);
         gfx_text(x0 + w, bottom, 18 * u, C(0x87, 0x93, 0xA6), 2, s);
+    } else if (tab == TAB_MAP) {
+        SDL_Rect area = {(int)x0, (int)y, (int)w, (int)(bottom - y - 30 * u)};
+        map_draw(ren, mv, area, t, disc, discovered_only, wram, wram_len, SDL_GetTicks());
+        gfx_text(x0 + w - 6, bottom - 24 * u, 18 * u, C(0xE8, 0xEC, 0xF2), 2, mv->follow ? "Arrows pan   +/- zoom   F: following Samus/Link" : "Arrows pan   +/- zoom   F: follow Samus/Link");
     } else {
         static const char *const HELP[] = {
             "Tab / right stick   tracker on and off", "Q / E or shoulders   change tab", "P   pause or keep playing while the tracker is open",
+            "Map tab: arrows pan, +/- or triggers zoom, F follows the player",
             "Space / right trigger   fast forward (play time counts at that speed)", "Esc   leave the run (progress is saved)", "F11   full screen",
             "Arrows move, X = A, Z = B, S = X, A = Y, Q/W = L/R, Enter = Start, Backspace = Select",
         };
         for (unsigned i = 0; i < sizeof HELP / sizeof HELP[0]; i++, y += 34 * u) gfx_text(x0, y, 22 * u, C(0xE8, 0xEC, 0xF2), 0, HELP[i]);
-        gfx_text(x0, y + 10 * u, 18 * u, C(0x87, 0x93, 0xA6), 0, "The world map tab is not in the PC version yet.");
     }
 }
 
@@ -556,6 +564,16 @@ static void play(int slot, int game_save_only)
     SDL_AudioDeviceID audio = SDL_OpenAudioDevice(NULL, 0, &want, &have, 0);
     if (audio) SDL_PauseAudioDevice(audio, 0);
 
+    static SmzDiscovery disc;
+    smz_disc_init(&disc, &PC_MAP_DATA);
+    {
+        size_t n;
+        char *text = (char *)store_read(store_path("runs/slot%d.discovery", slot + 1), &n);
+        if (text) { text[n] = 0; smz_disc_load(&disc, text); free(text); }
+    }
+    int discovered_only = strstr(run.settings, "\"mapMode\":\"discovered\"") != NULL;
+    MapView mv;
+    map_view_init(&mv);
     static SmzTracker trk;
     smz_tracker_reset(&trk, run.play_ms, run.save_ms, run.save_zelda, run.save_metroid);
     float aspect = shape_aspect(run.settings);
@@ -575,13 +593,14 @@ static void play(int slot, int game_save_only)
                 else if (k == SDLK_ESCAPE) { if (show) show = 0; else leaving = 1; }
                 else if (k == SDLK_F11) SDL_SetWindowFullscreen(win, SDL_GetWindowFlags(win) & SDL_WINDOW_FULLSCREEN_DESKTOP ? 0 : SDL_WINDOW_FULLSCREEN_DESKTOP);
                 else if (show) {
-                    if (k == SDLK_e || k == SDLK_RIGHT) tab = (tab + 1) % TAB_COUNT;
-                    else if (k == SDLK_q || k == SDLK_LEFT) tab = (tab + TAB_COUNT - 1) % TAB_COUNT;
+                    if (k == SDLK_e || (k == SDLK_RIGHT && tab != TAB_MAP)) tab = (tab + 1) % TAB_COUNT;
+                    else if (k == SDLK_q || (k == SDLK_LEFT && tab != TAB_MAP)) tab = (tab + TAB_COUNT - 1) % TAB_COUNT;
                     else if (k == SDLK_p) pause_on_overlay = !pause_on_overlay;
-                    else if (k == SDLK_DOWN) scroll++;
-                    else if (k == SDLK_UP && scroll > 0) scroll--;
-                    else if (k == SDLK_PAGEDOWN) scroll += 15;
-                    else if (k == SDLK_PAGEUP) scroll = scroll > 15 ? scroll - 15 : 0;
+                    else if (k == SDLK_f && tab == TAB_MAP) mv.follow = !mv.follow;
+                    else if (k == SDLK_DOWN && tab != TAB_MAP) scroll++;
+                    else if (k == SDLK_UP && scroll > 0 && tab != TAB_MAP) scroll--;
+                    else if (k == SDLK_PAGEDOWN && tab != TAB_MAP) scroll += 15;
+                    else if (k == SDLK_PAGEUP && tab != TAB_MAP) scroll = scroll > 15 ? scroll - 15 : 0;
                 }
             } else if (e.type == SDL_CONTROLLERBUTTONDOWN) {
                 int b = e.cbutton.button;
@@ -590,11 +609,26 @@ static void play(int slot, int game_save_only)
                 else if (b == SDL_CONTROLLER_BUTTON_LEFTSTICK) leaving = 1;
                 else if (show && b == SDL_CONTROLLER_BUTTON_RIGHTSHOULDER) tab = (tab + 1) % TAB_COUNT;
                 else if (show && b == SDL_CONTROLLER_BUTTON_LEFTSHOULDER) tab = (tab + TAB_COUNT - 1) % TAB_COUNT;
-                else if (show && b == SDL_CONTROLLER_BUTTON_DPAD_DOWN) scroll++;
-                else if (show && b == SDL_CONTROLLER_BUTTON_DPAD_UP && scroll > 0) scroll--;
+                else if (show && b == SDL_CONTROLLER_BUTTON_DPAD_DOWN && tab != TAB_MAP) scroll++;
+                else if (show && b == SDL_CONTROLLER_BUTTON_DPAD_UP && scroll > 0 && tab != TAB_MAP) scroll--;
+                else if (show && b == SDL_CONTROLLER_BUTTON_A && tab == TAB_MAP) mv.follow = !mv.follow;
             }
         }
         const Uint8 *keys = SDL_GetKeyboardState(NULL);
+        if (show && tab == TAB_MAP) {
+            float sp = 14, dx = 0, dy = 0, dz = 1;
+            if (keys[SDL_SCANCODE_LEFT]) dx -= sp; if (keys[SDL_SCANCODE_RIGHT]) dx += sp;
+            if (keys[SDL_SCANCODE_UP]) dy -= sp; if (keys[SDL_SCANCODE_DOWN]) dy += sp;
+            if (keys[SDL_SCANCODE_EQUALS] || keys[SDL_SCANCODE_KP_PLUS] || keys[SDL_SCANCODE_PAGEUP]) dz = 1.03f;
+            if (keys[SDL_SCANCODE_MINUS] || keys[SDL_SCANCODE_KP_MINUS] || keys[SDL_SCANCODE_PAGEDOWN]) dz = 1 / 1.03f;
+            if (pad) {
+                int lx = SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_LEFTX), ly = SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_LEFTY);
+                if (abs(lx) > 8000) dx += sp * lx / 32767.0f; if (abs(ly) > 8000) dy += sp * ly / 32767.0f;
+                if (SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_TRIGGERRIGHT) > 8000) dz = 1.03f;
+                if (SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_TRIGGERLEFT) > 8000) dz = 1 / 1.03f;
+            }
+            map_view_move(&mv, dx, dy, dz);
+        }
         int input = show || leaving ? 0 : pad_bits(keys);
         fast = (keys[SDL_SCANCODE_SPACE] && !show) || (pad && SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_TRIGGERRIGHT) > 16000);
         int frames = fast ? 4 : 1;
@@ -620,12 +654,18 @@ static void play(int slot, int game_save_only)
                 smz_tracker_tick(&trk, wram, wl, sram, sl, dt, fast ? 4 : 1);
                 if (trk.save_changed) store_write(store_path("runs/slot%d.srm", slot + 1), sram, sl);
                 if (trk.game == 3) finished = 1;
+                if (trk.started && !hold) smz_disc_update(&disc, wram, wl, (int)trk.game);
             }
         }
         if ((now - last_save) * 1000 / freq >= 5000) {
             last_save = now;
             snapshot_run(&run, &trk, finished);
             store_run_save(slot + 1, &run);
+            if (disc.dirty) {
+                char text[8192];
+                if (smz_disc_save(&disc, text, sizeof text) > 0) store_write(store_path("runs/slot%d.discovery", slot + 1), text, strlen(text));
+                disc.dirty = 0;
+            }
         }
 
         int ww, wh;
@@ -650,7 +690,11 @@ static void play(int slot, int game_save_only)
         }
         panel_left(&trk, &run, 0, gx, (float)wh);
         panel_right(&trk, gx + gw, ww - (gx + gw), (float)wh);
-        if (show) overlay(&trk, &run, tab, scroll, pause_on_overlay, ww, wh);
+        if (show) {
+            size_t owl;
+            const uint8_t *ow = emu_wram(&owl);
+            overlay(&trk, &run, tab, scroll, pause_on_overlay, ww, wh, &mv, &disc, discovered_only, ow, owl);
+        }
         if (leaving) {
             gfx_rect(0, 0, (float)ww, (float)wh, (SDL_Color){0, 0, 0, 170});
             gfx_text(ww / 2.0f, wh / 2.0f - 30, 34, C(0xE8, 0xEC, 0xF2), 1, "Leave the run?");

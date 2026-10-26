@@ -8,8 +8,8 @@ LIBS := $(shell sdl2-config --libs) -lm -lstdc++
 
 GEN := smz3_generate smz3_fill smz3_world smz3_world_gen smz3_rng smz3_patch smz3_rom smz3_text smz3_sprite smz3_hints smz3_itemopts smz3_plando smz3_md5
 SRC := $(addprefix $(CORE)/gen/,$(addsuffix .c,$(GEN))) $(CORE)/smz3_state.c $(CORE)/smz3_locations.c $(CORE)/smz3_inventory.c \
-       $(CORE)/ui/smz3_ui.c $(CORE)/ui/smz3_ui_opts.c $(CORE)/ui/smz3_run.c $(CORE)/ui/smz3_host.c $(CORE)/ui/smz3_tracker.c \
-       $(wildcard pc_*.c) font_data.c $(OUT)/ips_data.c
+       $(CORE)/ui/smz3_ui.c $(CORE)/ui/smz3_ui_opts.c $(CORE)/ui/smz3_run.c $(CORE)/ui/smz3_host.c $(CORE)/ui/smz3_tracker.c $(CORE)/ui/smz3_discovery.c \
+       $(wildcard pc_*.c) font_data.c $(OUT)/ips_data.c $(OUT)/map_data.c
 OBJ := $(patsubst %.c,$(OUT)/o/%.o,$(notdir $(SRC)))
 
 all: $(OUT)/smz3
@@ -22,6 +22,10 @@ $(OUT)/libsnes9x.a:
 $(OUT)/ips_data.c: $(ROOT)/tools/gen_ips_c.py
 	mkdir -p $(OUT)
 	python3 $< $(ROOT)/vendor/Lemuroid/lemuroid-app/src/main/assets/smz3/ips $@
+
+$(OUT)/map_data.c: $(ROOT)/tools/gen_pc_assets.py
+	mkdir -p $(OUT)
+	python3 $< $(ROOT)/vendor/Lemuroid/lemuroid-app/src/main/assets/smz3 $@
 
 VPATH := $(sort $(dir $(SRC)))
 $(OUT)/o/%.o: %.c
