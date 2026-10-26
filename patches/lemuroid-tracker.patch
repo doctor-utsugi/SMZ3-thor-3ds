@@ -1981,10 +1981,10 @@ index 0000000..2056545
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3DungeonMaps.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3DungeonMaps.kt
 new file mode 100644
-index 0000000..8891013
+index 0000000..9f0b95e
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3DungeonMaps.kt
-@@ -0,0 +1,155 @@
+@@ -0,0 +1,169 @@
 +package com.swordfish.lemuroid.app.shared.game.viewmodel
 +
 +import android.content.Context
@@ -2065,8 +2065,22 @@ index 0000000..8891013
 +
 +    private fun u16(w: ByteArray, a: Int) = (w[a].toInt() and 0xFF) or ((w[a + 1].toInt() and 0xFF) shl 8)
 +
-+    /** Link's place when the Zelda work RAM says he is inside a dungeon, else null. */
++    private var stable: DungeonLive? = null
++
++    /**
++     * Link's place when the Zelda work RAM says he is inside a dungeon, else null. While the game is in the middle of a room change
++     * (underworld module 7 with a submodule running) the room number and Link's coordinates do not belong to the same room yet,
++     * so the last settled place is kept instead of a position on the wrong side of the room.
++     */
 +    fun live(w: ByteArray): DungeonLive? {
++        val now = place(w)
++        val moving = w[0x10].toInt() == 0x07 && w[0x11].toInt() != 0
++        if (moving && now != null) stable?.let { if (it.d == now.d) return it }
++        stable = now
++        return now
++    }
++
++    private fun place(w: ByteArray): DungeonLive? {
 +        if (!available) return null
 +        val d = (w[0x040C].toInt() and 0xFF) / 2
 +        val dungeon = dungeons.getOrNull(d) ?: return null

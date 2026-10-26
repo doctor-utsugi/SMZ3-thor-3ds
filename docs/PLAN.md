@@ -575,3 +575,7 @@ The launcher icon is `assets/logo.png` (a Metroid with the Triforce inside). `to
 
 - World map: the Zelda checks that share one spot (the chests of a dungeon, found by grouping by region and marker position) are drawn as one dot. It is the small white "done" dot only when every check of the dungeon is cleared; otherwise it is pending (amber), or dark when what is left is out of logic. Before, the stacked dots overlapped and the last one drawn decided how the dungeon looked.
 - The RUN tab's mini map showed only the floor Link is on. When the dungeon has several floors it now has a column of floor chips (top floor first) to look at the others, and a HERE chip to go back to Link's floor. A picked floor lasts until Link changes dungeon.
+
+### Position while changing rooms
+
+On a room change the room number ($A0) and Link's coordinates ($20, $22) are not updated together, so the dungeon map could show Link on the opposite side of the new room for a moment. `Smz3DungeonMaps.live` now keeps the last settled place while the underworld module ($10 = 7) has a submodule running ($11 != 0) in the same dungeon. This is based on the known RAM layout and was not checked against a recording of a transition; if Link seems stuck on the map, the submodule test is the place to look.
