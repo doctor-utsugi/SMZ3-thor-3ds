@@ -13,4 +13,11 @@ out.append("static const SmzMarker MARKERS[] = {" + ",".join("{%d,%d,%d}" % tupl
 out.append("const SmzMapData PC_MAP_DATA = {ROOMS, %d, REGIONS, %d, MARKERS, %d};" % (len(rooms), len(regions), len(markers)))
 out.append("const unsigned char PC_MAP_PNG[] = {" + ",".join(str(b) for b in png) + "};")
 out.append("const unsigned PC_MAP_PNG_LEN = %d;" % len(png))
+icons = sorted(os.listdir(os.path.join(src, "items")))
+for i, n in enumerate(icons):
+    out.append("static const unsigned char icon_%d[] = {" % i + ",".join(str(b) for b in open(os.path.join(src, "items", n), "rb").read()) + "};")
+out.append("const PcIcon PC_ITEM_ICONS[] = {")
+for i, n in enumerate(icons):
+    out.append('    {"%s", icon_%d, sizeof icon_%d},' % (n.replace('"', '\\"'), i, i))
+out.append("    {NULL, NULL, 0}\n};")
 open(dst, "w").write("\n".join(out) + "\n")

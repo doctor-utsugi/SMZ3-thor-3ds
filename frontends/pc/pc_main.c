@@ -457,8 +457,13 @@ static void panel_right(const SmzTracker *t, float x, float w, float h)
     y += cell + 26 * u;
     gfx_text(x + pad, y, 20 * u, C(0x87, 0x93, 0xA6), 0, "Last items");
     y += 28 * u;
-    for (int i = 0; i < t->n_recent_items && i < 6; i++, y += 24 * u)
-        gfx_text(x + pad, y, 18 * u, C(0xE8, 0xEC, 0xF2), 0, smz3_inventory_items[t->recent_items[i]].name);
+    for (int i = 0; i < t->n_recent_items && i < 6; i++, y += 30 * u) {
+        const smz3_inv_item *it = &smz3_inventory_items[t->recent_items[i]];
+        SDL_Texture *ic = map_item_icon(ren, it->icon);
+        float ix = x + pad;
+        if (ic) { SDL_SetTextureAlphaMod(ic, 255); SDL_FRect d = {ix, y - 2 * u, 26 * u, 26 * u}; SDL_RenderCopyF(ren, ic, NULL, &d); ix += 32 * u; }
+        gfx_text(ix, y, 18 * u, C(0xE8, 0xEC, 0xF2), 0, it->name);
+    }
 }
 
 enum { TAB_RUN, TAB_ITEMS, TAB_CHECKS, TAB_MAP, TAB_HELP, TAB_COUNT };
@@ -494,14 +499,26 @@ static void overlay(const SmzTracker *t, const SmzRun *r, int tab, int scroll, i
         }
         if (t->game == 3) gfx_text(x0, y + 10 * u, 24 * u, C(0x4C, 0xC3, 0x8A), 0, "Run finished");
     } else if (tab == TAB_ITEMS) {
-        int col = 0, rows = (int)((bottom - y) / line);
-        if (rows < 1) rows = 1;
+        float cell = 56 * u, gap = 10 * u;
+        int per = (int)((w + gap) / (cell + gap)), k = 0, last_game = 0;
+        if (per < 1) per = 1;
         for (unsigned i = 0; i < smz3_inventory_count && i < SMZ_TRK_MAX_INV; i++) {
-            int level = t->inventory[i], row = (int)i % rows;
-            col = (int)i / rows;
-            SDL_Color c = level > 0 ? C(0xE8, 0xEC, 0xF2) : C(0x4A, 0x55, 0x66);
-            snprintf(s, sizeof s, level > 1 ? "%s  %d" : "%s", smz3_inventory_items[i].name, level);
-            gfx_text(x0 + col * (w / 4), y + row * line, 20 * u, c, 0, s);
+            const smz3_inv_item *it = &smz3_inventory_items[i];
+            if (it->game != last_game) { if (last_game) y += (k + per - 1) / per * (cell + gap) + 14 * u; k = 0; last_game = it->game; }
+            float cx = x0 + (k % per) * (cell + gap), cy = y + (k / per) * (cell + gap);
+            int level = t->inventory[i];
+            gfx_rect(cx, cy, cell, cell, C(0x1D, 0x24, 0x30));
+            SDL_Texture *ic = map_item_icon(ren, it->icon);
+            if (ic) {
+                SDL_SetTextureAlphaMod(ic, level > 0 ? 255 : 70);
+                SDL_FRect d = {cx + 4 * u, cy + 4 * u, cell - 8 * u, cell - 8 * u};
+                SDL_RenderCopyF(ren, ic, NULL, &d);
+            } else gfx_text(cx + cell / 2, cy + cell / 2 - 8 * u, 12 * u, level > 0 ? C(0xE8, 0xEC, 0xF2) : C(0x4A, 0x55, 0x66), 1, it->name);
+            if (level > 1) {
+                snprintf(s, sizeof s, "%d", level);
+                gfx_text(cx + cell - 3 * u, cy + cell - 20 * u, 16 * u, C(0xE9, 0xA2, 0x3B), 2, s);
+            }
+            k++;
         }
     } else if (tab == TAB_CHECKS) {
         int rows = (int)((bottom - y) / line), first = scroll;

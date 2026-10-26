@@ -1,4 +1,5 @@
 #include <math.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #define STB_IMAGE_IMPLEMENTATION
@@ -167,4 +168,31 @@ void map_draw(SDL_Renderer *r, MapView *v, SDL_Rect area, const SmzTracker *t, c
         else circle(r, px, py, pr * 0.45f, white, 0);
     }
     SDL_RenderSetClipRect(r, NULL);
+}
+
+SDL_Texture *map_item_icon(SDL_Renderer *r, const char *icon)
+{
+    static SDL_Texture *cache[64];
+    static const char *names[64];
+    char want[64];
+    snprintf(want, sizeof want, "%s", icon);
+    for (char *c = want; *c; c++) if (*c == ' ') *c = '_';
+    for (int i = 0; i < 64 && names[i]; i++) if (!strcmp(names[i], icon)) return cache[i];
+    int slot = 0;
+    while (slot < 63 && names[slot]) slot++;
+    names[slot] = icon;
+    for (const PcIcon *p = PC_ITEM_ICONS; p->name; p++) {
+        if (strcmp(p->name, want)) continue;
+        int w, h, n;
+        unsigned char *img = stbi_load_from_memory(p->data, (int)p->len, &w, &h, &n, 4);
+        if (!img) break;
+        SDL_Texture *t = SDL_CreateTexture(r, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STATIC, w, h);
+        SDL_UpdateTexture(t, NULL, img, w * 4);
+        SDL_SetTextureBlendMode(t, SDL_BLENDMODE_BLEND);
+        SDL_SetTextureScaleMode(t, SDL_ScaleModeNearest);
+        stbi_image_free(img);
+        cache[slot] = t;
+        break;
+    }
+    return cache[slot];
 }

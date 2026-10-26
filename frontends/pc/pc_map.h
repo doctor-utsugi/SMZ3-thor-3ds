@@ -14,4 +14,7 @@ void map_view_move(MapView *v, float dx, float dy, float dz);
 void map_draw(SDL_Renderer *r, MapView *v, SDL_Rect area, const SmzTracker *t, const SmzDiscovery *d, int discovered_only,
               const uint8_t *in_logic, const uint8_t *wram, size_t wram_len, Uint32 ticks);
 
+/* The inventory icon (file name as in smz3_inventory_items) as a texture, NULL when there is none. */
+SDL_Texture *map_item_icon(SDL_Renderer *r, const char *icon);
+
 #endif
