@@ -321,6 +321,7 @@ static void present(void)
     }
 }
 
+static int g_quit;
 static char g_note[200];
 static Uint32 g_note_until;
 static void note(const char *msg) { snprintf(g_note, sizeof g_note, "%s", msg); g_note_until = SDL_GetTicks() + 6000; }
@@ -585,7 +586,7 @@ static void play(int slot, int game_save_only)
     while (running) {
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
-            if (e.type == SDL_QUIT) { running = 0; }
+            if (e.type == SDL_QUIT) { running = 0; g_quit = 1; }
             else if (e.type == SDL_KEYDOWN && !e.key.repeat) {
                 SDL_Keycode k = e.key.keysym.sym;
                 if (leaving) { if (k == SDLK_RETURN) running = 0; else leaving = 0; continue; }
@@ -761,6 +762,7 @@ static void window_main(int start_slot)
             play(pending_play, pending_state_only);
             pending_play = -1;
             store_fill_slots(&ui);
+            if (g_quit) break;
         }
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
