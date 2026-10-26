@@ -468,10 +468,10 @@ index 0000000..c830243
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/NativeMenuScreen.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/NativeMenuScreen.kt
 new file mode 100644
-index 0000000..ba69960
+index 0000000..a674689
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/NativeMenuScreen.kt
-@@ -0,0 +1,298 @@
+@@ -0,0 +1,299 @@
 +package com.swordfish.lemuroid.app.mobile.feature.runs
 +
 +import android.graphics.Paint
@@ -690,8 +690,9 @@ index 0000000..ba69960
 +        val (act, slot) = Smz3Native.uiAction().let { Act.values()[it[0]] to it[1] }
 +        when (act) {
 +            Act.CONTINUE -> RunStore.load(context, slot)?.let { run ->
-+                // a save state ahead of the game save asks which of the two to load
-+                if (run.saveMs > 0 && run.playTimeMs - run.saveMs > 10_000) {
++                // a save state ahead of the game save asks which of the two to load; monthly and weekly runs have none
++                if (OnlineLadder.slotKind(context, slot).let { it == 2 || it == 3 }) onContinue(run, false)
++                else if (run.saveMs > 0 && run.playTimeMs - run.saveMs > 10_000) {
 +                    Smz3Native.uiLoadChoice(slot, run.saveMs, run.saveZelda, run.saveMetroid, run.playTimeMs, run.zeldaCleared, run.metroidCleared, run.zeldaTotal, run.metroidTotal)
 +                    version++
 +                } else onContinue(run, true)
@@ -1747,6 +1748,19 @@ index 02e981f..c1bfab7 100644
          gameState.value = GameState.Ready
  
          return currentState.gameData to result
+diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/GameViewModelSaves.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/GameViewModelSaves.kt
+index 1eea23b..d9459a5 100644
+--- a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/GameViewModelSaves.kt
++++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/GameViewModelSaves.kt
+@@ -119,7 +119,7 @@ class GameViewModelSaves(
+     }
+ 
+     private suspend fun isAutoSaveEnabled(): Boolean {
+-        return systemCoreConfig.statesSupported && settingsManager.autoSave()
++        return systemCoreConfig.statesSupported && settingsManager.autoSave() && !Smz3Hotkeys.noAutosave(appContext)
+     }
+ 
+     private suspend fun takeScreenshotPreview(index: Int) {
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Bosses.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Bosses.kt
 new file mode 100644
 index 0000000..d973310
@@ -2573,10 +2587,10 @@ index 0000000..b50ef12
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Hotkeys.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Hotkeys.kt
 new file mode 100644
-index 0000000..629f951
+index 0000000..97d3ac3
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Hotkeys.kt
-@@ -0,0 +1,157 @@
+@@ -0,0 +1,163 @@
 +package com.swordfish.lemuroid.app.shared.game.viewmodel
 +
 +import android.content.Context
@@ -2688,6 +2702,12 @@ index 0000000..629f951
 +    fun saveStatesAllowed(context: Context): Boolean {
 +        val run = RunStore.activeSlot(context)?.let { RunStore.load(context, it) } ?: return true
 +        return runCatching { org.json.JSONObject(run.settings).optBoolean("saveStates", false) }.getOrDefault(false)
++    }
++
++    /** Monthly and weekly ladder runs allow no save state of any kind: no hotkeys, no autosave, Continue loads the game's own save. */
++    fun noAutosave(context: Context): Boolean {
++        val slot = RunStore.activeSlot(context) ?: return false
++        return com.swordfish.lemuroid.app.mobile.feature.runs.OnlineLadder.slotKind(context, slot).let { it == 2 || it == 3 }
 +    }
 +
 +    fun resetAll(context: Context) = prefs(context).edit().clear().apply()

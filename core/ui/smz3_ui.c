@@ -102,6 +102,7 @@ static int visible(const SmzUi *u, int level, int *idx)
         } else if (UI_OPTS[i].level != LEVEL_ITEMS) continue;
         if (i == UIO_HELPS && u->value[UIO_HELP] != 1) continue;   /* the count only matters in the limited mode */
         if (!strncmp(UI_OPTS[i].key, "Spazers", 7) && u->value[UIO_MODE] != 2) continue;   /* Spazer Hunt only */
+        if (i == UIO_MUSIC && u->sprite_count[3] <= 2) continue;   /* no music package installed: nothing to pick (the 3DS has none) */
         idx[n++] = i;
     }
     return n;
