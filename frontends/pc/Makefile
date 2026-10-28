@@ -1,10 +1,22 @@
 # Builds the PC frontend: snes9x (libretro core, vendored) as a static library, the shared C core and the SDL2 app.
 ROOT := $(abspath ../..)
 S9X := $(ROOT)/vendor/snes9x_libretro
-OUT := $(ROOT)/build/pc
 CORE := $(ROOT)/core
+# make WIN=1 cross-builds smz3.exe with MinGW-w64 (build-pc.sh windows prepares build/win/SDL2 and the snes9x copy)
+ifdef WIN
+OUT := $(ROOT)/build/win
+CC := x86_64-w64-mingw32-gcc
+SDL := $(OUT)/SDL2/x86_64-w64-mingw32
+S9X := $(OUT)/s9x
+CFLAGS := -O2 -I$(CURDIR) -std=gnu11 -w -DSDL_MAIN_HANDLED -I$(CORE) -I$(CORE)/gen -I$(CORE)/ui -I$(S9X)/libretro -I$(S9X)/libretro/libretro-common/include -I$(SDL)/include/SDL2
+LIBS := -static -L$(SDL)/lib -lSDL2 -lm -lstdc++ -lwinmm -limm32 -lole32 -loleaut32 -lversion -lsetupapi -lgdi32 -lcrypt32 -lshell32 -luser32 -ladvapi32 -lwinpthread
+EXE := .exe
+else
+OUT := $(ROOT)/build/pc
 CFLAGS := -O2 -I$(CURDIR) -std=gnu11 -w -I$(CORE) -I$(CORE)/gen -I$(CORE)/ui -I$(S9X)/libretro -I$(S9X)/libretro/libretro-common/include $(shell sdl2-config --cflags)
 LIBS := $(shell sdl2-config --libs) -lm -lstdc++
+EXE :=
+endif
 
 GEN := smz3_generate smz3_fill smz3_world smz3_world_gen smz3_rng smz3_patch smz3_rom smz3_text smz3_sprite smz3_hints smz3_itemopts smz3_plando smz3_md5 smz3_romsetup
 SRC := $(addprefix $(CORE)/gen/,$(addsuffix .c,$(GEN))) $(CORE)/smz3_state.c $(CORE)/smz3_locations.c $(CORE)/smz3_inventory.c \
@@ -12,12 +24,18 @@ SRC := $(addprefix $(CORE)/gen/,$(addsuffix .c,$(GEN))) $(CORE)/smz3_state.c $(C
        $(wildcard pc_*.c) font_data.c $(OUT)/ips_data.c $(OUT)/map_data.c
 OBJ := $(patsubst %.c,$(OUT)/o/%.o,$(notdir $(SRC)))
 
-all: $(OUT)/smz3
+all: $(OUT)/smz3$(EXE)
 
+ifdef WIN
 $(OUT)/libsnes9x.a:
-	$(MAKE) -C $(S9X)/libretro platform=unix -j$$(nproc) >/dev/null
+	$(MAKE) -C $(S9X)/libretro platform=win CC=x86_64-w64-mingw32-gcc CXX=x86_64-w64-mingw32-g++ -j$$(getconf _NPROCESSORS_ONLN) >/dev/null
+	cd $(S9X) && x86_64-w64-mingw32-ar rcs $(OUT)/libsnes9x.a $$(find . -name '*.o' ! -name 'compat_*snprintf*' | sort)
+else
+$(OUT)/libsnes9x.a:
+	$(MAKE) -C $(S9X)/libretro platform=$(or $(S9X_PLATFORM),unix) -j$$(getconf _NPROCESSORS_ONLN) >/dev/null
 	mkdir -p $(OUT)
 	cd $(S9X) && ar rcs $(OUT)/libsnes9x.a $$(find . -name '*.o' ! -name 'compat_*snprintf*' | sort)
+endif
 
 $(OUT)/ips_data.c: $(ROOT)/tools/gen_ips_c.py
 	mkdir -p $(OUT)
@@ -32,7 +50,7 @@ $(OUT)/o/%.o: %.c
 	@mkdir -p $(OUT)/o
 	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
 
-$(OUT)/smz3: $(OBJ) $(OUT)/libsnes9x.a
+$(OUT)/smz3$(EXE): $(OBJ) $(OUT)/libsnes9x.a
 	$(CC) $(OBJ) $(OUT)/libsnes9x.a -o $@ $(LIBS)
 
 -include $(OBJ:.o=.d)

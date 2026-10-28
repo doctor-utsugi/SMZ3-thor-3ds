@@ -5,7 +5,10 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
-#include <unistd.h>
+#include "pc_compat.h"
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#endif
 #include "pc_store.h"
 #include "pc_ips.h"
 #include "smz3_md5.h"
@@ -23,7 +26,15 @@ const char *store_dir(void)
     static char dir[768];
     if (dir[0]) return dir;
     char exe[512];
+#ifdef _WIN32
+    DWORD n = GetModuleFileNameA(NULL, exe, sizeof exe - 1);
+    for (DWORD i = 0; i < n; i++) if (exe[i] == '\\') exe[i] = '/';
+#elif defined(__APPLE__)
+    uint32_t sz = sizeof exe - 1;
+    ssize_t n = _NSGetExecutablePath(exe, &sz) == 0 ? (ssize_t)strlen(exe) : -1;
+#else
     ssize_t n = readlink("/proc/self/exe", exe, sizeof exe - 1);
+#endif
     if (n > 0) {
         exe[n] = 0;
         char *slash = strrchr(exe, '/');
@@ -34,7 +45,18 @@ const char *store_dir(void)
             if (access(marker, F_OK) == 0) { snprintf(dir, sizeof dir, "%s/data", exe); return dir; }
         }
     }
+#ifdef _WIN32
+    const char *appdata = getenv("APPDATA");
+    if (appdata && *appdata) {
+        snprintf(dir, sizeof dir, "%s/smz3", appdata);
+        for (char *c = dir; *c; c++) if (*c == '\\') *c = '/';
+        return dir;
+    }
+#endif
     const char *xdg = getenv("XDG_DATA_HOME"), *home = getenv("HOME");
+#ifdef __APPLE__
+    if (!(xdg && *xdg)) { snprintf(dir, sizeof dir, "%s/Library/Application Support/smz3", home ? home : "."); return dir; }
+#endif
     if (xdg && *xdg) snprintf(dir, sizeof dir, "%s/smz3", xdg);
     else snprintf(dir, sizeof dir, "%s/.local/share/smz3", home ? home : ".");
     return dir;

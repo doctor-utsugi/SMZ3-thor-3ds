@@ -5,8 +5,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
-#include <unistd.h>
 #include <dirent.h>
+#include "pc_compat.h"
 #include <SDL.h>
 #include "pc_emu.h"
 #include "pc_assets.h"
@@ -1039,6 +1039,9 @@ static void window_main(int start_slot)
 
 int main(int argc, char **argv)
 {
+#ifdef _WIN32
+    if (argc == 1) FreeConsole();   /* started by double click: no console window */
+#endif
     if (argc > 1) {
         if (!strcmp(argv[1], "gen")) return cmd_gen(argc - 2, argv + 2);
         if (!strcmp(argv[1], "runs")) return cmd_runs();

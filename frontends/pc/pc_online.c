@@ -1,18 +1,62 @@
 #include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
+#ifndef _WIN32
+#include <sys/wait.h>
+#endif
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#include <sys/wait.h>
 #include <time.h>
-#include <unistd.h>
+#include "pc_compat.h"
 #include "pc_online.h"
 #include "pc_store.h"
 
 #define BASE "https://smz3.indieviral.com"
 
 /* Runs curl without a shell. Returns the HTTP status (-1 when curl failed) and the body in out. */
+#ifdef _WIN32
+static int http(const char *method, const char *path, const char *body, char *out, size_t cap)
+{
+    char req[600], res[600], cmd[2048], url[256];
+    snprintf(req, sizeof req, "%s", store_path("tmp/request.json"));
+    snprintf(res, sizeof res, "%s", store_path("tmp/response.txt"));
+    snprintf(url, sizeof url, "%s%s", BASE, path);
+    out[0] = 0;
+    if (body && store_write(req, body, strlen(body))) return -1;
+    int n = snprintf(cmd, sizeof cmd, "curl.exe -s -m 8 -X %s -H \"Content-Type: application/json\" ", method);
+    if (body) n += snprintf(cmd + n, sizeof cmd - n, "--data-binary @\"%s\" ", req);
+    snprintf(cmd + n, sizeof cmd - n, "-w \"\\n%%{http_code}\" \"%s\"", url);
+    SECURITY_ATTRIBUTES sa = {sizeof sa, NULL, TRUE};
+    HANDLE h = CreateFileA(res, GENERIC_WRITE, FILE_SHARE_READ, &sa, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (h == INVALID_HANDLE_VALUE) return -1;
+    STARTUPINFOA si = {sizeof si};
+    si.dwFlags = STARTF_USESTDHANDLES;
+    si.hStdOutput = h;
+    si.hStdError = h;
+    si.hStdInput = GetStdHandle(STD_INPUT_HANDLE);
+    PROCESS_INFORMATION pi;
+    BOOL ok = CreateProcessA(NULL, cmd, NULL, NULL, TRUE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi);
+    CloseHandle(h);
+    if (!ok) return -1;
+    WaitForSingleObject(pi.hProcess, 15000);
+    DWORD exit_code = 1;
+    GetExitCodeProcess(pi.hProcess, &exit_code);
+    CloseHandle(pi.hProcess); CloseHandle(pi.hThread);
+    remove(req);
+    FILE *f = fopen(res, "rb");
+    if (!f) return -1;
+    size_t len = fread(out, 1, cap - 1, f);
+    fclose(f);
+    remove(res);
+    out[len] = 0;
+    char *nl = strrchr(out, '\n');
+    if (!nl || exit_code != 0) return -1;
+    int code = atoi(nl + 1);
+    *nl = 0;
+    return code;
+}
+#else
 static int http(const char *method, const char *path, const char *body, char *out, size_t cap)
 {
     int in_pipe[2], out_pipe[2];
@@ -47,6 +91,8 @@ static int http(const char *method, const char *path, const char *body, char *ou
     *nl = 0;
     return code;
 }
+
+#endif
 
 /* The string value of "key":"..." (no escapes expected from the server), 0 when absent. */
 static int json_str(const char *json, const char *key, char *out, size_t cap)
