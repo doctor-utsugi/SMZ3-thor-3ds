@@ -18,6 +18,8 @@ void online_mark_run(int slot, int online, int kind);   /* kind as online_slot_k
 int online_monthly(char label[16], int *seed);
 int online_days_left(void);
 int online_weekly(char label[16], int *seed);
+/* The server's answer for one ladder table (tab 0 original, 1 monthly, 2 weekly): 1 with the JSON in out, 0 when it failed. */
+int online_ladder_json(int tab, char *out, size_t cap);
 int online_weekly_days_left(void);
 /* Asks for the token of an online run once; 1 when the slot has one (or is not online). Blocks. */
 int online_ensure_token(int slot);

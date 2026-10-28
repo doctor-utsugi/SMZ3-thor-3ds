@@ -424,6 +424,21 @@ static char g_month[16];
 static int g_month_seed, g_month_ready;
 static char g_week[16];
 static int g_week_seed, g_week_ready;
+/* the three ladder tables are fetched in the background when the player opens them */
+static char g_ladder[3][16384];
+static int g_ladder_state[3];   /* 0 idle, 1 fetching, 2 ready, 3 failed */
+static void *ladder_thread(void *arg)
+{
+    (void)arg;
+    for (int t = 0; t < 3; t++) {
+        static char buf[16384];
+        int ok = online_ladder_json(t, buf, sizeof buf);
+        if (ok) memcpy(g_ladder[t], buf, sizeof buf);
+        g_ladder_state[t] = ok ? 2 : 3;
+    }
+    return NULL;
+}
+
 static void *monthly_thread(void *arg) { (void)arg; char l[16]; int s; if (online_monthly(l, &s)) { snprintf(g_month, sizeof g_month, "%s", l); g_month_seed = s; g_month_ready = 1; }
     if (online_weekly(l, &s)) { snprintf(g_week, sizeof g_week, "%s", l); g_week_seed = s; g_week_ready = 1; } return NULL; }
 static void save_proof(int slot, const SmzProof *p)
@@ -923,6 +938,8 @@ static void window_main(int start_slot)
     refill_sprites();
     refill_slots();
     online_init(&ui);
+    ui_ladder_enable(&ui, 1);
+    if (getenv("SMZ3_LADDER")) ui_input(&ui, BTN_RIGHT);   /* test hook: open the online tables */
     if (getenv("SMZ3_MODE_MENU")) ui.screen = UI_MODE;   /* test hook: open the run mode list */
     detach(monthly_thread, NULL);
     detach(flush_thread, NULL);
@@ -970,6 +987,8 @@ static void window_main(int start_slot)
         }
 
         if (g_month_ready) { g_month_ready = 0; ui_set_monthly(&ui, g_month, g_month_seed, online_days_left()); }
+        for (int t = 0; t < 3; t++)
+            if (g_ladder_state[t] >= 2) { ui_ladder_load_json(&ui, t, g_ladder_state[t] == 2 ? g_ladder[t] : NULL); g_ladder_state[t] = 0; }
         if (g_week_ready) { g_week_ready = 0; ui_set_weekly(&ui, g_week, g_week_seed, online_weekly_days_left()); }
         online_save_profile(&ui);
         if (ui_saved_dirty(&ui)) {
@@ -980,7 +999,8 @@ static void window_main(int start_slot)
             UiAction act = ui.action;
             int slot = ui.action_slot;
             ui.action = ACT_NONE;
-            if (act == ACT_DELETE) { store_run_delete(slot + 1); refill_slots(); }
+            if (act == ACT_LADDER) { for (int t = 0; t < 3; t++) g_ladder_state[t] = 1; detach(ladder_thread, NULL); }
+            else if (act == ACT_DELETE) { store_run_delete(slot + 1); refill_slots(); }
             else if (act == ACT_CONTINUE) {
                 SmzRun r;
                 if (store_run_load(slot + 1, &r) == 0 && json_flag(r.settings, "saveStates", 0) && r.save_ms > 0 && r.play_ms - r.save_ms > 10000

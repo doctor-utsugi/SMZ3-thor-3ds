@@ -183,10 +183,10 @@ index 3692a54..3839f03 100644
          long actualTicksThisFrame = (long)(svcGetSystemTick() - startFrameTick);
 diff --git a/source/smz3online.cpp b/source/smz3online.cpp
 new file mode 100644
-index 0000000..d498b28
+index 0000000..31b4def
 --- /dev/null
 +++ b/source/smz3online.cpp
-@@ -0,0 +1,315 @@
+@@ -0,0 +1,357 @@
 +#include "smz3online.h"
 +
 +#include <3ds.h>
@@ -452,6 +452,36 @@ index 0000000..d498b28
 +    }
 +}
 +
++// ---- tables
++
++static char gLadder[3][16384];
++static int gLadderState[3];   // 0 idle, 1 fetching, 2 ready, 3 failed
++
++static void laddersThread(void *)
++{
++    static const char *const PATH[3] = {"/api/ladder?kind=original", "/api/ladder?kind=monthly", "/api/ladder?kind=weekly"};
++    static char buf[16384];
++    for (int t = 0; t < 3; t++) {
++        int ok = httpRequest("GET", PATH[t], NULL, buf, sizeof buf) == 200;
++        LightLock_Lock(&gLock);
++        if (ok) memcpy(gLadder[t], buf, sizeof buf);
++        gLadderState[t] = ok ? 2 : 3;
++        LightLock_Unlock(&gLock);
++    }
++}
++
++int smzOnlineTakeLadder(int tab, char *out, size_t cap)
++{
++    lockInit();
++    LightLock_Lock(&gLock);
++    int st = gLadderState[tab];
++    int r = 0;
++    if (st == 2) { snprintf(out, cap, "%s", gLadder[tab]); r = 1; gLadderState[tab] = 0; }
++    else if (st == 3) { r = 2; gLadderState[tab] = 0; }
++    LightLock_Unlock(&gLock);
++    return r;
++}
++
 +// ---- threads
 +
 +static void startupThread(void *) { fetchSeeds(); flushFinishes(); }
@@ -487,6 +517,18 @@ index 0000000..d498b28
 +    spawn(startupThread, NULL);
 +}
 +
++void smzOnlineRequestLadders(void)
++{
++    lockInit();
++    netUp();
++    if (!gHttpReady) return;
++    LightLock_Lock(&gLock);
++    bool busy = gLadderState[0] == 1 || gLadderState[1] == 1 || gLadderState[2] == 1;
++    for (int t = 0; t < 3 && !busy; t++) gLadderState[t] = 1;
++    LightLock_Unlock(&gLock);
++    if (!busy) spawn(laddersThread, NULL);
++}
++
 +void smzOnlineEnsureToken(int slot)
 +{
 +    netUp();
@@ -504,10 +546,10 @@ index 0000000..d498b28
 +}
 diff --git a/source/smz3online.h b/source/smz3online.h
 new file mode 100644
-index 0000000..a83e213
+index 0000000..bebcc89
 --- /dev/null
 +++ b/source/smz3online.h
-@@ -0,0 +1,30 @@
+@@ -0,0 +1,34 @@
 +#ifndef SMZ3ONLINE_H
 +#define SMZ3ONLINE_H
 +
@@ -526,6 +568,10 @@ index 0000000..a83e213
 +// Takes a fetched seed once: returns true and fills the label, seed and days left.
 +bool smzOnlineTakeMonthly(char label[16], int *seed, int *days);
 +bool smzOnlineTakeWeekly(char label[16], int *seed, int *days);
++// The online tables (0 original, 1 monthly, 2 weekly): Request starts the fetch, Take returns each answer once it is there (state 1 ready,
++// 2 failed; the JSON is the server's /api/ladder answer).
++void smzOnlineRequestLadders(void);
++int smzOnlineTakeLadder(int tab, char *out, size_t cap);
 +// The player's profile file text ("name\tCC\tmode"), and saving it back.
 +bool smzOnlineProfileLoad(char *out, size_t cap);
 +void smzOnlineProfileSave(const char *text);
@@ -540,10 +586,10 @@ index 0000000..a83e213
 +#endif
 diff --git a/source/smz3run.cpp b/source/smz3run.cpp
 new file mode 100644
-index 0000000..14820aa
+index 0000000..71c37e5
 --- /dev/null
 +++ b/source/smz3run.cpp
-@@ -0,0 +1,616 @@
+@@ -0,0 +1,623 @@
 +// SMZ3 runs: the shared C menu (core/ui) drawn on the second screen, and offline generation (core/gen).
 +#include <3ds.h>
 +#include <dirent.h>
@@ -930,6 +976,7 @@ index 0000000..14820aa
 +        if (smzOnlineProfileLoad(profile, sizeof profile)) ui_player_load(&ui, profile);
 +    }
 +    smzOnlineStartup();
++    ui_ladder_enable(&ui, 1);
 +    refreshSlots(&ui);
 +
 +    bool chosen = false;
@@ -963,12 +1010,18 @@ index 0000000..14820aa
 +            int seed, days;
 +            if (smzOnlineTakeMonthly(label, &seed, &days)) ui_set_monthly(&ui, label, seed, days);
 +            if (smzOnlineTakeWeekly(label, &seed, &days)) ui_set_weekly(&ui, label, seed, days);
++            static char ladderJson[16384];
++            for (int t = 0; t < 3; t++) {
++                int st = smzOnlineTakeLadder(t, ladderJson, sizeof ladderJson);
++                if (st) ui_ladder_load_json(&ui, t, st == 1 ? ladderJson : NULL);
++            }
 +            if (ui_player_dirty(&ui)) { char profile[96]; ui_player_text(&ui, profile, sizeof profile); smzOnlineProfileSave(profile); }
 +        }
 +        if (ui.action != ACT_NONE) {
 +            int act = ui.action, slot = ui.action_slot;
 +            ui.action = ACT_NONE;
-+            if (act == ACT_DELETE) { deleteRun(slot); refreshSlots(&ui); }
++            if (act == ACT_LADDER) smzOnlineRequestLadders();
++            else if (act == ACT_DELETE) { deleteRun(slot); refreshSlots(&ui); }
 +            else if (act == ACT_CONTINUE) {
 +                char path[96];
 +                SmzRun r;

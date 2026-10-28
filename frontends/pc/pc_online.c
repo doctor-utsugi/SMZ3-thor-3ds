@@ -21,7 +21,7 @@ static int http(const char *method, const char *path, const char *body, char *ou
     char req[600], res[600], cmd[2048], url[256];
     snprintf(req, sizeof req, "%s", store_path("tmp/request.json"));
     snprintf(res, sizeof res, "%s", store_path("tmp/response.txt"));
-    snprintf(url, sizeof url, "%s%s", BASE, path);
+    snprintf(url, sizeof url, "%s%s", getenv("SMZ3_SERVER") ? getenv("SMZ3_SERVER") : BASE, path);
     out[0] = 0;
     if (body && store_write(req, body, strlen(body))) return -1;
     int n = snprintf(cmd, sizeof cmd, "curl.exe -s -m 8 -X %s -H \"Content-Type: application/json\" ", method);
@@ -63,7 +63,7 @@ static int http(const char *method, const char *path, const char *body, char *ou
     out[0] = 0;
     if (pipe(in_pipe) || pipe(out_pipe)) return -1;
     char url[256];
-    snprintf(url, sizeof url, "%s%s", BASE, path);
+    snprintf(url, sizeof url, "%s%s", getenv("SMZ3_SERVER") ? getenv("SMZ3_SERVER") : BASE, path);
     pid_t pid = fork();
     if (pid < 0) return -1;
     if (pid == 0) {
@@ -242,6 +242,12 @@ int online_ensure_token(int slot)
     if (http("POST", "/api/start", req, reply, sizeof reply) != 200 || !json_str(reply, "token", token, sizeof token)) return 0;
     store_write(store_path("runs/slot%d.token", slot), token, strlen(token));
     return 1;
+}
+
+int online_ladder_json(int tab, char *out, size_t cap)
+{
+    static const char *const PATH[3] = {"/api/ladder?kind=original", "/api/ladder?kind=monthly", "/api/ladder?kind=weekly"};
+    return tab >= 0 && tab <= 2 && http("GET", PATH[tab], NULL, out, cap) == 200;
 }
 
 void online_queue_finish(int slot, int64_t time_ms, int seed)

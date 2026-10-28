@@ -719,3 +719,13 @@ a stored zip, a folder and a wrong revision (USA ALttP is refused with the reaso
 - Verified in Azahar (network works there): seeds shown in the mode list (monthly "4 days left", weekly "5d left"), a weekly run generated
   with the online gradient and the player name, and a real token obtained from the server (`debug_token.txt` debug aid). Not verified: a
   finished run uploaded from a 3DS, and real hardware.
+
+### Done: all ladder tables inside the apps (step 5)
+- Shared menu: `UI_LADDER` screen with Original / Monthly / Weekly tabs (Left/Right or touch), reached from the run list with Left/Right or the
+  Ladder button in the title bar when the host enables it (`ui_ladder_enable`). The host answers `ACT_LADDER` by fetching the three
+  `/api/ladder` answers and passing them to `ui_ladder_load_json` (rows: rank, name, flag code, time; "Loading ...", "No connection" and "No finished
+  runs yet" states). Test in `core/ui/test_ui.c`.
+- PC and the 3DS fetch in a thread; Android does it from `NativeMenuScreen` (`OnlineLadder.ladderJson`). The Android bottom screen's ladder
+  button now pages through the original, monthly, weekly and custom-runs tables (cached per table in `files/runs/`).
+- Verified: PC against a local server with sample runs (screenshot), 3DS in Azahar against the real server (empty tables), the tablet in
+  the "No connection" state. Not verified: the Thor's bottom-screen pages (compile only), a table with rows on Android/3DS.

@@ -299,6 +299,75 @@ static const struct { const char *code, *name; } COUNTRIES[] = {
 
 void ui_player_enable(SmzUi *u, int on) { u->player_on = on; }
 
+void ui_ladder_enable(SmzUi *u, int on) { u->ladder_on = on; }
+
+void ui_ladder_begin(SmzUi *u, int tab, const char *label, int ok)
+{
+    if (tab < 0 || tab > 2) return;
+    u->ladder[tab].loaded = ok ? 1 : -1;
+    u->ladder[tab].n = 0;
+    snprintf(u->ladder[tab].label, sizeof u->ladder[tab].label, "%s", label ? label : "");
+}
+
+void ui_ladder_add(SmzUi *u, int tab, const char *name, const char *country, int64_t ms)
+{
+    if (tab < 0 || tab > 2 || u->ladder[tab].n >= UI_LADDER_ROWS) return;
+    int i = u->ladder[tab].n++;
+    snprintf(u->ladder[tab].row[i].name, sizeof u->ladder[tab].row[i].name, "%s", name ? name : "");
+    snprintf(u->ladder[tab].row[i].cc, sizeof u->ladder[tab].row[i].cc, "%s", country ? country : "");
+    u->ladder[tab].row[i].ms = ms;
+}
+
+static int json_text(const char *from, const char *to, const char *key, char *out, size_t cap)
+{
+    char pat[24];
+    snprintf(pat, sizeof pat, "\"%s\":\"", key);
+    const char *p = strstr(from, pat);
+    if (!p || (to && p >= to)) return 0;
+    p += strlen(pat);
+    size_t n = 0;
+    while (*p && *p != '"' && n + 1 < cap) { if (*p == '\\' && p[1]) p++; out[n++] = *p++; }
+    out[n] = 0;
+    return 1;
+}
+
+void ui_ladder_load_json(SmzUi *u, int tab, const char *json)
+{
+    if (!json || !*json) { ui_ladder_begin(u, tab, "", 0); return; }
+    char label[16] = "";
+    const char *runs = strstr(json, "\"runs\":");
+    json_text(json, runs, "month", label, sizeof label) || json_text(json, runs, "week", label, sizeof label);
+    ui_ladder_begin(u, tab, label, 1);
+    for (const char *p = runs ? strchr(runs, '[') : NULL; p && (p = strchr(p, '{')); ) {
+        const char *end = strchr(p, '}');
+        if (!end) break;
+        char name[24] = "", cc[3] = "";
+        json_text(p, end, "player", name, sizeof name);
+        json_text(p, end, "country", cc, sizeof cc);
+        const char *t = strstr(p, "\"timeMs\":");
+        ui_ladder_add(u, tab, name, cc, t && t < end ? atoll(t + 9) : 0);
+        p = end + 1;
+    }
+}
+
+static void ladder_open(SmzUi *u)
+{
+    u->screen = UI_LADDER;
+    u->ladder_scroll = 0;
+    for (int t = 0; t < 3; t++) if (u->ladder[t].loaded < 0) u->ladder[t].loaded = 0;
+    u->action = ACT_LADDER;
+}
+
+static void ladder_input(SmzUi *u, UiButton b)
+{
+    int n = u->ladder[u->ladder_tab].n;
+    if (b == BTN_B) u->screen = UI_SLOTS_SCREEN;
+    else if (b == BTN_LEFT || b == BTN_L) { u->ladder_tab = (u->ladder_tab + 2) % 3; u->ladder_scroll = 0; }
+    else if (b == BTN_RIGHT || b == BTN_R) { u->ladder_tab = (u->ladder_tab + 1) % 3; u->ladder_scroll = 0; }
+    else if (b == BTN_DOWN && u->ladder_scroll + UI_LADDER_SHOWN < n) u->ladder_scroll++;
+    else if (b == BTN_UP && u->ladder_scroll > 0) u->ladder_scroll--;
+}
+
 void ui_player_load(SmzUi *u, const char *text)
 {
     u->player[0] = u->country[0] = 0;
@@ -596,6 +665,7 @@ void ui_input(SmzUi *u, UiButton b)
             u->slot_cursor = c < 0 ? 0 : c >= u->slot_count ? u->slot_count - 1 : c;
             slot_view(u);
         }
+        else if ((b == BTN_LEFT || b == BTN_RIGHT) && u->ladder_on) ladder_open(u);
         else if (b == BTN_A) {
             u->active_slot = u->slot_cursor;
             if (u->slots[u->slot_cursor].used) { u->screen = UI_SLOT_MENU; u->menu_cursor = 0; }
@@ -678,6 +748,7 @@ void ui_input(SmzUi *u, UiButton b)
     case UI_COUNTRY: country_input(u, b); break;
     case UI_ONLINE: online_input(u, b); break;
     case UI_LOADCHOICE: loadchoice_input(u, b); break;
+    case UI_LADDER: ladder_input(u, b); break;
     case UI_BUSY: break;
     }
 }
@@ -696,6 +767,8 @@ void ui_touch(SmzUi *u, int x, int y)
             if (u->slot_cursor < u->slot_scroll) u->slot_cursor = u->slot_scroll;
             if (u->slot_cursor >= u->slot_scroll + UI_SLOTS_SHOWN) u->slot_cursor = u->slot_scroll + UI_SLOTS_SHOWN - 1;
             break;
+        case H_LADDER: ladder_open(u); break;
+        case H_LTAB: u->ladder_tab = t->idx; u->ladder_scroll = 0; break;
         case H_CONFIRM: u->confirm_cursor = t->idx; ui_input(u, BTN_A); break;
         case H_MENU: u->menu_cursor = t->idx; ui_input(u, BTN_A); break;
         case H_TAB: u->level = t->idx; break;
@@ -832,6 +905,11 @@ void ui_draw(SmzUi *u)
         int more = u->slot_count > UI_SLOTS_SHOWN;
         snprintf(buf, sizeof buf, more ? "SMZ3  -  Select a run  (%d/%d)" : "SMZ3  -  Select a run", u->slot_cursor + 1, u->slot_count);
         title(u, buf);
+        if (u->ladder_on) {
+            rect(u, UI_W - 70, 4, 64, 20, C_SEL);
+            text(u, UI_W - 38, 8, C_TEXT, 1, "Ladder");
+            hit(u, H_LADDER, 0, UI_W - 70, 4, 64, 20);
+        }
         int w = UI_W - 16 - (more ? 26 : 0);
         for (int r = 0; r < UI_SLOTS_SHOWN && u->slot_scroll + r < u->slot_count; r++) {
             int i = u->slot_scroll + r, y = 36 + r * 50, used = u->slots[i].used;
@@ -1180,6 +1258,35 @@ void ui_draw(SmzUi *u)
             text(u, 54, y + 6, C_TEXT, 0, COUNTRIES[i].name);
         }
         text(u, 6, UI_H - 6, C_DIM, 0, "A choose  L R page  B back");
+        break;
+    }
+    case UI_LADDER: {
+        static const char *const TABS[3] = {"Original", "Monthly", "Weekly"};
+        title(u, "Online ladder");
+        for (int t = 0; t < 3; t++) {
+            int x = 6 + t * 104;
+            rect(u, x, 32, 102, 22, t == u->ladder_tab ? C_SEL : C_PANEL);
+            hit(u, H_LTAB, t, x, 32, 102, 22);
+            snprintf(buf, sizeof buf, "%s", TABS[t]);
+            text(u, x + 51, 38, t == u->ladder_tab ? C_TEXT : C_DIM, 1, buf);
+        }
+        const typeof(u->ladder[0]) *l = &u->ladder[u->ladder_tab];
+        if (l->label[0] && u->ladder_tab) text(u, UI_W - 8, 8, C_DIM, 2, l->label);
+        if (l->loaded == 0) text(u, UI_W / 2, 120, C_DIM, 1, "Loading ...");
+        else if (l->loaded < 0) text(u, UI_W / 2, 120, C_WARN, 1, "No connection");
+        else if (!l->n) text(u, UI_W / 2, 120, C_DIM, 1, "No finished runs yet");
+        for (int r = 0; r < UI_LADDER_SHOWN && u->ladder_scroll + r < l->n; r++) {
+            int i = u->ladder_scroll + r, y = 58 + r * 20;
+            rect(u, 6, y, UI_W - 12, 18, i % 2 ? C_BG : C_PANEL);
+            snprintf(buf, sizeof buf, "%d", i + 1);
+            text(u, 12, y + 4, i == 0 ? C_GOLD : C_DIM, 0, buf);
+            text(u, 40, y + 4, C_TEXT, 0, l->row[i].name);
+            text(u, 196, y + 4, C_ACCENT, 0, l->row[i].cc);
+            int64_t s = l->row[i].ms / 1000;
+            snprintf(buf, sizeof buf, "%d:%02d:%02d", (int)(s / 3600), (int)(s / 60 % 60), (int)(s % 60));
+            text(u, UI_W - 10, y + 4, C_TEXT, 2, buf);
+        }
+        text(u, 6, UI_H - 16, C_DIM, 0, "Left Right tab  Up Down scroll  B back");
         break;
     }
     case UI_BUSY:

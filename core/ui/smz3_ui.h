@@ -6,6 +6,8 @@
 #include <stdint.h>
 #include <stddef.h>
 
+#define UI_LADDER_ROWS 30
+#define UI_LADDER_SHOWN 8
 #define UI_W 320
 #define UI_H 240
 #define UI_SLOTS 32           /* most slots a frontend can show; each one sets how many it keeps with ui_set_slot_count */
@@ -18,11 +20,11 @@
 #define UI_SPEC_LEN 512
 
 typedef enum { BTN_UP, BTN_DOWN, BTN_LEFT, BTN_RIGHT, BTN_A, BTN_B, BTN_L, BTN_R } UiButton;
-typedef enum { UI_SLOTS_SCREEN, UI_SLOT_MENU, UI_CREATE, UI_SPRITES, UI_BUSY, UI_CONFIRM, UI_MODE, UI_SAVED, UI_NAME, UI_START, UI_COUNTRY, UI_ONLINE, UI_LOADCHOICE } UiScreen;
+typedef enum { UI_SLOTS_SCREEN, UI_SLOT_MENU, UI_CREATE, UI_SPRITES, UI_BUSY, UI_CONFIRM, UI_MODE, UI_SAVED, UI_NAME, UI_START, UI_COUNTRY, UI_ONLINE, UI_LOADCHOICE, UI_LADDER } UiScreen;
 typedef enum { OPT_ENUM, OPT_INT, OPT_BOOL, OPT_SEED, OPT_SPRITE } OptKind;
 /* Tabs of the Create run screen. Only LEVEL_ITEMS is read from UiOptDef.level; the other tabs list their keys in UI_TABS. */
 typedef enum { LEVEL_RUN, LEVEL_ZELDA, LEVEL_METROID, LEVEL_PLAY, LEVEL_ITEMS, LEVEL_COUNT } OptLevel;
-typedef enum { ACT_NONE, ACT_CONTINUE, ACT_DELETE, ACT_GENERATE, ACT_LOAD_SAVE, ACT_LOAD_STATE } UiAction;
+typedef enum { ACT_NONE, ACT_CONTINUE, ACT_DELETE, ACT_GENERATE, ACT_LOAD_SAVE, ACT_LOAD_STATE, ACT_LADDER } UiAction;
 
 typedef struct {
     const char *key;             /* C# property name for logic options */
@@ -49,7 +51,7 @@ typedef struct { uint8_t kind; int16_t x, y, w, h; uint8_t color; uint8_t align;
 enum { C_BG, C_PANEL, C_SEL, C_TEXT, C_DIM, C_ACCENT, C_WARN, C_GREEN, C_CYAN, C_TEAL, C_NAVY, C_VIOLET, C_GOLD };
 
 typedef struct { int16_t x, y, w, h; uint8_t kind; int16_t idx; } UiHit;
-enum { H_SLOT, H_MENU, H_TAB, H_ROW, H_SPRITE, H_SCROLL, H_CREATE, H_BACK, H_CHEVRON, H_CONFIRM, H_MODE, H_SAVED, H_SAVED_DEL, H_KEY, H_START, H_COUNTRY, H_ONLINE, H_LOADCHOICE };
+enum { H_SLOT, H_MENU, H_TAB, H_ROW, H_SPRITE, H_SCROLL, H_CREATE, H_BACK, H_CHEVRON, H_CONFIRM, H_MODE, H_SAVED, H_SAVED_DEL, H_KEY, H_START, H_COUNTRY, H_ONLINE, H_LOADCHOICE, H_LADDER, H_LTAB };
 
 typedef struct {
     UiScreen screen, back;
@@ -74,6 +76,8 @@ typedef struct {
     char weekly_label[16]; int weekly_seed, weekly_days;   /* the week's fixed seed, its label (e.g. 2026-W44) and the days left */
     struct { int64_t save_ms, state_ms; int save_z, save_m, state_z, state_m, zt, mt, cursor; } lc;   /* the load choice shown by UI_LOADCHOICE */
     int online_mode, online_cursor, online_gen; /* 0 ask before each run, 1 upload, 2 never; the prompt's row; 1 when the prompt came from Start */
+    int ladder_on, ladder_tab, ladder_scroll;   /* the host can show the online tables / the tab shown (0 original, 1 monthly, 2 weekly) / first row shown */
+    struct { int loaded; char label[16]; int n; struct { char name[24]; char cc[3]; int64_t ms; } row[UI_LADDER_ROWS]; } ladder[3];   /* loaded: 0 not yet, 1 ok, -1 failed */
     char start_label[24], notice[32];
     int start_cursor, start_col;  /* sprite screen: row (Link, Samus, Start) and column (sprite, Random) */
     UiScreen start_from;
@@ -115,6 +119,13 @@ int ui_saved_text(const SmzUi *u, char *out, size_t cap);
 int ui_saved_dirty(SmzUi *u);
 /* Player profile: the Player row appears in the start screen once the host enables it. text is "name<TAB>CC<TAB>mode" (NULL: empty). */
 void ui_player_enable(SmzUi *u, int on);
+/* Online tables: the slot list gets a Ladder button (and Left/Right opens it) and the host answers ACT_LADDER by filling the three
+ * tables: ui_ladder_begin(tab, label, ok) starts one (ok 0 marks it as failed) and ui_ladder_add appends its rows, best first. */
+void ui_ladder_enable(SmzUi *u, int on);
+void ui_ladder_begin(SmzUi *u, int tab, const char *label, int ok);
+void ui_ladder_add(SmzUi *u, int tab, const char *name, const char *country, int64_t ms);
+/* Fills a table from the server's /api/ladder answer ({"month"|"week":"...","runs":[{"player","country","timeMs"}]}); NULL marks it failed. */
+void ui_ladder_load_json(SmzUi *u, int tab, const char *json);
 void ui_player_load(SmzUi *u, const char *text);
 int ui_player_text(const SmzUi *u, char *out, size_t cap);
 int ui_player_dirty(SmzUi *u);

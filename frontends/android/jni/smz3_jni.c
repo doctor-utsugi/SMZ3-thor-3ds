@@ -482,6 +482,16 @@ JNIEXPORT void JNICALL NATIVE(uiSetWeekly)(JNIEnv *env, jclass cls, jstring labe
     (*env)->ReleaseStringUTFChars(env, label, l);
 }
 
+JNIEXPORT void JNICALL NATIVE(uiLadderEnable)(JNIEnv *env, jclass cls, jboolean on) { ui_ladder_enable(&g_ui, on); }
+
+/* The server's answer for one online table (0 original, 1 monthly, 2 weekly); null marks it failed. */
+JNIEXPORT void JNICALL NATIVE(uiLadderJson)(JNIEnv *env, jclass cls, jint tab, jstring json)
+{
+    const char *j = json ? (*env)->GetStringUTFChars(env, json, NULL) : NULL;
+    ui_ladder_load_json(&g_ui, tab, j);
+    if (j) (*env)->ReleaseStringUTFChars(env, json, j);
+}
+
 JNIEXPORT jint JNICALL NATIVE(uiRunWeekly)(JNIEnv *env, jclass cls) { return ui_run_weekly(&g_ui); }
 
 JNIEXPORT void JNICALL NATIVE(uiSetSlotOnline)(JNIEnv *env, jclass cls, jint i, jint kind) { ui_set_slot_online(&g_ui, i, kind); }

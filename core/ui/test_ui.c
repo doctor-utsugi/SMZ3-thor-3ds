@@ -317,6 +317,35 @@ int main(void)
         ui_draw(&v);
         (void)zero;
     }
+    {   /* online tables: Right opens them, the host answers ACT_LADDER, tabs and scrolling work */
+        SmzUi v; ui_init(&v);
+        ui_input(&v, BTN_RIGHT);
+        assert(v.screen == UI_SLOTS_SCREEN && v.action == ACT_NONE);   /* the host has no ladder */
+        ui_ladder_enable(&v, 1);
+        ui_input(&v, BTN_RIGHT);
+        assert(v.screen == UI_LADDER && v.action == ACT_LADDER);
+        ui_draw(&v);                                                  /* "Loading ..." while nothing arrived */
+        ui_ladder_begin(&v, 0, "", 1);
+        for (int i = 0; i < 12; i++) ui_ladder_add(&v, 0, "Player", "ES", 3600000LL + i * 1000);
+        ui_ladder_begin(&v, 1, "2026-10", 0);
+        ui_draw(&v);
+        ui_input(&v, BTN_DOWN); ui_input(&v, BTN_DOWN);
+        assert(v.ladder_scroll == 2);
+        for (int i = 0; i < 10; i++) ui_input(&v, BTN_DOWN);
+        assert(v.ladder_scroll == 12 - UI_LADDER_SHOWN);
+        ui_input(&v, BTN_RIGHT);
+        assert(v.ladder_tab == 1 && v.ladder_scroll == 0);
+        ui_draw(&v);                                                  /* "No connection" */
+        assert(v.cmd_count < UI_MAX_CMDS - 40);
+        ui_input(&v, BTN_B);
+        assert(v.screen == UI_SLOTS_SCREEN);
+        ui_ladder_load_json(&v, 2, "{\"kind\":\"weekly\",\"week\":\"2026-W44\",\"runs\":[{\"kind\":\"weekly\",\"period\":\"2026-W44\",\"player\":\"Ana\",\"country\":\"ES\",\"timeMs\":3723000,\"finishedAt\":1},{\"player\":\"Bo\",\"country\":\"\",\"timeMs\":4000000}]}");
+        assert(v.ladder[2].loaded == 1 && v.ladder[2].n == 2 && !strcmp(v.ladder[2].label, "2026-W44"));
+        assert(!strcmp(v.ladder[2].row[0].name, "Ana") && !strcmp(v.ladder[2].row[0].cc, "ES") && v.ladder[2].row[0].ms == 3723000);
+        assert(!strcmp(v.ladder[2].row[1].name, "Bo") && !v.ladder[2].row[1].cc[0] && v.ladder[2].row[1].ms == 4000000);
+        ui_ladder_load_json(&v, 2, NULL);
+        assert(v.ladder[2].loaded == -1);
+    }
     printf("ui ok, %d draw commands\n", u.cmd_count);
     return 0;
 }

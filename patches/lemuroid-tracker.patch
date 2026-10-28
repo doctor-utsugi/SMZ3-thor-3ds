@@ -468,10 +468,10 @@ index 0000000..c830243
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/NativeMenuScreen.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/NativeMenuScreen.kt
 new file mode 100644
-index 0000000..6470470
+index 0000000..aa17d7e
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/NativeMenuScreen.kt
-@@ -0,0 +1,330 @@
+@@ -0,0 +1,340 @@
 +package com.swordfish.lemuroid.app.mobile.feature.runs
 +
 +import android.graphics.Paint
@@ -541,7 +541,7 @@ index 0000000..6470470
 +    return (java.time.Duration.between(now, end).toMillis() / 86_400_000L).toInt()
 +}
 +
-+private enum class Act { NONE, CONTINUE, DELETE, GENERATE, LOAD_SAVE, LOAD_STATE }
++private enum class Act { NONE, CONTINUE, DELETE, GENERATE, LOAD_SAVE, LOAD_STATE, LADDER }
 +
 +private fun spriteDir(game: Int) = File("/sdcard/SMZ3/sprites", if (game == 0) "link" else "samus")
 +
@@ -590,6 +590,7 @@ index 0000000..6470470
 +    var version by remember { mutableIntStateOf(0) }
 +    val focus = remember { FocusRequester() }
 +    val pendingMonthly = remember { java.util.concurrent.atomic.AtomicReference<Pair<String, Int>?>(null) }
++    val pendingLadder = remember { java.util.concurrent.atomic.AtomicReference<Array<String?>?>(null) }
 +    val pendingWeekly = remember { java.util.concurrent.atomic.AtomicReference<Pair<String, Int>?>(null) }
 +    val savedCustoms = remember { File(context.filesDir, "saved_customs.txt") }
 +    val paint = remember { Paint(Paint.ANTI_ALIAS_FLAG).apply { typeface = Typeface.MONOSPACE } }
@@ -626,11 +627,19 @@ index 0000000..6470470
 +        Smz3Native.uiSetSprites(3, Smz3Music.packages())
 +        Smz3Native.uiSavedLoad(savedCustoms.takeIf { it.exists() }?.readText())
 +        Smz3Native.uiPlayerLoad(OnlineLadder.profileText(context))
++        Smz3Native.uiLadderEnable(true)
 +        Thread { pendingMonthly.set(OnlineLadder.monthly(context)); pendingWeekly.set(OnlineLadder.weekly(context)) }.start()
 +        refreshSlots()
 +        onDispose { }
 +    }
 +    LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
++    // the online tables arrive from a thread: show them as soon as they are there
++    LaunchedEffect(Unit) {
++        while (true) {
++            kotlinx.coroutines.delay(300)
++            pendingLadder.getAndSet(null)?.let { tables -> tables.forEachIndexed { tab, json -> Smz3Native.uiLadderJson(tab, json) }; version++ }
++        }
++    }
 +
 +    val generateAgain = remember { arrayOf<((Int) -> Unit)?>(null) }
 +    var romSlot by remember { mutableIntStateOf(-1) }
@@ -732,6 +741,7 @@ index 0000000..6470470
 +            Act.LOAD_STATE -> RunStore.load(context, slot)?.let { onContinue(it, true) }
 +            Act.DELETE -> { RunStore.delete(context, slot); refreshSlots() }
 +            Act.GENERATE -> generate(slot)
++            Act.LADDER -> Thread { pendingLadder.set(Array(3) { OnlineLadder.ladderJson(it) }) }.start()
 +            Act.NONE -> {}
 +        }
 +    }
@@ -804,10 +814,10 @@ index 0000000..6470470
 +private fun Color.toArgb(): Int = android.graphics.Color.argb((alpha * 255).toInt(), (red * 255).toInt(), (green * 255).toInt(), (blue * 255).toInt())
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/OnlineLadder.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/OnlineLadder.kt
 new file mode 100644
-index 0000000..481e953
+index 0000000..ed98cb9
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/OnlineLadder.kt
-@@ -0,0 +1,200 @@
+@@ -0,0 +1,212 @@
 +package com.swordfish.lemuroid.app.mobile.feature.runs
 +
 +import android.content.Context
@@ -988,25 +998,37 @@ index 0000000..481e953
 +    private fun flag(code: String) =
 +        if (code.length == 2) code.map { String(Character.toChars(0x1F1E6 + it.code - 'A'.code)) }.joinToString("") + " " else ""
 +
-+    /** Last original ladder fetched, empty until the first fetch succeeds. */
-+    fun cached(context: Context): List<LeaderboardEntry> = runCatching {
-+        val a = JSONObject(File(dir(context), "online_ladder.json").readText()).getJSONArray("runs")
++    private fun cacheFile(context: Context, tab: Int) = File(dir(context), arrayOf("online_ladder.json", "online_ladder_monthly.json", "online_ladder_weekly.json")[tab])
++
++    /** Last ladder fetched for a table (0 original, 1 monthly of this month, 2 weekly of this week), empty until the first fetch succeeds. */
++    fun cached(context: Context, tab: Int = 0): List<LeaderboardEntry> = runCatching {
++        val a = JSONObject(cacheFile(context, tab).readText()).getJSONArray("runs")
 +        List(a.length()) { i ->
 +            a.getJSONObject(i).let { LeaderboardEntry(flag(it.optString("country")) + it.getString("player"), "", it.getLong("timeMs"), it.optLong("finishedAt"), true) }
 +        }
 +    }.getOrDefault(emptyList())
 +
-+    /** Downloads the ladder into the cache and returns whether it worked. Call off the main thread. */
-+    fun refresh(context: Context): Boolean = runCatching {
-+        val c = URL("$BASE/api/ladder?kind=original").openConnection() as HttpURLConnection
++    /** The server's answer for one table (0 original, 1 monthly, 2 weekly), null when it cannot be reached. Call off the main thread. */
++    fun ladderJson(tab: Int): String? = runCatching {
++        val c = URL("$BASE/api/ladder?kind=" + arrayOf("original", "monthly", "weekly")[tab]).openConnection() as HttpURLConnection
 +        c.connectTimeout = 8000
 +        c.readTimeout = 8000
-+        val text = c.inputStream.bufferedReader().use { it.readText() }
-+        c.disconnect()
-+        JSONObject(text).getJSONArray("runs")
-+        File(dir(context), "online_ladder.json").writeText(text)
-+        true
-+    }.getOrDefault(false)
++        c.inputStream.bufferedReader().use { it.readText() }.also { c.disconnect() }
++    }.getOrNull()
++
++    /** Downloads the three ladders into the cache; true when the original one worked. Call off the main thread. */
++    fun refresh(context: Context): Boolean {
++        var original = false
++        for (tab in 0..2) {
++            val ok = runCatching {
++                val text = ladderJson(tab) ?: error("offline")
++                JSONObject(text).getJSONArray("runs")
++                cacheFile(context, tab).writeText(text)
++            }.isSuccess
++            if (tab == 0) original = ok
++        }
++        return original
++    }
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/RunGenerator.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/RunGenerator.kt
 new file mode 100644
@@ -3011,10 +3033,10 @@ index 0000000..3d11f48
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3IdlePresentation.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3IdlePresentation.kt
 new file mode 100644
-index 0000000..2410812
+index 0000000..f779b28
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3IdlePresentation.kt
-@@ -0,0 +1,201 @@
+@@ -0,0 +1,210 @@
 +package com.swordfish.lemuroid.app.shared.game.viewmodel
 +
 +import android.animation.ValueAnimator
@@ -3071,7 +3093,9 @@ index 0000000..2410812
 +        private var online = OnlineLadder.cached(context).isNotEmpty()
 +        private var defaultLadder = if (online) OnlineLadder.cached(context).take(5) else Leaderboard.top(context, true)
 +        private val customLadder = Leaderboard.top(context, false)
-+        private var showLadders = false
++        private var page = 0   // 0 the selected run or the top 3, then one page per table: 1 original, 2 monthly, 3 weekly (online), 4 custom runs of this device
++        private var monthlyLadder = OnlineLadder.cached(context, 1)
++        private var weeklyLadder = OnlineLadder.cached(context, 2)
 +        private val button = android.graphics.RectF()
 +
 +        init {
@@ -3080,6 +3104,8 @@ index 0000000..2410812
 +                OnlineLadder.flush(context)
 +                if (OnlineLadder.refresh(context)) {
 +                    defaultLadder = OnlineLadder.cached(context).take(5)
++                    monthlyLadder = OnlineLadder.cached(context, 1)
++                    weeklyLadder = OnlineLadder.cached(context, 2)
 +                    online = true
 +                    postInvalidate()
 +                }
@@ -3093,7 +3119,7 @@ index 0000000..2410812
 +
 +        override fun onTouchEvent(event: android.view.MotionEvent): Boolean {
 +            if (event.action == android.view.MotionEvent.ACTION_UP && button.contains(event.x, event.y)) {
-+                showLadders = !showLadders
++                page = (page + 1) % 5
 +                invalidate()
 +            }
 +            return true
@@ -3127,15 +3153,20 @@ index 0000000..2410812
 +            paint.typeface = android.graphics.Typeface.DEFAULT
 +            val info = Smz3MenuSelection.info
 +            val tag = if (online) "  ·  ONLINE" else ""
-+            if (showLadders) {
-+                drawLadder(canvas, "ORIGINAL" + tag, defaultLadder, w * 0.25f, h * 0.36f, 5)
-+                drawLadder(canvas, "CUSTOM (THIS DEVICE)", customLadder, w * 0.75f, h * 0.36f, 5)
++            if (page == 1) {
++                drawLadder(canvas, "ORIGINAL" + tag, defaultLadder, w / 2f, h * 0.36f, 5)
++            } else if (page == 2) {
++                drawLadder(canvas, "MONTHLY" + tag, monthlyLadder, w / 2f, h * 0.36f, 5)
++            } else if (page == 3) {
++                drawLadder(canvas, "WEEKLY" + tag, weeklyLadder, w / 2f, h * 0.36f, 5)
++            } else if (page == 4) {
++                drawLadder(canvas, "CUSTOM (THIS DEVICE)", customLadder, w / 2f, h * 0.36f, 5)
 +            } else if (info != null) {
 +                drawRunInfo(canvas, info, w, h)
 +            } else {
 +                drawLadder(canvas, "ORIGINAL  ·  TOP 3" + tag, defaultLadder, w / 2f, h * 0.36f, 3)
 +            }
-+            drawButton(canvas, if (showLadders) "BACK" else "SHOW LADDERS", w, h)
++            drawButton(canvas, when (page) { 0 -> "SHOW LADDERS"; 1 -> "MONTHLY"; 2 -> "WEEKLY"; 3 -> "CUSTOM RUNS"; else -> "BACK" }, w, h)
 +        }
 +
 +        private fun drawButton(canvas: Canvas, label: String, w: Float, h: Float) {
@@ -3783,10 +3814,10 @@ index 0000000..dc5944a
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Native.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Native.kt
 new file mode 100644
-index 0000000..0b14570
+index 0000000..f5e3df5
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Native.kt
-@@ -0,0 +1,80 @@
+@@ -0,0 +1,82 @@
 +package com.swordfish.lemuroid.app.shared.game.viewmodel
 +
 +/** JNI bridge to the shared C core (core/smz3_state.c). */
@@ -3861,6 +3892,8 @@ index 0000000..0b14570
 +    @JvmStatic external fun uiRunMonthly(): Int
 +    @JvmStatic external fun uiSetWeekly(label: String, seed: Int, days: Int)
 +    @JvmStatic external fun uiRunWeekly(): Int
++    @JvmStatic external fun uiLadderEnable(on: Boolean)
++    @JvmStatic external fun uiLadderJson(tab: Int, json: String?)
 +    @JvmStatic external fun uiOption(opt: Int): Int
 +    @JvmStatic external fun uiScreen(): Int
 +    @JvmStatic external fun uiSetSlotCount(n: Int)
