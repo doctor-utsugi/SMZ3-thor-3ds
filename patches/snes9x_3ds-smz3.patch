@@ -1,5 +1,5 @@
 diff --git a/Makefile b/Makefile
-index 31fa536..7ae22c8 100644
+index 31fa536..2caaa30 100644
 --- a/Makefile
 +++ b/Makefile
 @@ -90,6 +90,8 @@ LDFLAGS     = -specs=3dsx.specs $(ARCH) -Wl,-Map,$(notdir $*.map)
@@ -25,7 +25,7 @@ index 31fa536..7ae22c8 100644
  			3dsconfig.cpp 3dsfiles.cpp 3dsinput.cpp 3dslcd.cpp \
  			3dsimpl.cpp 3dsimpl_tilecache.cpp 3dsimpl_gpu.cpp 3dsthemes.cpp 3dssettings.cpp \
 -			3dslog.cpp 3dsra.cpp 3dsra_http.cpp 3dsra_ui.cpp
-+			3dslog.cpp 3dsra.cpp 3dsra_http.cpp 3dsra_ui.cpp smz3run.cpp
++			3dslog.cpp 3dsra.cpp 3dsra_http.cpp 3dsra_ui.cpp smz3run.cpp smz3online.cpp
  SFILES             := $(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.s)))
  PICAFILES          := $(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.v.pica)))
  SHLISTFILES        := $(foreach dir,$(SOURCES),$(notdir $(wildcard $(dir)/*.shlist)))
@@ -46,8 +46,45 @@ index 970484a..b92dad2 100644
          // (e.g. sdmc:/3ds/snes9x_3ds/backgrounds/game_screen/Super Mario World.png)
          snprintf(output, bufferSize, "%s/%s/%s%s", settings3DS.RootDir, targetDir, basename, extension);
      } 
+diff --git a/source/3dsimpl.cpp b/source/3dsimpl.cpp
+index d4fca8e..06116eb 100644
+--- a/source/3dsimpl.cpp
++++ b/source/3dsimpl.cpp
+@@ -8,6 +8,7 @@
+ #include <string.h>
+ #include <stdio.h>
+ #include <sys/stat.h>
++#include "smz3run.h"
+ #include <dirent.h>
+ 
+ #include "memmap.h"
+@@ -983,6 +984,7 @@ void impl3dsRunOneFrame(bool firstFrame, bool skipDrawingFrame)
+ //---------------------------------------------------------
+ bool impl3dsSaveStateSlot(int slotNumber)
+ {
++    if (smz3NoStates()) return false;
+     char path[PATH_MAX], ext[16];
+     snprintf(ext, sizeof(ext), ".%d.frz", slotNumber);
+     file3dsGetRelatedPath(Memory.ROMFilename, path, sizeof(path), ext, "savestates");
+@@ -1000,7 +1002,7 @@ bool impl3dsSaveStateSlot(int slotNumber)
+ 
+ bool impl3dsSaveStateAuto()
+ {
+-    if (!settings3DS.isRomLoaded || !settings3DS.AutoSavestate) 
++    if (!settings3DS.isRomLoaded || !settings3DS.AutoSavestate || smz3NoStates()) 
+         return true;
+ 
+     char path[PATH_MAX];
+@@ -1032,6 +1034,7 @@ bool impl3dsSaveState(const char* filename)
+ //---------------------------------------------------------
+ bool impl3dsLoadStateSlot(int slotNumber)
+ {
++    if (smz3NoStates()) return false;
+     char path[PATH_MAX], ext[16];
+     snprintf(ext, sizeof(ext), ".%d.frz", slotNumber);
+     file3dsGetRelatedPath(Memory.ROMFilename, path, sizeof(path), ext, "savestates");
 diff --git a/source/3dsmain.cpp b/source/3dsmain.cpp
-index 3692a54..7fdfb4b 100644
+index 3692a54..3839f03 100644
 --- a/source/3dsmain.cpp
 +++ b/source/3dsmain.cpp
 @@ -32,6 +32,7 @@
@@ -127,6 +164,15 @@ index 3692a54..7fdfb4b 100644
      if (entry->Type == FileEntryType::File) 
      {
          snprintf(romFileName, sizeof(romFileName), "%s", entry->Filename);
+@@ -2103,7 +2138,7 @@ void onDirectoryEntrySelected(
+             menu3dsRunBadgeCache(dialogTab, currentMenuTab, menuTabs, romFileName);
+ 
+             // Restore after RA identification; pause the mixer while state changes.
+-            if (settings3DS.AutoSavestate) {
++            if (settings3DS.AutoSavestate && !smz3NoStates()) {
+                 snd3dsDrainMixing();
+                 impl3dsLoadStateAuto();
+                 snd3dsResumeMixing();
 @@ -2508,6 +2543,7 @@ void emulatorLoop()
          t3dsStartTimer(TIMER_RUN_ONE_FRAME);
          impl3dsRunOneFrame(firstFrame, skipDrawing);
@@ -135,12 +181,369 @@ index 3692a54..7fdfb4b 100644
  
  
          long actualTicksThisFrame = (long)(svcGetSystemTick() - startFrameTick);
+diff --git a/source/smz3online.cpp b/source/smz3online.cpp
+new file mode 100644
+index 0000000..d498b28
+--- /dev/null
++++ b/source/smz3online.cpp
+@@ -0,0 +1,315 @@
++#include "smz3online.h"
++
++#include <3ds.h>
++#include <dirent.h>
++#include <stdio.h>
++#include <stdlib.h>
++#include <string.h>
++#include <sys/stat.h>
++#include <time.h>
++
++#define SMZ_DIR "sdmc:/SMZ3"
++#define ONLINE_DIR SMZ_DIR "/online"
++#define BASE_URL "https://smz3.indieviral.com"
++
++static char *pathOf(const char *fmt, int slot)
++{
++    static char buf[4][128];
++    static int next;
++    char *p = buf[next++ & 3];
++    snprintf(p, 128, fmt, slot);
++    return p;
++}
++
++static char *readText(const char *path, size_t *len)
++{
++    FILE *f = fopen(path, "rb");
++    if (!f) return NULL;
++    fseek(f, 0, SEEK_END);
++    long n = ftell(f);
++    fseek(f, 0, SEEK_SET);
++    char *b = (char *)malloc(n > 0 ? n + 1 : 1);
++    if (b && fread(b, 1, n, f) != (size_t)n) { free(b); b = NULL; }
++    fclose(f);
++    if (b) { b[n] = 0; if (len) *len = (size_t)n; }
++    return b;
++}
++
++static void writeText(const char *path, const char *text, size_t n)
++{
++    mkdir(SMZ_DIR, 0777);
++    mkdir(ONLINE_DIR, 0777);
++    FILE *f = fopen(path, "wb");
++    if (f) { fwrite(text, 1, n, f); fclose(f); }
++}
++
++static bool exists(const char *path) { struct stat st; return stat(path, &st) == 0; }
++
++// ---- one blocking request; returns the HTTP status or -1. The body is left in out (NUL terminated).
++
++static int httpRequest(const char *method, const char *path, const char *body, char *out, size_t cap)
++{
++    out[0] = 0;
++    char url[200];
++    snprintf(url, sizeof url, BASE_URL "%s", path);
++    for (int attempt = 0; attempt < 2; attempt++) {
++        httpcContext ctx;
++        if (R_FAILED(httpcOpenContext(&ctx, body ? HTTPC_METHOD_POST : HTTPC_METHOD_GET, url, 1))) return -1;
++        // the console's certificate store may not know the server's authority; the second attempt skips the check (the ladder holds
++        // no secrets: a name, a country and times)
++        if (attempt) httpcSetSSLOpt(&ctx, SSLCOPT_DisableVerify);
++        httpcAddRequestHeaderField(&ctx, "User-Agent", "smz3-3ds");
++        if (body) {
++            httpcAddRequestHeaderField(&ctx, "Content-Type", "application/json");
++            httpcAddPostDataRaw(&ctx, (const u32 *)body, (u32)strlen(body));
++        }
++        if (R_FAILED(httpcBeginRequest(&ctx))) { httpcCloseContext(&ctx); continue; }
++        u32 status = 0;
++        if (R_FAILED(httpcGetResponseStatusCodeTimeout(&ctx, &status, 8ULL * 1000 * 1000 * 1000))) { httpcCancelConnection(&ctx); httpcCloseContext(&ctx); continue; }
++        size_t got = 0;
++        Result r;
++        do {
++            u32 n = 0;
++            r = httpcDownloadData(&ctx, (u8 *)out + got, (u32)(cap - 1 - got), &n);
++            got += n;
++        } while (r == (Result)HTTPC_RESULTCODE_DOWNLOADPENDING && got < cap - 1);
++        out[got] = 0;
++        httpcCloseContext(&ctx);
++        return (int)status;
++    }
++    return -1;
++}
++
++static bool jsonStr(const char *json, const char *key, char *out, size_t cap)
++{
++    char pat[48];
++    snprintf(pat, sizeof pat, "\"%s\":\"", key);
++    const char *p = strstr(json, pat);
++    if (!p) return false;
++    p += strlen(pat);
++    size_t n = strcspn(p, "\"");
++    if (n >= cap) return false;
++    memcpy(out, p, n);
++    out[n] = 0;
++    return true;
++}
++
++static bool jsonNum(const char *json, const char *key, long long *v)
++{
++    char pat[48];
++    snprintf(pat, sizeof pat, "\"%s\":", key);
++    const char *p = strstr(json, pat);
++    if (!p) return false;
++    *v = atoll(p + strlen(pat));
++    return true;
++}
++
++// ---- profile, install id
++
++bool smzOnlineProfileLoad(char *out, size_t cap)
++{
++    size_t n;
++    char *t = readText(ONLINE_DIR "/player.txt", &n);
++    if (!t) return false;
++    snprintf(out, cap, "%s", t);
++    free(t);
++    return true;
++}
++
++void smzOnlineProfileSave(const char *text) { writeText(ONLINE_DIR "/player.txt", text, strlen(text)); }
++
++static void installId(char out[40])
++{
++    size_t n;
++    char *t = readText(ONLINE_DIR "/install_id", &n);
++    if (t && n >= 16 && n <= 39) { snprintf(out, 40, "%s", t); out[strcspn(out, "\r\n ")] = 0; free(t); return; }
++    free(t);
++    u64 x = osGetTime() * 6364136223846793005ull ^ svcGetSystemTick();
++    for (int i = 0; i < 32; i++) {
++        x ^= x << 13; x ^= x >> 7; x ^= x << 17;
++        out[i] = "0123456789abcdef"[(x >> 11) & 15];
++    }
++    out[32] = 0;
++    writeText(ONLINE_DIR "/install_id", out, 32);
++}
++
++// ---- per slot files: .online (kind), .token, .finish ("time seed"), .proof
++
++int smzOnlineSlotKind(int slot)
++{
++    size_t n;
++    char *t = readText(pathOf(ONLINE_DIR "/slot%d.online", slot), &n);
++    int kind = 0;
++    if (t) { kind = !strncmp(t, "original", 8) ? 1 : !strncmp(t, "monthly", 7) ? 2 : !strncmp(t, "weekly", 6) ? 3 : 0; free(t); }
++    return kind;
++}
++
++void smzOnlineMarkRun(int slot, int online, int kind)
++{
++    remove(pathOf(ONLINE_DIR "/slot%d.token", slot));
++    remove(pathOf(ONLINE_DIR "/slot%d.finish", slot));
++    remove(pathOf(ONLINE_DIR "/slot%d.proof", slot));
++    if (!online) { remove(pathOf(ONLINE_DIR "/slot%d.online", slot)); return; }
++    const char *k = kind == 3 ? "weekly" : kind == 2 ? "monthly" : "original";
++    writeText(pathOf(ONLINE_DIR "/slot%d.online", slot), k, strlen(k));
++}
++
++const char *smzOnlineProofPath(int slot) { return pathOf(ONLINE_DIR "/slot%d.proof", slot); }
++
++// ---- seeds
++
++static LightLock gLock;
++static bool gLockReady;
++static struct { bool ready; char label[16]; int seed, days; } gMonthly, gWeekly;
++static bool gStarted;
++
++static void lockInit() { if (!gLockReady) { LightLock_Init(&gLock); gLockReady = true; } }
++
++static int daysUntil(long long endMs)
++{
++    long long now = (long long)time(NULL) * 1000;
++    long long left = endMs - now;
++    return left <= 0 ? 0 : (int)((left + 86399999) / 86400000);
++}
++
++static void fetchSeeds()
++{
++    static char reply[1024];
++    char label[16], seedText[16];
++    if (httpRequest("GET", "/api/monthly", NULL, reply, sizeof reply) == 200 && jsonStr(reply, "month", label, sizeof label) && jsonStr(reply, "seed", seedText, sizeof seedText)) {
++        time_t now = time(NULL);
++        struct tm tmv;
++        gmtime_r(&now, &tmv);
++        tmv.tm_mon++; tmv.tm_mday = 1; tmv.tm_hour = tmv.tm_min = tmv.tm_sec = 0;
++        long long end = (long long)mktime(&tmv) * 1000;   // the console's clock is local time; a day more or less is fine for a countdown
++        LightLock_Lock(&gLock);
++        snprintf(gMonthly.label, sizeof gMonthly.label, "%s", label);
++        gMonthly.seed = atoi(seedText);
++        gMonthly.days = daysUntil(end);
++        gMonthly.ready = true;
++        LightLock_Unlock(&gLock);
++    }
++    long long ends = 0;
++    if (httpRequest("GET", "/api/weekly", NULL, reply, sizeof reply) == 200 && jsonStr(reply, "week", label, sizeof label) && jsonStr(reply, "seed", seedText, sizeof seedText) && jsonNum(reply, "endsAt", &ends)) {
++        LightLock_Lock(&gLock);
++        snprintf(gWeekly.label, sizeof gWeekly.label, "%s", label);
++        gWeekly.seed = atoi(seedText);
++        gWeekly.days = daysUntil(ends);
++        gWeekly.ready = true;
++        LightLock_Unlock(&gLock);
++    }
++}
++
++bool smzOnlineTakeMonthly(char label[16], int *seed, int *days)
++{
++    lockInit();
++    LightLock_Lock(&gLock);
++    bool r = gMonthly.ready;
++    if (r) { gMonthly.ready = false; snprintf(label, 16, "%s", gMonthly.label); *seed = gMonthly.seed; *days = gMonthly.days; }
++    LightLock_Unlock(&gLock);
++    return r;
++}
++
++bool smzOnlineTakeWeekly(char label[16], int *seed, int *days)
++{
++    lockInit();
++    LightLock_Lock(&gLock);
++    bool r = gWeekly.ready;
++    if (r) { gWeekly.ready = false; snprintf(label, 16, "%s", gWeekly.label); *seed = gWeekly.seed; *days = gWeekly.days; }
++    LightLock_Unlock(&gLock);
++    return r;
++}
++
++// ---- finishes
++
++static void flushFinishes()
++{
++    static char body[16384], reply[1024];
++    for (int slot = 0; slot < 32; slot++) {
++        size_t n;
++        char *ft = readText(pathOf(ONLINE_DIR "/slot%d.finish", slot), &n);
++        char *tk = readText(pathOf(ONLINE_DIR "/slot%d.token", slot), &n);
++        if (ft && tk) {
++            tk[strcspn(tk, "\r\n ")] = 0;
++            long long ms = 0;
++            int seed = 0;
++            sscanf(ft, "%lld %d", &ms, &seed);
++            char profile[96] = "", name[32] = "Player", country[4] = "";
++            smzOnlineProfileLoad(profile, sizeof profile);
++            char *tab = strchr(profile, '\t');
++            if (profile[0]) { size_t l = tab ? (size_t)(tab - profile) : strlen(profile); if (l > 0 && l < sizeof name) { memcpy(name, profile, l); name[l] = 0; } }
++            if (tab && tab[1] >= 'A' && tab[1] <= 'Z' && tab[2] >= 'A' && tab[2] <= 'Z') { country[0] = tab[1]; country[1] = tab[2]; country[2] = 0; }
++            for (char *c = name; *c; c++) if (*c == '"' || *c == '\\' || (unsigned char)*c < 32) *c = ' ';
++            int len = snprintf(body, sizeof body, "{\"token\":\"%s\",\"timeMs\":%lld,\"player\":\"%s\"", tk, ms, name);
++            if (country[0]) len += snprintf(body + len, sizeof body - len, ",\"country\":\"%s\"", country);
++            if (seed > 0) len += snprintf(body + len, sizeof body - len, ",\"seed\":\"%d\"", seed);
++            len += snprintf(body + len, sizeof body - len, ",\"proof\":\"");
++            char *pf = readText(pathOf(ONLINE_DIR "/slot%d.proof", slot), NULL);
++            for (const char *c = pf ? pf : ""; *c && len < (int)sizeof body - 8; c++) {
++                if (*c == '\n') { body[len++] = '\\'; body[len++] = 'n'; }
++                else if ((*c >= '0' && *c <= '9') || *c == ' ') body[len++] = *c;
++            }
++            free(pf);
++            snprintf(body + len, sizeof body - len, "\"}");
++            int code = httpRequest("POST", "/api/finish", body, reply, sizeof reply);
++            if (code == 400) writeText(ONLINE_DIR "/last_error.txt", reply, strlen(reply));
++            if (code == 200 || code == 400) {
++                remove(pathOf(ONLINE_DIR "/slot%d.finish", slot));
++                remove(pathOf(ONLINE_DIR "/slot%d.token", slot));
++                remove(pathOf(ONLINE_DIR "/slot%d.proof", slot));
++            }
++        }
++        free(ft); free(tk);
++    }
++}
++
++// ---- threads
++
++static void startupThread(void *) { fetchSeeds(); flushFinishes(); }
++static void flushThread(void *) { flushFinishes(); }
++static void tokenThread(void *arg)
++{
++    int slot = (int)(intptr_t)arg;
++    if (exists(pathOf(ONLINE_DIR "/slot%d.token", slot))) return;
++    int kind = smzOnlineSlotKind(slot);
++    if (!kind) return;
++    char id[40], req[160], reply[512], token[400];
++    installId(id);
++    snprintf(req, sizeof req, "{\"install\":\"%s\",\"kind\":\"%s\"}", id, kind == 3 ? "weekly" : kind == 2 ? "monthly" : "original");
++    if (httpRequest("POST", "/api/start", req, reply, sizeof reply) == 200 && jsonStr(reply, "token", token, sizeof token))
++        writeText(pathOf(ONLINE_DIR "/slot%d.token", slot), token, strlen(token));
++}
++
++static void spawn(ThreadFunc fn, void *arg)
++{
++    Thread t = threadCreate(fn, arg, 64 * 1024, 0x30, -2, true);   // detached
++    (void)t;
++}
++
++static bool gHttpReady;
++static void netUp() { if (!gHttpReady) gHttpReady = R_SUCCEEDED(httpcInit(0x4000)); }
++
++void smzOnlineStartup(void)
++{
++    lockInit();
++    netUp();
++    if (!gHttpReady || gStarted) return;
++    gStarted = true;
++    spawn(startupThread, NULL);
++}
++
++void smzOnlineEnsureToken(int slot)
++{
++    netUp();
++    if (gHttpReady) spawn(tokenThread, (void *)(intptr_t)slot);
++}
++
++void smzOnlineQueueFinish(int slot, int64_t timeMs, int seed)
++{
++    if (!exists(pathOf(ONLINE_DIR "/slot%d.token", slot))) return;
++    char t[48];
++    int n = snprintf(t, sizeof t, "%lld %d", (long long)timeMs, seed);
++    writeText(pathOf(ONLINE_DIR "/slot%d.finish", slot), t, (size_t)n);
++    netUp();
++    if (gHttpReady) spawn(flushThread, NULL);
++}
+diff --git a/source/smz3online.h b/source/smz3online.h
+new file mode 100644
+index 0000000..a83e213
+--- /dev/null
++++ b/source/smz3online.h
+@@ -0,0 +1,30 @@
++#ifndef SMZ3ONLINE_H
++#define SMZ3ONLINE_H
++
++#include <stddef.h>
++#include <stdint.h>
++
++// Online ladders (original, monthly, weekly) for the SMZ3 runs: the same protocol as the other frontends, over the 3DS httpc service.
++// Everything blocking runs on its own thread; the menu polls for what arrived.
++
++// Kind of a run: 0 offline, 1 original rules on the ladder, 2 monthly seed, 3 weekly.
++int smzOnlineSlotKind(int slot);
++void smzOnlineMarkRun(int slot, int online, int kind);
++
++// Starts the seeds fetch and sends the finished runs that are waiting. Safe to call again.
++void smzOnlineStartup(void);
++// Takes a fetched seed once: returns true and fills the label, seed and days left.
++bool smzOnlineTakeMonthly(char label[16], int *seed, int *days);
++bool smzOnlineTakeWeekly(char label[16], int *seed, int *days);
++// The player's profile file text ("name\tCC\tmode"), and saving it back.
++bool smzOnlineProfileLoad(char *out, size_t cap);
++void smzOnlineProfileSave(const char *text);
++
++// While a run is played: asks the server for the run's token (retries are the caller's job) on a thread.
++void smzOnlineEnsureToken(int slot);
++// Records a finished run's time and seed (original ladder) and sends it on a thread.
++void smzOnlineQueueFinish(int slot, int64_t timeMs, int seed);
++// The proof of run file of a slot (loaded and saved as text, see smz3_proof.h).
++const char *smzOnlineProofPath(int slot);
++
++#endif
 diff --git a/source/smz3run.cpp b/source/smz3run.cpp
 new file mode 100644
-index 0000000..c96e4d3
+index 0000000..14820aa
 --- /dev/null
 +++ b/source/smz3run.cpp
-@@ -0,0 +1,538 @@
+@@ -0,0 +1,616 @@
 +// SMZ3 runs: the shared C menu (core/ui) drawn on the second screen, and offline generation (core/gen).
 +#include <3ds.h>
 +#include <dirent.h>
@@ -155,6 +558,8 @@ index 0000000..c96e4d3
 +#include "smz3_host.h"
 +#include "smz3_md5.h"
 +#include "smz3_romsetup.h"
++#include "smz3_tracker.h"
++#include "smz3_proof.h"
 +#include "smz3_run.h"
 +#include "smz3_ui.h"
 +#include "smz3_preview.h"
@@ -170,10 +575,13 @@ index 0000000..c96e4d3
 +#include "3dssettings.h"
 +#include "3dsui.h"
 +#include "smz3run.h"
++#include "smz3online.h"
 +
 +#define SMZ_DIR "sdmc:/SMZ3"
 +#define RUN_DIR SMZ_DIR "/runs"
 +#define SPRITE_DIR SMZ_DIR "/sprites"
++
++static int gPlaySlot = -1;   // slot of the run being played
 +
 +static const int PALETTE[] = {0x10141C, 0x1D2430, 0x2E4A6B, 0xE8ECF2, 0x8793A6, 0xE9A23B, 0xE05A4F, 0x4CC38A, 0x4FC3F7};
 +
@@ -374,7 +782,7 @@ index 0000000..c96e4d3
 +        char path[96], sum[64];
 +        snprintf(path, sizeof path, RUN_DIR "/slot%d.run", i);
 +        SmzRun r;
-+        if (smz_run_load(path, &r) == 0) { smz_run_summary(&r, sum, sizeof sum); ui_set_slot(u, i, 1, r.name, sum); ui_set_slot_stats(u, i, r.zelda_cleared, r.zelda_total, r.metroid_cleared, r.metroid_total, r.play_ms, r.game, r.boss_mask, r.crystal_mask); }
++        if (smz_run_load(path, &r) == 0) { smz_run_summary(&r, sum, sizeof sum); ui_set_slot(u, i, 1, r.name, sum); ui_set_slot_stats(u, i, r.zelda_cleared, r.zelda_total, r.metroid_cleared, r.metroid_total, r.play_ms, r.game, r.boss_mask, r.crystal_mask); ui_set_slot_online(u, i, smzOnlineSlotKind(i)); }
 +        else ui_set_slot(u, i, 0, "", "");
 +    }
 +}
@@ -458,6 +866,7 @@ index 0000000..c96e4d3
 +                }
 +                snprintf(path, sizeof path, RUN_DIR "/slot%d.run", slot);
 +                ok = smz_run_save(path, &r) == 0;
++                if (ok) smzOnlineMarkRun(slot, ui_online_now(u), ui_run_weekly(u) ? 3 : ui_run_monthly(u) ? 2 : 1);
 +            }
 +            if (!ok) snprintf(message, cap, "Cannot write to " RUN_DIR);
 +        } else {
@@ -515,6 +924,12 @@ index 0000000..c96e4d3
 +    for (int i = 0; i < n; i++) list[i] = plandoNames[i];
 +    ui_set_sprites(&ui, 2, list, n);
 +    loadSavedCustoms(&ui);
++    ui_player_enable(&ui, 1);
++    {
++        char profile[96];
++        if (smzOnlineProfileLoad(profile, sizeof profile)) ui_player_load(&ui, profile);
++    }
++    smzOnlineStartup();
 +    refreshSlots(&ui);
 +
 +    bool chosen = false;
@@ -543,6 +958,13 @@ index 0000000..c96e4d3
 +            ui_touch(&ui, t.px, t.py);
 +        }
 +        storeSavedCustoms(&ui);
++        {
++            char label[16];
++            int seed, days;
++            if (smzOnlineTakeMonthly(label, &seed, &days)) ui_set_monthly(&ui, label, seed, days);
++            if (smzOnlineTakeWeekly(label, &seed, &days)) ui_set_weekly(&ui, label, seed, days);
++            if (ui_player_dirty(&ui)) { char profile[96]; ui_player_text(&ui, profile, sizeof profile); smzOnlineProfileSave(profile); }
++        }
 +        if (ui.action != ACT_NONE) {
 +            int act = ui.action, slot = ui.action_slot;
 +            ui.action = ACT_NONE;
@@ -557,7 +979,7 @@ index 0000000..c96e4d3
 +                        : strstr(r.settings, "\"screenShape\":\"pixel\"") ? Setting::ScreenStretch::CrtAspect
 +                        : Setting::ScreenStretch::Aspect_4_3;
 +                    settings3dsApplyScreenStretch();
-+                    mkdir(SMZ_DIR "/saves", 0777); mkdir(SMZ_DIR "/savestates", 0777); snprintf(romPathOut, cap, "%s", r.rom_path); chosen = true; break; }
++                    mkdir(SMZ_DIR "/saves", 0777); mkdir(SMZ_DIR "/savestates", 0777); snprintf(romPathOut, cap, "%s", r.rom_path); gPlaySlot = slot; chosen = true; break; }
 +            } else if (act == ACT_GENERATE) {
 +                ui_busy(&ui, "Generating the seed ...");
 +                drawUi(&ui);
@@ -602,7 +1024,63 @@ index 0000000..c96e4d3
 +    smz3_summarize(Memory.RAM, 0x20000, Memory.SRAM, 0x20000, &sum);
 +    if (sum.started && !startedAt) startedAt = osGetTime();
 +    if (!sum.started) startedAt = 0;
-+    long long sec = startedAt ? (long long)(osGetTime() - startedAt) / 1000 : 0;
++    // play time, proof of run and the online ladder: the shared tracker reads the same memory as the other frontends
++    static SmzTracker trk;
++    static SmzProof proof;
++    static int curSlot = -1, calls = 0, proofDirty = 0, queued = 0;
++    static u64 lastMs = 0, nextToken = 0;
++    if (gPlaySlot != curSlot) {
++        curSlot = gPlaySlot;
++        SmzRun r0;
++        char rp[96];
++        snprintf(rp, sizeof rp, RUN_DIR "/slot%d.run", curSlot);
++        memset(&r0, 0, sizeof r0);
++        if (curSlot >= 0 && smz_run_load(rp, &r0) == 0) smz_tracker_reset(&trk, r0.play_ms, r0.save_ms, r0.save_zelda, r0.save_metroid);
++        else smz_tracker_reset(&trk, 0, 0, 0, 0);
++        size_t pn = 0;
++        char *pt = (char *)readFile(smzOnlineProofPath(curSlot), &pn);
++        if (pt) { char *z = (char *)realloc(pt, pn + 1); if (z) { z[pn] = 0; pt = z; } }
++        smz_proof_parse(&proof, pt ? pt : "");
++        free(pt);
++        lastMs = osGetTime();
++        calls = proofDirty = queued = 0;
++        nextToken = 0;
++    }
++    u64 nowMs = osGetTime();
++    int dt = (int)(nowMs - lastMs);
++    lastMs = nowMs;
++    if (dt < 0 || dt > 3000) dt = 1000;   // a pause in between is not play time
++    smz_tracker_tick(&trk, Memory.RAM, 0x20000, Memory.SRAM, 0x20000, dt, 1);
++    int online = curSlot >= 0 ? smzOnlineSlotKind(curSlot) : 0;
++    if (online && trk.started && smz_proof_note(&proof, trk.cleared, SMZ_TRK_MAX_LOCS, trk.base_ms + trk.pending_ms)) proofDirty = 1;
++    // debug aid: sdmc:/SMZ3/debug_token.txt asks for the run's token even before the game has started
++    if (online) if (FILE *dt = fopen(SMZ_DIR "/debug_token.txt", "r")) { fclose(dt); remove(SMZ_DIR "/debug_token.txt"); smzOnlineEnsureToken(curSlot); }
++    if (online && trk.started && trk.running && nowMs >= nextToken) { nextToken = nowMs + 60000; smzOnlineEnsureToken(curSlot); }
++    if (curSlot >= 0 && (++calls % 10 == 0 || trk.game == 3)) {   // the run's file keeps the play time and the progress
++        char rp[96];
++        SmzRun r1;
++        snprintf(rp, sizeof rp, RUN_DIR "/slot%d.run", curSlot);
++        if (smz_run_load(rp, &r1) == 0 && trk.started) {
++            r1.play_ms = trk.base_ms + trk.pending_ms;
++            r1.last_played = (int64_t)time(NULL) * 1000;
++            r1.game = (int)trk.game;
++            r1.zelda_cleared = (int)trk.zelda_cleared; r1.metroid_cleared = (int)trk.metroid_cleared;
++            r1.boss_mask = trk.boss_mask; r1.crystal_mask = trk.crystal_mask;
++            if (trk.save_ms > 0) { r1.save_ms = trk.save_ms; r1.save_zelda = trk.save_zelda; r1.save_metroid = trk.save_metroid; }
++            if (smz_run_save(rp, &r1) == 0) smz_tracker_commit(&trk);
++            if (online && proofDirty) {
++                static char ptxt[SMZ_PROOF_MAX * 24];
++                size_t pl = smz_proof_format(&proof, ptxt, sizeof ptxt);
++                FILE *pf = fopen(smzOnlineProofPath(curSlot), "wb");
++                if (pf) { fwrite(ptxt, 1, pl, pf); fclose(pf); proofDirty = 0; }
++            }
++            if (online && trk.game == 3 && !queued && strstr(r1.settings, "\"defaultRules\":true")) {
++                queued = 1;
++                smzOnlineQueueFinish(curSlot, r1.play_ms, atoi(r1.seed));
++            }
++        }
++    }
++    long long sec = (trk.base_ms + trk.pending_ms) / 1000;
 +    if (gfxGetScreenFormat(settings3DS.SecondScreen) != GSP_RGB565_OES) gfxSetScreenFormat(settings3DS.SecondScreen, GSP_RGB565_OES);
 +    ui3dsDrawRect(0, 0, 320, 240, PALETTE[0]);
 +    ui3dsDrawRect(0, 0, 320, 28, PALETTE[1]);
@@ -648,6 +1126,9 @@ index 0000000..c96e4d3
 +
 +bool smz3IsRun(void) { return strncmp(Memory.ROMFilename, RUN_DIR "/", sizeof RUN_DIR) == 0; }
 +
++// Monthly and weekly runs allow no save states of any kind.
++bool smz3NoStates(void) { return smz3IsRun() && gPlaySlot >= 0 && smzOnlineSlotKind(gPlaySlot) >= 2; }
++
 +// Gives the next hint (a help is spent in the limited mode). The text is for a dialog.
 +void smz3AskHelp(char *out, size_t cap)
 +{
@@ -681,10 +1162,10 @@ index 0000000..c96e4d3
 +}
 diff --git a/source/smz3run.h b/source/smz3run.h
 new file mode 100644
-index 0000000..1455b7f
+index 0000000..97867b5
 --- /dev/null
 +++ b/source/smz3run.h
-@@ -0,0 +1,18 @@
+@@ -0,0 +1,20 @@
 +#ifndef SMZ3RUN_H
 +#define SMZ3RUN_H
 +
@@ -699,6 +1180,8 @@ index 0000000..1455b7f
 +
 +// True while a generated run is loaded.
 +bool smz3IsRun(void);
++// True when the run being played is a monthly or weekly ladder run: save states are not allowed.
++bool smz3NoStates(void);
 +// Pause menu: spends a help (limited mode) and writes the next hint, or why there is none, into out.
 +void smz3AskHelp(char *out, size_t cap);
 +

@@ -707,3 +707,15 @@ a stored zip, a folder and a wrong revision (USA ALttP is refused with the reaso
   are in place and `.github/workflows/pc.yml` builds the three systems, but macOS has not been built or run.
 - Android: when no usable base ROMs exist, creating a run opens the system file picker (multi-select, files or zips); the two ROMs are kept
   in `files/base/` and generation continues by itself. Verified on a tablet: zip picked, run generated.
+
+### Done: 3DS ROM zips and online ladders (step 4)
+- The 3DS finds the base ROMs by header and MD5 in `sdmc:/SMZ3/base`, `roms/snes`, `roms`, `ROMs` and the card root, loose or inside a zip
+  (`smz_zip_entry` from the core). Verified in Azahar: a run was generated from `base/roms_both.zip`.
+- Online (`snes9x_3ds/source/smz3online.cpp`, own blocking httpc client on short threads, certificate check skipped only on a second try):
+  Player row (name, flag, consent) saved in `sdmc:/SMZ3/online/player.txt`, monthly and weekly seeds fetched at menu start, per slot files
+  `slotN.online/.token/.finish/.proof` like the other frontends, token requested while playing, finish sent with the proof of run.
+  The in-game tracker now uses the shared `SmzTracker` (play time counts only while frames move, saved in the run file every 10 s), so the
+  slot list shows real time and progress. Monthly and weekly runs refuse save states, manual and automatic (`smz3NoStates`).
+- Verified in Azahar (network works there): seeds shown in the mode list (monthly "4 days left", weekly "5d left"), a weekly run generated
+  with the online gradient and the player name, and a real token obtained from the server (`debug_token.txt` debug aid). Not verified: a
+  finished run uploaded from a 3DS, and real hardware.

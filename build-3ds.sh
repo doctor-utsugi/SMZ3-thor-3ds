@@ -15,7 +15,7 @@ done
 cp "$ROOT"/core/gen/smz3_*.h source/
 for f in smz3_state smz3_locations smz3_inventory; do cp "$ROOT/core/$f.c" source/; done
 cp "$ROOT"/core/smz3_*.h source/
-for f in smz3_ui smz3_ui_opts smz3_run smz3_host smz3_preview; do cp "$ROOT/core/ui/$f.c" source/; done
+for f in smz3_ui smz3_ui_opts smz3_run smz3_host smz3_preview smz3_tracker smz3_proof smz3_runlogic; do cp "$ROOT/core/ui/$f.c" source/; done
 cp "$ROOT"/core/ui/smz3_*.h source/
 cp "$ROOT"/vendor/Lemuroid/lemuroid-app/src/main/assets/smz3/ips/*.ips romfs/smz3/ips/
 docker run --rm -v "$PWD":/src -w /src devkitpro/devkitarm:latest make 3dsx -j"$(nproc)"
