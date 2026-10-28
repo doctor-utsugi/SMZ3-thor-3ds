@@ -13,6 +13,8 @@
 #include "pc_gfx.h"
 #include "pc_map.h"
 #include "pc_music.h"
+#include "pc_pad.h"
+#include "pc_settings.h"
 #include "smz3_romderived.h"
 #include "pc_online.h"
 #include "pc_store.h"
@@ -342,13 +344,16 @@ static SmzMapData map_data(void)
     return d;
 }
 
+static int g_base_checked;   /* 0 unknown, 1 ready, -1 not ready; reset when ROMs are added */
 static int base_ok(void)
 {
+    if (g_base_checked) return g_base_checked > 0;
     uint8_t *a, *b;
     char err[64];
-    if (store_load_base(&a, &b, err, sizeof err)) return 0;
+    if (store_load_base(&a, &b, err, sizeof err)) { g_base_checked = -1; return 0; }
     derive_data(a, b);
     free(a); free(b);
+    g_base_checked = 1;
     return 1;
 }
 
@@ -540,18 +545,7 @@ static int pad_bits(const Uint8 *k)
     if (k[SDL_SCANCODE_W]) b |= PAD_R;
     if (k[SDL_SCANCODE_RETURN]) b |= PAD_START;
     if (k[SDL_SCANCODE_BACKSPACE] || k[SDL_SCANCODE_RSHIFT]) b |= PAD_SELECT;
-    if (pad) {
-        #define BTN(c, m) if (SDL_GameControllerGetButton(pad, c)) b |= m
-        BTN(SDL_CONTROLLER_BUTTON_DPAD_UP, PAD_UP); BTN(SDL_CONTROLLER_BUTTON_DPAD_DOWN, PAD_DOWN);
-        BTN(SDL_CONTROLLER_BUTTON_DPAD_LEFT, PAD_LEFT); BTN(SDL_CONTROLLER_BUTTON_DPAD_RIGHT, PAD_RIGHT);
-        BTN(SDL_CONTROLLER_BUTTON_A, PAD_B); BTN(SDL_CONTROLLER_BUTTON_B, PAD_A);
-        BTN(SDL_CONTROLLER_BUTTON_X, PAD_Y); BTN(SDL_CONTROLLER_BUTTON_Y, PAD_X);
-        BTN(SDL_CONTROLLER_BUTTON_LEFTSHOULDER, PAD_L); BTN(SDL_CONTROLLER_BUTTON_RIGHTSHOULDER, PAD_R);
-        BTN(SDL_CONTROLLER_BUTTON_START, PAD_START); BTN(SDL_CONTROLLER_BUTTON_BACK, PAD_SELECT);
-        int lx = SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_LEFTX), ly = SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_LEFTY);
-        if (lx < -16000) b |= PAD_LEFT; if (lx > 16000) b |= PAD_RIGHT;
-        if (ly < -16000) b |= PAD_UP; if (ly > 16000) b |= PAD_DOWN;
-    }
+    b |= pad_snes_bits(pad);
     return b;
 }
 
@@ -806,6 +800,7 @@ static void play(int slot, int game_save_only)
     while (running) {
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
+            int pcode = pad_event_code(&e);
             if (e.type == SDL_QUIT) { running = 0; g_quit = 1; }
             else if (e.type == SDL_KEYDOWN && !e.key.repeat) {
                 SDL_Keycode k = e.key.keysym.sym;
@@ -823,11 +818,11 @@ static void play(int slot, int game_save_only)
                     else if (k == SDLK_PAGEDOWN && tab != TAB_MAP) scroll += 15;
                     else if (k == SDLK_PAGEUP && tab != TAB_MAP) scroll = scroll > 15 ? scroll - 15 : 0;
                 }
-            } else if (e.type == SDL_CONTROLLERBUTTONDOWN) {
-                int b = e.cbutton.button;
+            } else if (pcode >= 0) {
+                int b = pcode;
                 if (leaving) { if (b == SDL_CONTROLLER_BUTTON_A) running = 0; else leaving = 0; continue; }
-                if (b == SDL_CONTROLLER_BUTTON_RIGHTSTICK) show = !show;
-                else if (b == SDL_CONTROLLER_BUTTON_LEFTSTICK) leaving = 1;
+                if (b == pad_code(PA_TRACKER)) show = !show;
+                else if (b == pad_code(PA_LEAVE)) leaving = 1;
                 else if (show && b == SDL_CONTROLLER_BUTTON_RIGHTSHOULDER) tab = (tab + 1) % TAB_COUNT;
                 else if (show && b == SDL_CONTROLLER_BUTTON_LEFTSHOULDER) tab = (tab + TAB_COUNT - 1) % TAB_COUNT;
                 else if (show && b == SDL_CONTROLLER_BUTTON_DPAD_DOWN && tab != TAB_MAP) scroll++;
@@ -851,7 +846,7 @@ static void play(int slot, int game_save_only)
             map_view_move(&mv, dx, dy, dz);
         }
         int input = show || leaving ? 0 : pad_bits(keys);
-        fast = (keys[SDL_SCANCODE_SPACE] && !show) || (pad && SDL_GameControllerGetAxis(pad, SDL_CONTROLLER_AXIS_TRIGGERRIGHT) > 16000);
+        fast = (keys[SDL_SCANCODE_SPACE] && !show) || pad_held(pad, pad_code(PA_FAST));
         int frames = fast ? 4 : 1;
         int hold = (show && pause_on_overlay) || leaving;
         if (!hold) {
@@ -988,11 +983,18 @@ static uint8_t *load_preview(const char *key, size_t *len)
     return store_read(store_path("sprites/%s.pv", name), len);
 }
 
+static int g_menu_quit;
+static void toggle_fullscreen(void) { SDL_SetWindowFullscreen(win, SDL_GetWindowFlags(win) & SDL_WINDOW_FULLSCREEN_DESKTOP ? 0 : SDL_WINDOW_FULLSCREEN_DESKTOP); }
+static void quit_menu(void) { g_menu_quit = 1; }
+static const char *setup_and_recheck(const char *path) { const char *m = setup_path(path); g_base_checked = 0; return m; }
+
 static void window_main(int start_slot)
 {
     char err[200];
     SDL_Window *w = win; (void)w;
     ui_init(&ui);
+    pad_cfg_load();
+    settings_init(&(SettingsHooks){setup_and_recheck, note, toggle_fullscreen, quit_menu});
     gfx_set_preview_loader(load_preview);
     refill_sprites();
     refill_slots();
@@ -1000,6 +1002,12 @@ static void window_main(int start_slot)
     ui_ladder_enable(&ui, 1);
     if (getenv("SMZ3_LADDER")) ui_input(&ui, BTN_RIGHT);   /* test hook: open the online tables */
     if (getenv("SMZ3_SPRITES")) { ui.screen = UI_SPRITES; ui.sprite_game = atoi(getenv("SMZ3_SPRITES")); ui.sprite_cursor = 0; }   /* test hook: open a sprite picker */
+    if (getenv("SMZ3_SETTINGS")) {   /* test hook: open the settings screen (main, pad or files) */
+        const char *t = getenv("SMZ3_SETTINGS");
+        settings_open();
+        if (!strcmp(t, "pad")) settings_nav(BTN_A);
+        else if (!strcmp(t, "files")) settings_open_files();
+    }
     if (getenv("SMZ3_MODE_MENU")) ui.screen = UI_MODE;   /* test hook: open the run mode list */
     detach(monthly_thread, NULL);
     detach(flush_thread, NULL);
@@ -1009,7 +1017,7 @@ static void window_main(int start_slot)
         if (saved) { saved[n] = 0; ui_saved_load(&ui, saved); free(saved); }
     }
     int running = 1, pending_play = start_slot, pending_state_only = 0;
-    while (running) {
+    while (running && !g_menu_quit) {
         if (pending_play >= 0) {
             play(pending_play, pending_state_only);
             pending_play = -1;
@@ -1018,32 +1026,55 @@ static void window_main(int start_slot)
         }
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
+            int pcode = pad_event_code(&e);
+            if (settings_raw(&e)) continue;
             if (e.type == SDL_QUIT) running = 0;
             else if (e.type == SDL_KEYDOWN) {
                 int ok;
                 UiButton b = map_key(e.key.keysym.sym, &ok);
-                if (e.key.keysym.sym == SDLK_F11) SDL_SetWindowFullscreen(win, SDL_GetWindowFlags(win) & SDL_WINDOW_FULLSCREEN_DESKTOP ? 0 : SDL_WINDOW_FULLSCREEN_DESKTOP);
+                if (e.key.keysym.sym == SDLK_F11) toggle_fullscreen();
+                else if (e.key.keysym.sym == SDLK_F1 && !settings_active() && ui.screen == UI_SLOTS_SCREEN) settings_open();
+                else if (ok && settings_active()) settings_nav(b);
                 else if (ok) { if (b == BTN_B && ui.screen == UI_SLOTS_SCREEN) continue; ui_input(&ui, b); }
-            } else if (e.type == SDL_CONTROLLERBUTTONDOWN) {
-                switch (e.cbutton.button) {
-                case SDL_CONTROLLER_BUTTON_DPAD_UP: ui_input(&ui, BTN_UP); break;
-                case SDL_CONTROLLER_BUTTON_DPAD_DOWN: ui_input(&ui, BTN_DOWN); break;
-                case SDL_CONTROLLER_BUTTON_DPAD_LEFT: ui_input(&ui, BTN_LEFT); break;
-                case SDL_CONTROLLER_BUTTON_DPAD_RIGHT: ui_input(&ui, BTN_RIGHT); break;
-                case SDL_CONTROLLER_BUTTON_A: ui_input(&ui, BTN_A); break;
-                case SDL_CONTROLLER_BUTTON_B: ui_input(&ui, BTN_B); break;
-                case SDL_CONTROLLER_BUTTON_LEFTSHOULDER: ui_input(&ui, BTN_L); break;
-                case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER: ui_input(&ui, BTN_R); break;
+            } else if (pcode >= 0) {
+                /* directions come from the polling below (so holding repeats); here the buttons */
+                UiButton b = BTN_A;
+                int ok = 1;
+                switch (pcode) {
+                case SDL_CONTROLLER_BUTTON_A: b = BTN_A; break;
+                case SDL_CONTROLLER_BUTTON_B: b = BTN_B; break;
+                case SDL_CONTROLLER_BUTTON_LEFTSHOULDER: b = BTN_L; break;
+                case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER: b = BTN_R; break;
+                case SDL_CONTROLLER_BUTTON_BACK: case SDL_CONTROLLER_BUTTON_START:
+                    ok = 0;
+                    if (!settings_active() && ui.screen == UI_SLOTS_SCREEN) settings_open();
+                    break;
+                default: ok = 0;
                 }
-            } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT) {
+                if (ok && settings_active()) settings_nav(b);
+                else if (ok) ui_input(&ui, b);
+            } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT && !settings_active()) {
                 int ww, wh;
                 SDL_GetRendererOutputSize(ren, &ww, &wh);
                 float k = (float)ww / UI_W < (float)wh / UI_H ? (float)ww / UI_W : (float)wh / UI_H;
                 ui_touch(&ui, (int)((e.button.x - (ww - UI_W * k) / 2) / k), (int)((e.button.y - (wh - UI_H * k) / 2) / k));
             } else if (e.type == SDL_DROPFILE) {
                 note(accept_rom(e.drop.file));
+                g_base_checked = 0;
                 SDL_free(e.drop.file);
             } else if (e.type == SDL_CONTROLLERDEVICEADDED && !pad) pad = SDL_GameControllerOpen(e.cdevice.which);
+        }
+        {   /* the D-pad and the left stick: one step when pressed, then repeating while held */
+            static int last_dirs, repeats;
+            static Uint32 next_step;
+            int dirs = pad_dirs(pad), fire = 0;
+            Uint32 now = SDL_GetTicks();
+            if (dirs != last_dirs) { fire = dirs; next_step = now + 380; repeats = 0; }
+            else if (dirs && now >= next_step) { fire = dirs; next_step = now + (repeats++ < 4 ? 120 : 70); }
+            last_dirs = dirs;
+            static const struct { int bit; UiButton b; } DIR[4] = {{1, BTN_UP}, {2, BTN_DOWN}, {4, BTN_LEFT}, {8, BTN_RIGHT}};
+            for (int i = 0; i < 4; i++)
+                if (fire & DIR[i].bit) { if (settings_active()) settings_nav(DIR[i].b); else ui_input(&ui, DIR[i].b); }
         }
 
         if (g_month_ready) { g_month_ready = 0; ui_set_monthly(&ui, g_month, g_month_seed, online_days_left()); }
@@ -1071,7 +1102,7 @@ static void window_main(int start_slot)
             else if (act == ACT_LOAD_STATE) { pending_play = slot; pending_state_only = 0; }
             else if (act == ACT_GENERATE) {
                 uint8_t *sm, *z3;
-                if (store_load_base(&sm, &z3, err, sizeof err)) { ui_idle(&ui); note(err); }
+                if (store_load_base(&sm, &z3, err, sizeof err)) { ui_idle(&ui); note(err); settings_open_files(); }
                 else {
                     ui_busy(&ui, "Generating...");
                     ui_draw(&ui);
@@ -1106,8 +1137,11 @@ static void window_main(int start_slot)
         SDL_GetRendererOutputSize(ren, &ww, &wh);
         float ox, oy;
         float k = gfx_ui(&ui, ww, wh, &ox, &oy);
-        if (!base_ok() && ui.screen == UI_SLOTS_SCREEN)
-            gfx_text(ww / 2.0f, wh - 28 * k / 2 - 8, 11 * k, C(0xE9, 0xA2, 0x3B), 1, "Drop your Super Metroid (JU) and ALttP (JP v1.0) ROM files here");
+        if (ui.screen == UI_SLOTS_SCREEN && !settings_active()) {
+            if (!base_ok()) gfx_text(ww / 2.0f, wh - 28 * k / 2 - 8, 11 * k, C(0xE9, 0xA2, 0x3B), 1, "Select: find your ROM files (or drop them here)");
+            else gfx_text(ox + 314 * k, oy + 227 * k, 10 * k, C(0x87, 0x93, 0xA6), 2, "Select: settings");
+        }
+        settings_draw(k, ox, oy);
         if (SDL_GetTicks() < g_note_until) {
             gfx_rect(0, 0, (float)ww, 34 * k / 2 + 8, (SDL_Color){0, 0, 0, 200});
             gfx_text(ww / 2.0f, 6, 13 * k, C(0xE8, 0xEC, 0xF2), 1, g_note);
