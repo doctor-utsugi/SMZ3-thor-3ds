@@ -16,6 +16,7 @@
 #include "pc_music.h"
 #include "pc_pad.h"
 #include "pc_settings.h"
+#include "pc_welcome.h"
 #include "smz3_dungeonmaps.h"
 #include "smz3_romderived.h"
 #include "pc_online.h"
@@ -378,13 +379,28 @@ static int keep_rom(const uint8_t *data, size_t n, int kind, char sm[512], char 
     return 0;
 }
 
+static const char *g_source = "";   /* the file being judged, for the welcome screen */
+
+static const char *base_name(const char *path)
+{
+    const char *s = strrchr(path, '/'), *b = strrchr(path, '\\');
+    if (b && (!s || b > s)) s = b;
+    return s ? s + 1 : path;
+}
+
 static void setup_image(const uint8_t *data, size_t n, char sm[512], char z3[512], const char **msg, int *found)
 {
-    int kind = smz_rom_classify(data, n, NULL, NULL);
+    const uint8_t *start = data;
+    size_t len = n;
+    int kind = smz_rom_classify(data, n, &start, &len);
+    char md5[33];
+    smz_md5_hex(kind ? start : data, kind ? len : n, md5);
+    int kept = 0;
     if (kind == SMZ_ROM_SM || kind == SMZ_ROM_Z3) {
-        if (keep_rom(data, n, kind, sm, z3) == 0) { *msg = smz_rom_message(kind); (*found)++; }
+        if (keep_rom(data, n, kind, sm, z3) == 0) { *msg = smz_rom_message(kind); (*found)++; kept = 1; }
         else *msg = "cannot write into the data folder";
     } else if (!*found) *msg = smz_rom_message(kind);
+    welcome_report(g_source, kind, md5, kept);
 }
 
 /* Takes a file, a zip or a folder, keeps what is Super Metroid (JU) or ALttP (JP v1.0) and records it. Returns a message. */
@@ -405,6 +421,7 @@ static const char *setup_path(const char *path)
             size_t n;
             uint8_t *f = store_read(full, &n);
             if (!f) continue;
+            g_source = e->d_name;
             if (smz_is_zip(f, n)) {
                 for (int i = 0;; i++) {
                     size_t k;
@@ -423,6 +440,7 @@ static const char *setup_path(const char *path)
         size_t n;
         uint8_t *f = store_read(path, &n);
         if (f) {
+            g_source = base_name(path);
             if (smz_is_zip(f, n)) {
                 msg = "no Super Metroid or ALttP ROM in that zip";
                 for (int i = 0;; i++) {
@@ -1034,13 +1052,29 @@ static void toggle_fullscreen(void) { SDL_SetWindowFullscreen(win, SDL_GetWindow
 static void quit_menu(void) { g_menu_quit = 1; }
 static const char *setup_and_recheck(const char *path) { const char *m = setup_path(path); g_base_checked = 0; return m; }
 
+static int welcome_ready(void) { return base_ok(); }
+static void welcome_existing(char names[2][128], char md5[2][33])
+{
+    snprintf(names[0], 128, "saved copy"); snprintf(md5[0], 33, "%s", SMZ_MD5_SM);
+    snprintf(names[1], 128, "saved copy"); snprintf(md5[1], 33, "%s", SMZ_MD5_Z3);
+}
+static const char *welcome_setup(const char *path) { const char *m = setup_and_recheck(path); welcome_added(); return m; }
+/* one place for a menu button, whichever screen has the focus */
+static void menu_button(UiButton b)
+{
+    if (settings_active()) settings_nav(b);
+    else if (welcome_active()) welcome_nav(b);
+    else ui_input(&ui, b);
+}
+
 static void window_main(int start_slot)
 {
     char err[200];
     SDL_Window *w = win; (void)w;
     ui_init(&ui);
     pad_cfg_load();
-    settings_init(&(SettingsHooks){setup_and_recheck, note, toggle_fullscreen, quit_menu});
+    settings_init(&(SettingsHooks){welcome_setup, note, toggle_fullscreen, quit_menu});
+    welcome_init(&(WelcomeHooks){welcome_setup, welcome_ready, settings_open_files, welcome_existing});
     gfx_set_preview_loader(load_preview);
     refill_sprites();
     refill_slots();
@@ -1055,6 +1089,9 @@ static void window_main(int start_slot)
         else if (!strcmp(t, "files")) settings_open_files();
     }
     if (getenv("SMZ3_MODE_MENU")) ui.screen = UI_MODE;   /* test hook: open the run mode list */
+    if (!base_ok() || getenv("SMZ3_WELCOME")) welcome_open();
+    if (getenv("SMZ3_PLAY_BUTTON")) { welcome_nav(BTN_RIGHT); welcome_nav(BTN_A); }   /* test hook: press Play! */
+    if (getenv("SMZ3_DROP")) { note(accept_rom(getenv("SMZ3_DROP"))); g_base_checked = 0; welcome_added(); }   /* test hook: drop a file on the welcome screen */
     detach(monthly_thread, NULL);
     detach(flush_thread, NULL);
     {
@@ -1079,9 +1116,8 @@ static void window_main(int start_slot)
                 int ok;
                 UiButton b = map_key(e.key.keysym.sym, &ok);
                 if (e.key.keysym.sym == SDLK_F11) toggle_fullscreen();
-                else if (e.key.keysym.sym == SDLK_F1 && !settings_active() && ui.screen == UI_SLOTS_SCREEN) settings_open();
-                else if (ok && settings_active()) settings_nav(b);
-                else if (ok) { if (b == BTN_B && ui.screen == UI_SLOTS_SCREEN) continue; ui_input(&ui, b); }
+                else if (e.key.keysym.sym == SDLK_F1 && !settings_active() && !welcome_active() && ui.screen == UI_SLOTS_SCREEN) settings_open();
+                else if (ok) { if (b == BTN_B && ui.screen == UI_SLOTS_SCREEN && !settings_active() && !welcome_active()) continue; menu_button(b); }
             } else if (pcode >= 0) {
                 /* directions come from the polling below (so holding repeats); here the buttons */
                 UiButton b = BTN_A;
@@ -1093,20 +1129,21 @@ static void window_main(int start_slot)
                 case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER: b = BTN_R; break;
                 case SDL_CONTROLLER_BUTTON_BACK: case SDL_CONTROLLER_BUTTON_START:
                     ok = 0;
-                    if (!settings_active() && ui.screen == UI_SLOTS_SCREEN) settings_open();
+                    if (!settings_active() && !welcome_active() && ui.screen == UI_SLOTS_SCREEN) settings_open();
                     break;
                 default: ok = 0;
                 }
-                if (ok && settings_active()) settings_nav(b);
-                else if (ok) ui_input(&ui, b);
+                if (ok) menu_button(b);
             } else if (e.type == SDL_MOUSEBUTTONDOWN && e.button.button == SDL_BUTTON_LEFT && !settings_active()) {
                 int ww, wh;
                 SDL_GetRendererOutputSize(ren, &ww, &wh);
                 float k = (float)ww / UI_W < (float)wh / UI_H ? (float)ww / UI_W : (float)wh / UI_H;
-                ui_touch(&ui, (int)((e.button.x - (ww - UI_W * k) / 2) / k), (int)((e.button.y - (wh - UI_H * k) / 2) / k));
+                int lx = (int)((e.button.x - (ww - UI_W * k) / 2) / k), ly = (int)((e.button.y - (wh - UI_H * k) / 2) / k);
+                if (welcome_active()) welcome_click(lx, ly); else ui_touch(&ui, lx, ly);
             } else if (e.type == SDL_DROPFILE) {
                 note(accept_rom(e.drop.file));
                 g_base_checked = 0;
+                welcome_added();
                 SDL_free(e.drop.file);
             } else if (e.type == SDL_CONTROLLERDEVICEADDED && !pad) pad = SDL_GameControllerOpen(e.cdevice.which);
         }
@@ -1120,7 +1157,7 @@ static void window_main(int start_slot)
             last_dirs = dirs;
             static const struct { int bit; UiButton b; } DIR[4] = {{1, BTN_UP}, {2, BTN_DOWN}, {4, BTN_LEFT}, {8, BTN_RIGHT}};
             for (int i = 0; i < 4; i++)
-                if (fire & DIR[i].bit) { if (settings_active()) settings_nav(DIR[i].b); else ui_input(&ui, DIR[i].b); }
+                if (fire & DIR[i].bit) menu_button(DIR[i].b);
         }
 
         if (g_month_ready) { g_month_ready = 0; ui_set_monthly(&ui, g_month, g_month_seed, online_days_left()); }
@@ -1148,7 +1185,7 @@ static void window_main(int start_slot)
             else if (act == ACT_LOAD_STATE) { pending_play = slot; pending_state_only = 0; }
             else if (act == ACT_GENERATE) {
                 uint8_t *sm, *z3;
-                if (store_load_base(&sm, &z3, err, sizeof err)) { ui_idle(&ui); note(err); settings_open_files(); }
+                if (store_load_base(&sm, &z3, err, sizeof err)) { ui_idle(&ui); note(err); welcome_open(); }
                 else {
                     ui_busy(&ui, "Generating...");
                     ui_draw(&ui);
@@ -1183,12 +1220,19 @@ static void window_main(int start_slot)
         SDL_GetRendererOutputSize(ren, &ww, &wh);
         float ox, oy;
         float k = gfx_ui(&ui, ww, wh, &ox, &oy);
-        if (ui.screen == UI_SLOTS_SCREEN && !settings_active()) {
+        if (ui.screen == UI_SLOTS_SCREEN && !settings_active() && !welcome_active()) {
             if (!base_ok()) gfx_text(ww / 2.0f, wh - 28 * k / 2 - 8, 11 * k, C(0xE9, 0xA2, 0x3B), 1, "Select: find your ROM files (or drop them here)");
             else gfx_text(ox + 314 * k, oy + 227 * k, 10 * k, C(0x87, 0x93, 0xA6), 2, "Select: settings");
         }
+        welcome_draw(k, ox, oy);
         settings_draw(k, ox, oy);
-        if (SDL_GetTicks() < g_note_until) {
+        {
+            static int last_screen = -1, last_flags;
+            int flags = welcome_active() | settings_active() << 1;
+            if ((int)ui.screen != last_screen || flags != last_flags) { if (last_screen >= 0) fx_screen_changed(); last_screen = (int)ui.screen; last_flags = flags; }
+            fx_draw(ww, wh);
+        }
+        if (SDL_GetTicks() < g_note_until && !welcome_active()) {
             gfx_rect(0, 0, (float)ww, 34 * k / 2 + 8, (SDL_Color){0, 0, 0, 200});
             gfx_text(ww / 2.0f, 6, 13 * k, C(0xE8, 0xEC, 0xF2), 1, g_note);
         }

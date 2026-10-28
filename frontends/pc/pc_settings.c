@@ -17,6 +17,7 @@ static const char *const MAIN_ROWS[] = {"Controller buttons", "Find the ROM file
 static SettingsHooks hk;
 static int screen, cursor, scroll, rebind_action;
 static Uint32 rebind_until;
+static int files_direct;   /* the browser was opened from outside the settings: closing it leaves the settings screen too */
 
 typedef struct { char name[200]; int dir; } Entry;
 static Entry *entries;
@@ -101,20 +102,27 @@ void settings_open_files(void)
     }
     list_dir(start);
     screen = S_FILES;
+    files_direct = 1;
+}
+
+static void leave_files(void)
+{
+    if (files_direct) screen = S_OFF;
+    else { screen = S_MAIN; cursor = 1; scroll = 0; }
 }
 
 static void file_pick(int row)
 {
     if (row == 0) {
         hk.note(hk.setup(cwd));
-        screen = S_MAIN; cursor = 1; scroll = 0;
+        leave_files();
     } else if (row == 1) go_up();
     else {
         Entry e = entries[row - 2];
         char full[1400];
         snprintf(full, sizeof full, "%s/%s", cwd, e.name);
         if (e.dir) list_dir(full);
-        else { hk.note(hk.setup(full)); screen = S_MAIN; cursor = 1; scroll = 0; }
+        else { hk.note(hk.setup(full)); leave_files(); }
     }
 }
 
@@ -137,13 +145,12 @@ void settings_nav(UiButton b)
     else if (b == BTN_L && screen == S_FILES) cursor = cursor > SHOWN ? cursor - SHOWN : 0;
     else if (b == BTN_B) {
         if (screen == S_MAIN) screen = S_OFF;
-        else if (screen == S_FILES && cursor != 1) { cursor = 1; }   /* the "up one level" row; pressing back again climbs */
-        else if (screen == S_FILES) go_up();
+        else if (screen == S_FILES) leave_files();
         else { screen = S_MAIN; cursor = 0; scroll = 0; }
     } else if (b == BTN_A) {
         if (screen == S_MAIN) {
             if (cursor == 0) { screen = S_PAD; cursor = 0; scroll = 0; }
-            else if (cursor == 1) settings_open_files();
+            else if (cursor == 1) { settings_open_files(); files_direct = 0; }
             else if (cursor == 2) hk.fullscreen();
             else hk.quit();
         } else if (screen == S_PAD) {
@@ -228,7 +235,7 @@ void settings_draw(float k, float ox, float oy)
         }
         size_t l = strlen(cwd);
         text(k, ox, oy, 12, 210, 4, 0, l > 44 ? cwd + l - 44 : cwd);
-        hint = "A open   B up   L R page";
+        hint = "A open   B close   L R page";
     }
     text(k, ox, oy, 12, 226, 4, 0, hint);
 }
