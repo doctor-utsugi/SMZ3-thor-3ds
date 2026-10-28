@@ -3,7 +3,7 @@
 Dual-screen SMZ3 (Super Metroid + A Link to the Past combo randomizer) for the Nintendo 3DS / New 3DS and the AYN Thor.
 The top screen runs the game; the bottom screen shows the run: current map, items and checks, run data, and what is reachable by logic.
 
-Status: playable on the AYN Thor, the 3DS (Azahar-tested) and PC (Linux; Windows cross-built and run under Wine; macOS untested). See
+Status: playable on the AYN Thor, the 3DS (Azahar-tested) and PC (Linux; Windows cross-built and run under Wine; macOS compiled in CI (Intel runner), never run). See
 [docs/PLAN.md](docs/PLAN.md).
 
 ## Android app (AYN Thor)
