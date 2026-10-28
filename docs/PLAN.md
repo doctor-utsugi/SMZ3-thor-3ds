@@ -652,3 +652,46 @@ attestation does not fit an APK / 3DS / Linux project, so the server checks that
 
 The Android Map tab has a [FOLLOW] button next to [CENTER]: while on, the map keeps the player in the middle at the current zoom
 (so it also recentres when the game switches between ALttP and Super Metroid) and cannot be dragged. PC already had it on `F`.
+
+## Distribution plan: one app per platform, the user brings the two ROMs
+
+Goal: the user downloads one file per platform, points it at their Super Metroid and ALttP ROMs once, and plays. Nothing derived from
+a ROM is ever shipped; the generator, patches (IPS), sprites and UI are all in the shared C core, so no extra tool or runtime is needed.
+
+### Common "ROM setup" step (core, shared by every frontend)
+- `smz_rom_identify(bytes, len)` -> Super Metroid / ALttP / unknown, by size (with or without a 512-byte copier header, which is stripped),
+  internal header and MD5 against the accepted dumps (`smz3_md5.c` is already in the core). Reasons are shown plainly ("this is the
+  Japanese ALttP, use the USA/US-Europe dump").
+- Accepts the two ROMs in any order, in any of: a `.sfc/.smc/.zip` file, a folder (scanned), several files dropped at once. A zip is
+  read with a small inflate in the core (no zlib dependency).
+- Result: a "base" file `smz3_base.bin` (the combined 4 MB input the generator needs) in the app data folder. Every run is generated
+  from it, so the originals are not needed again and the user can delete them.
+
+### Per platform
+- **PC (Linux, Windows, macOS):** one executable per OS, SDL2 and snes9x linked statically, no installer.
+  - First start shows a window "Drop your two ROMs here" (SDL drop events) plus a Browse button (native dialog through the OS
+    helper: `zenity`/`kdialog` when present, `tinyfiledialogs` single C file otherwise). CLI stays: `smz3 setup <rom> <rom>`.
+  - Online features use `curl`, which ships with Windows 10+ and macOS and is on practically every Linux; no libcurl link.
+  - Builds: Linux static (musl or AppImage), Windows with MinGW-w64 cross compiler (`build-pc.sh windows`), macOS universal
+    through `zig cc` or a GitHub Actions macOS runner (macOS cannot be cross-built cleanly from Linux). Portable mode already exists
+    (`portable.txt`, data beside the binary).
+  - Still to port: paths (`%APPDATA%`, `~/Library/Application Support`), `fork/exec` curl -> `CreateProcess`/`posix_spawn`,
+    `pthread` wrappers, `SDL_GetPrefPath` for the data folder.
+- **Thor / Android:** the APK already carries the generator. Setup = Android's file picker (Storage Access Framework, no
+  storage permission) with multi-select for the two ROMs, or the existing scan of the usual ROM folders; the result is the base file.
+- **3DS:** snes9x_3ds `.3dsx` plus its romfs (IPS patches) in one folder; the user puts the two ROMs on the SD card in `/smz3/` (any
+  names) and the app finds them by header and MD5 on first start, with an on-screen list of what is missing. No PC tool is required.
+  Optional PC helper: the same `smz3 setup` writes `smz3_base.bin` to the SD card so the 3DS skips the scan. Online features reuse
+  the `3dsra_http` client.
+
+### The "final version" tool
+`smz3 setup <rom> <rom>` (PC CLI, also the GUI drop window) is the single tool: it validates both ROMs, writes the base file, and
+with `--target thor|3ds|pc --out DIR` it lays out the folder to copy to a device (base file in the right place for that app).
+A release is therefore always the same few files per platform: `smz3-linux`, `smz3-windows.exe`, `smz3-macos`, `smz3.apk`, `smz3.3dsx`.
+It never contains ROM data, so it can be published freely.
+
+### Order of work
+1. `smz_rom_identify` + zip reading + `smz3 setup` in the core and PC CLI (testable now, no hardware).
+2. PC drop window, then Windows and macOS builds and path/process wrappers.
+3. Thor: SAF picker feeding the same base file.
+4. 3DS: first-start scan + base file; then online through `3dsra_http`.
