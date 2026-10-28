@@ -8,7 +8,7 @@ on:
     tags: ['v*']
 jobs:
   linux:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04   # the AppImage runs on distributions at least as new as this one
     steps:
       - uses: actions/checkout@v4
       - name: Fetch assets
@@ -24,9 +24,11 @@ jobs:
           python3 tools/prepare_assets.py
       - run: sudo apt-get update && sudo apt-get install -y libsdl2-dev python3-pil
       - run: ./build-pc.sh
-      - run: tar czf smz3-linux.tar.gz -C build/pc smz3
+      - run: ./tools/build-appimage.sh
       - uses: actions/upload-artifact@v4
-        with: { name: smz3-linux, path: smz3-linux.tar.gz }
+        with:
+          name: smz3-linux
+          path: build/SMZ3-x86_64.AppImage
   windows:
     runs-on: ubuntu-latest
     steps:
@@ -44,13 +46,16 @@ jobs:
           python3 tools/prepare_assets.py
       - run: sudo apt-get update && sudo apt-get install -y gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64 python3-pil
       - run: ./build-pc.sh windows
+      - run: cd build/win && zip -9 ../../SMZ3-windows-x64.zip smz3.exe
       - uses: actions/upload-artifact@v4
-        with: { name: smz3-windows, path: build/win/smz3.exe }
+        with:
+          name: smz3-windows
+          path: SMZ3-windows-x64.zip
   macos:
     strategy:
       fail-fast: false
       matrix:
-        os: [macos-15-intel]
+        os: [macos-15-intel]   # the Apple-silicon images never got a runner for this account
     runs-on: ${{ matrix.os }}
     timeout-minutes: 25
     steps:
@@ -84,8 +89,29 @@ jobs:
           rc=$?
           echo "window run exit code $rc (142 = still running when the alarm fired)"
           [ $rc -eq 142 ] || exit 1
-      - run: tar czf smz3-macos.tar.gz -C build/pc smz3
+      - run: tar czf SMZ3-macos-intel.tar.gz -C build/pc smz3
       - uses: actions/upload-artifact@v4
         with:
-          name: smz3-${{ matrix.os }}
-          path: smz3-macos.tar.gz
+          name: smz3-macos
+          path: SMZ3-macos-intel.tar.gz
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [linux, windows, macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { path: dist, merge-multiple: true }
+      - name: Create the release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat > notes.md <<'NOTES'
+          PC builds of the SMZ3 randomizer with its tracker. Put your own Super Metroid (JU) and A Link to the Past (JP v1.0) ROMs in through Settings (Select) or by dropping them on the window.
+
+          - **Linux:** `SMZ3-x86_64.AppImage`, `chmod +x` it and run it. SDL2 is inside.
+          - **Windows:** unzip `SMZ3-windows-x64.zip` and run `smz3.exe` (SmartScreen may warn: More info, Run anyway).
+          - **macOS (Intel, also runs on Apple silicon through Rosetta):** `tar xzf SMZ3-macos-intel.tar.gz`, `xattr -d com.apple.quarantine smz3`, `brew install sdl2`, then `./smz3`. Not signed.
+          NOTES
+          gh release create "${GITHUB_REF_NAME}" dist/* --repo "${GITHUB_REPOSITORY}" --title "SMZ3 PC ${GITHUB_REF_NAME}" --notes-file notes.md

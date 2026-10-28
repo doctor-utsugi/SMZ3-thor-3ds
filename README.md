@@ -41,6 +41,10 @@ refused with the reason). Loose files, zips or a folder all work, with or withou
 
 The PC app works completely with a game controller. In the run list, **Select** (or F1) opens the settings: reassign the buttons, find the ROM files with a file browser (no drag and drop needed), full screen, quit. While playing, the right stick click toggles the tracker and the left stick click leaves the run (both can be reassigned too). In the tracker's Map tab, **Y** (or D) switches to the dungeon pictures; the D-pad picks the dungeon and floor and **A** returns to Link's floor.
 
+### Installing the PC app
+
+Grab the files from the latest release: Linux `SMZ3-x86_64.AppImage` (make it executable and run it), Windows `SMZ3-windows-x64.zip`, macOS `SMZ3-macos-intel.tar.gz`. `tools/build-appimage.sh` rebuilds the AppImage after `./build-pc.sh`.
+
 ### macOS: opening the unsigned app
 
 The macOS build is not signed or notarized, so Gatekeeper refuses it the first time ("cannot be opened because the developer cannot be verified"). Either:
