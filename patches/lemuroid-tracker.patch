@@ -468,10 +468,10 @@ index 0000000..c830243
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/NativeMenuScreen.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/NativeMenuScreen.kt
 new file mode 100644
-index 0000000..a674689
+index 0000000..6470470
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/NativeMenuScreen.kt
-@@ -0,0 +1,299 @@
+@@ -0,0 +1,330 @@
 +package com.swordfish.lemuroid.app.mobile.feature.runs
 +
 +import android.graphics.Paint
@@ -632,6 +632,26 @@ index 0000000..a674689
 +    }
 +    LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
 +
++    val generateAgain = remember { arrayOf<((Int) -> Unit)?>(null) }
++    var romSlot by remember { mutableIntStateOf(-1) }
++    val picker = androidx.activity.compose.rememberLauncherForActivityResult(androidx.activity.result.contract.ActivityResultContracts.OpenMultipleDocuments()) { uris ->
++        val slot = romSlot
++        scope.launch {
++            if (uris.isEmpty()) { Smz3Native.uiIdle(); version++; return@launch }
++            Smz3Native.uiBusy("Reading the ROMs ...")
++            version++
++            val message = RunGenerator.importRoms(context, uris)
++            if (message.startsWith("Both")) generateAgain[0]?.invoke(slot)
++            else {
++                Smz3Native.uiBusy(message.take(43))
++                version++
++                kotlinx.coroutines.delay(4000)
++                Smz3Native.uiIdle()
++                version++
++            }
++        }
++    }
++
 +    fun generate(slot: Int) {
 +        Smz3Native.uiBusy("Reading the base ROMs ...")
 +        version++
@@ -639,7 +659,16 @@ index 0000000..a674689
 +            val outcome = runCatching {
 +                val games = retrogradeDb.gameDao().selectListBySystem("snes")
 +                val (sm, z3) = RunGenerator.findBaseRoms(context, games)
-+                    ?: error(RunGenerator.wrongBaseRom ?: "Super Metroid and ALttP ROMs are needed")
++                    ?: run {
++                        if (RunGenerator.wrongBaseRom == null) {   // nothing usable yet: ask for the two ROMs (files or zips), generation restarts afterwards
++                            romSlot = slot
++                            Smz3Native.uiBusy("Pick your Super Metroid and ALttP ROMs")
++                            version++
++                            picker.launch(arrayOf("*/*"))
++                            return@launch
++                        }
++                        error(RunGenerator.wrongBaseRom!!)
++                    }
 +                Smz3Native.uiBusy("Generating the seed ...")
 +                version++
 +                // a plando file replaces the generated seed and carries its own settings
@@ -681,6 +710,8 @@ index 0000000..a674689
 +            refreshSlots()
 +        }
 +    }
++
++    generateAgain[0] = ::generate
 +
 +    fun pollActions() {
 +        pendingWeekly.getAndSet(null)?.let { (label, seed) -> Smz3Native.uiSetWeekly(label, seed, daysLeftInWeek()); version++ }
@@ -979,10 +1010,10 @@ index 0000000..481e953
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/RunGenerator.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/RunGenerator.kt
 new file mode 100644
-index 0000000..3763e1f
+index 0000000..9af5943
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/RunGenerator.kt
-@@ -0,0 +1,218 @@
+@@ -0,0 +1,260 @@
 +package com.swordfish.lemuroid.app.mobile.feature.runs
 +
 +import android.content.Context
@@ -1142,6 +1173,8 @@ index 0000000..3763e1f
 +            if (found.first == "sm" && sm == null) sm = found.second
 +            if (found.first == "z3" && z3 == null) z3 = found.second
 +        }
++        // the copies kept by the ROM picker come first: the originals may have moved or been deleted since
++        for (name in listOf("sm.bin", "z3.bin")) offer(runCatching { File(baseDir(context), name).readBytes() }.getOrNull())
 +        for (game in games) {
 +            if (sm != null && z3 != null) break
 +            offer(runCatching { openRom(context, game).use { it.readBytes() } }.getOrNull())
@@ -1153,6 +1186,46 @@ index 0000000..3763e1f
 +                ?.forEach { offer(runCatching { it.readBytes() }.getOrNull()) }
 +        }
 +        if (sm != null && z3 != null) sm!! to z3!! else null
++    }
++
++    private fun baseDir(context: Context) = File(context.filesDir, "base").also { it.mkdirs() }
++
++    /**
++     * Keeps the base ROMs among the files the player picked (loose or inside zips, with or without copier header) in the app's own
++     * storage, so the originals are not needed again. Returns what was found, as a short sentence.
++     */
++    suspend fun importRoms(context: Context, uris: List<Uri>): String = withContext(Dispatchers.IO) {
++        var gotSm = File(baseDir(context), "sm.bin").exists()
++        var gotZ3 = File(baseDir(context), "z3.bin").exists()
++        var wrong: String? = null
++        fun take(bytes: ByteArray) {
++            val found = asBaseRom(bytes) ?: return
++            val md5 = java.security.MessageDigest.getInstance("MD5").digest(found.second).joinToString("") { "%02x".format(it) }
++            if (md5 != (if (found.first == "sm") SM_MD5 else Z3_MD5)) {
++                wrong = if (found.first == "sm") "Super Metroid must be the (JU) dump" else "ALttP must be the Japanese v1.0 dump"
++                return
++            }
++            File(baseDir(context), if (found.first == "sm") "sm.bin" else "z3.bin").writeBytes(found.second)
++            if (found.first == "sm") gotSm = true else gotZ3 = true
++        }
++        for (uri in uris) runCatching {
++            val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() } ?: return@runCatching
++            if (bytes.size > 4 && bytes[0] == 'P'.code.toByte() && bytes[1] == 'K'.code.toByte()) {
++                java.util.zip.ZipInputStream(bytes.inputStream()).use { zip ->
++                    while (true) {
++                        val entry = zip.nextEntry ?: break
++                        if (!entry.isDirectory) take(zip.readBytes())
++                    }
++                }
++            } else take(bytes)
++        }
++        when {
++            gotSm && gotZ3 -> "Both ROMs found"
++            wrong != null -> wrong!!
++            gotSm -> "Only Super Metroid found: ALttP is still needed"
++            gotZ3 -> "Only ALttP found: Super Metroid is still needed"
++            else -> "Those files are not Super Metroid (JU) or ALttP (JP v1.0)"
++        }
 +    }
 +
 +    /** Same layout as Rom.CombineSMZ3Rom in the tracker: 6 MB, Super Metroid banks interleaved, ALttP in the high banks. */

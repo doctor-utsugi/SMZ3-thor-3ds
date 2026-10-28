@@ -699,3 +699,11 @@ It never contains ROM data, so it can be published freely.
 `smz3 setup <rom|zip|folder>...` and the window's drag and drop share `setup_path`: each recognised ROM is copied without header to
 `base/supermetroid.sfc` and `base/alttp.sfc` in the data folder and `config.txt` points there. Tested with loose files, a deflate zip,
 a stored zip, a folder and a wrong revision (USA ALttP is refused with the reason). Android and 3DS still use their own scans.
+
+### Done: Windows build, Android ROM picker (steps 2 and 3)
+- `./build-pc.sh windows` cross-builds `build/win/smz3.exe` with MinGW-w64 (SDL2 and snes9x linked statically, SDL2's MinGW files downloaded
+  once; console hidden when started without arguments). Under Wine: `setup`, `gen` (byte-identical ROM to the Linux build for the same seed)
+  and the window all work; online needs `curl.exe` (Windows 10+). Data folder is `%APPDATA%\smz3`. macOS paths (`~/Library/Application Support`)
+  are in place and `.github/workflows/pc.yml` builds the three systems, but macOS has not been built or run.
+- Android: when no usable base ROMs exist, creating a run opens the system file picker (multi-select, files or zips); the two ROMs are kept
+  in `files/base/` and generation continues by itself. Verified on a tablet: zip picked, run generated.
