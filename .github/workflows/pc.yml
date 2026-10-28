@@ -20,7 +20,7 @@ jobs:
           git clone -q https://github.com/TheTrackerCouncil/SMZ3CasSprites.git vendor/SMZ3CasSprites
           git -C vendor/SMZ3CasSprites checkout -q 07995af80f3f36833cb34a413afcc84bd2435386
           [ -f data/sm_rooms.json ] || echo '[]' > data/sm_rooms.json
-          python3 -c 'import PIL' 2>/dev/null || python3 -m pip install --break-system-packages pillow
+          python3 -c 'import PIL' 2>/dev/null || python3 -m pip install --break-system-packages pillow || python3 -m pip install pillow
           python3 tools/prepare_assets.py
       - run: sudo apt-get update && sudo apt-get install -y libsdl2-dev python3-pil
       - run: ./build-pc.sh
@@ -42,7 +42,7 @@ jobs:
           git clone -q https://github.com/TheTrackerCouncil/SMZ3CasSprites.git vendor/SMZ3CasSprites
           git -C vendor/SMZ3CasSprites checkout -q 07995af80f3f36833cb34a413afcc84bd2435386
           [ -f data/sm_rooms.json ] || echo '[]' > data/sm_rooms.json
-          python3 -c 'import PIL' 2>/dev/null || python3 -m pip install --break-system-packages pillow
+          python3 -c 'import PIL' 2>/dev/null || python3 -m pip install --break-system-packages pillow || python3 -m pip install pillow
           python3 tools/prepare_assets.py
       - run: sudo apt-get update && sudo apt-get install -y gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64 python3-pil
       - run: ./build-pc.sh windows
@@ -69,7 +69,7 @@ jobs:
           git clone -q https://github.com/TheTrackerCouncil/SMZ3CasSprites.git vendor/SMZ3CasSprites
           git -C vendor/SMZ3CasSprites checkout -q 07995af80f3f36833cb34a413afcc84bd2435386
           [ -f data/sm_rooms.json ] || echo '[]' > data/sm_rooms.json
-          python3 -c 'import PIL' 2>/dev/null || python3 -m pip install --break-system-packages pillow
+          python3 -c 'import PIL' 2>/dev/null || python3 -m pip install --break-system-packages pillow || python3 -m pip install pillow
           python3 tools/prepare_assets.py
       - run: brew install sdl2 && pip3 install pillow --break-system-packages
       - run: ./build-pc.sh
