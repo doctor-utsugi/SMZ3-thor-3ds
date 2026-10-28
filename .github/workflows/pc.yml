@@ -1,4 +1,6 @@
-# Builds the PC app for Linux, Windows and macOS. The IPS patches and map assets live in the Lemuroid fork submodule.
+# Builds the PC app for Linux, Windows and macOS. vendor/ is not in git: the IPS patches and map icons are copied from their source
+# repositories by tools/prepare_assets.py. The Super Metroid room table is derived from a ROM and cannot be committed, so these CI
+# builds ship an empty one (the map still works, without the discovered-room overlay of Super Metroid).
 name: pc
 on:
   workflow_dispatch:
@@ -9,16 +11,37 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with: { submodules: recursive }
+      - name: Fetch assets
+        shell: bash
+        run: |
+          mkdir -p vendor/Lemuroid/lemuroid-app/src/main/assets/smz3
+          git clone -q https://github.com/TheTrackerCouncil/SMZ3Randomizer.git vendor/SMZ3Randomizer
+          git -C vendor/SMZ3Randomizer checkout -q cf4a4376de9506cb41826a252bb3afb66728e82c
+          git clone -q https://github.com/TheTrackerCouncil/SMZ3CasSprites.git vendor/SMZ3CasSprites
+          git -C vendor/SMZ3CasSprites checkout -q 07995af80f3f36833cb34a413afcc84bd2435386
+          [ -f data/sm_rooms.json ] || echo '[]' > data/sm_rooms.json
+          python3 -c 'import PIL' 2>/dev/null || python3 -m pip install --break-system-packages pillow
+          python3 tools/prepare_assets.py
       - run: sudo apt-get update && sudo apt-get install -y libsdl2-dev python3-pil
       - run: ./build-pc.sh
+      - run: tar czf smz3-linux.tar.gz -C build/pc smz3
       - uses: actions/upload-artifact@v4
-        with: { name: smz3-linux, path: build/pc/smz3 }
+        with: { name: smz3-linux, path: smz3-linux.tar.gz }
   windows:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with: { submodules: recursive }
+      - name: Fetch assets
+        shell: bash
+        run: |
+          mkdir -p vendor/Lemuroid/lemuroid-app/src/main/assets/smz3
+          git clone -q https://github.com/TheTrackerCouncil/SMZ3Randomizer.git vendor/SMZ3Randomizer
+          git -C vendor/SMZ3Randomizer checkout -q cf4a4376de9506cb41826a252bb3afb66728e82c
+          git clone -q https://github.com/TheTrackerCouncil/SMZ3CasSprites.git vendor/SMZ3CasSprites
+          git -C vendor/SMZ3CasSprites checkout -q 07995af80f3f36833cb34a413afcc84bd2435386
+          [ -f data/sm_rooms.json ] || echo '[]' > data/sm_rooms.json
+          python3 -c 'import PIL' 2>/dev/null || python3 -m pip install --break-system-packages pillow
+          python3 tools/prepare_assets.py
       - run: sudo apt-get update && sudo apt-get install -y gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64 python3-pil
       - run: ./build-pc.sh windows
       - uses: actions/upload-artifact@v4
@@ -27,8 +50,19 @@ jobs:
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
-        with: { submodules: recursive }
+      - name: Fetch assets
+        shell: bash
+        run: |
+          mkdir -p vendor/Lemuroid/lemuroid-app/src/main/assets/smz3
+          git clone -q https://github.com/TheTrackerCouncil/SMZ3Randomizer.git vendor/SMZ3Randomizer
+          git -C vendor/SMZ3Randomizer checkout -q cf4a4376de9506cb41826a252bb3afb66728e82c
+          git clone -q https://github.com/TheTrackerCouncil/SMZ3CasSprites.git vendor/SMZ3CasSprites
+          git -C vendor/SMZ3CasSprites checkout -q 07995af80f3f36833cb34a413afcc84bd2435386
+          [ -f data/sm_rooms.json ] || echo '[]' > data/sm_rooms.json
+          python3 -c 'import PIL' 2>/dev/null || python3 -m pip install --break-system-packages pillow
+          python3 tools/prepare_assets.py
       - run: brew install sdl2 && pip3 install pillow --break-system-packages
       - run: ./build-pc.sh
+      - run: tar czf smz3-macos.tar.gz -C build/pc smz3
       - uses: actions/upload-artifact@v4
-        with: { name: smz3-macos, path: build/pc/smz3 }
+        with: { name: smz3-macos, path: smz3-macos.tar.gz }

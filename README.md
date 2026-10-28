@@ -37,6 +37,18 @@ refused with the reason). Loose files, zips or a folder all work, with or withou
 | **Thor / Android** | Create a run: with no ROMs known, the system file picker opens (select both files or a zip once). |
 | **3DS** | Copy both ROMs (or a zip) to `/SMZ3/base` on the SD card (`roms`, `roms/snes` and the card root are searched too). |
 
+### macOS: opening the unsigned app
+
+The macOS build is not signed or notarized, so Gatekeeper refuses it the first time ("cannot be opened because the developer cannot be verified"). Either:
+
+```bash
+tar xzf smz3-macos.tar.gz
+xattr -d com.apple.quarantine smz3     # clears the download flag; then ./smz3 opens normally
+chmod +x smz3
+```
+
+or try to open it once, then go to System Settings -> Privacy & Security and press "Open Anyway" next to the blocked-app message. Running `./smz3` from Terminal after clearing the flag is the simplest route. It needs SDL2 (`brew install sdl2`) because the macOS binary links it dynamically. Windows may show a SmartScreen warning for the same reason: "More info" -> "Run anyway".
+
 Builds: `./build-pc.sh` (native), `./build-pc.sh windows` (MinGW cross-build), `.github/workflows/pc.yml` (Linux, Windows and macOS artifacts),
 `./build-android.sh`, `./build-3ds.sh`.
 
