@@ -47,7 +47,12 @@ jobs:
       - uses: actions/upload-artifact@v4
         with: { name: smz3-windows, path: build/win/smz3.exe }
   macos:
-    runs-on: macos-14
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-15, macos-14, macos-15-intel]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
       - name: Fetch assets
@@ -65,4 +70,4 @@ jobs:
       - run: ./build-pc.sh
       - run: tar czf smz3-macos.tar.gz -C build/pc smz3
       - uses: actions/upload-artifact@v4
-        with: { name: smz3-macos, path: smz3-macos.tar.gz }
+        with: { name: smz3-${{ matrix.os }}, path: smz3-macos.tar.gz }
