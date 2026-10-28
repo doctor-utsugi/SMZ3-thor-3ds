@@ -137,10 +137,10 @@ index 3692a54..7fdfb4b 100644
          long actualTicksThisFrame = (long)(svcGetSystemTick() - startFrameTick);
 diff --git a/source/smz3run.cpp b/source/smz3run.cpp
 new file mode 100644
-index 0000000..88c7fc0
+index 0000000..c96e4d3
 --- /dev/null
 +++ b/source/smz3run.cpp
-@@ -0,0 +1,522 @@
+@@ -0,0 +1,538 @@
 +// SMZ3 runs: the shared C menu (core/ui) drawn on the second screen, and offline generation (core/gen).
 +#include <3ds.h>
 +#include <dirent.h>
@@ -154,6 +154,7 @@ index 0000000..88c7fc0
 +extern "C" {
 +#include "smz3_host.h"
 +#include "smz3_md5.h"
++#include "smz3_romsetup.h"
 +#include "smz3_run.h"
 +#include "smz3_ui.h"
 +#include "smz3_preview.h"
@@ -222,6 +223,18 @@ index 0000000..88c7fc0
 +    wrongRom[0] = 0;
 +    static const char *dirs[] = {SMZ_DIR "/base", "sdmc:/roms/snes", "sdmc:/roms", "sdmc:/ROMs", "sdmc:/"};
 +    *sm = *z3 = NULL;
++    // keeps a copy of the image when it is one of the two exact revisions the patches were written for
++    auto offer = [&](const unsigned char *b, size_t len) {
++        bool sm_ = false;
++        if (!isBase(b, len, &sm_)) return;
++        size_t off = (len & 0x1FF) ? 0x200 : 0;
++        unsigned char **slot = sm_ ? sm : z3;
++        char md5[33];
++        smz_md5_hex(b + off, len - off, md5);
++        if (strcmp(md5, sm_ ? SMZ_MD5_SM : SMZ_MD5_Z3)) {
++            if (!wrongRom[0]) snprintf(wrongRom, sizeof wrongRom, sm_ ? "Super Metroid ROM must be (JU), md5 21f3e98d" : "ALttP ROM must be Japanese v1.0 (03a63945)");
++        } else if (!*slot) { *slot = (unsigned char *)malloc(len - off); memcpy(*slot, b + off, len - off); }
++    };
 +    for (const char *d : dirs) {
 +        DIR *dir = opendir(d);
 +        if (!dir) continue;
@@ -230,18 +243,21 @@ index 0000000..88c7fc0
 +            char path[PATH_MAX];
 +            snprintf(path, sizeof path, "%s/%s", d, e->d_name);
 +            struct stat st;
-+            if (stat(path, &st) || (st.st_size != 0x300000 && st.st_size != 0x300200 && st.st_size != 0x100000 && st.st_size != 0x100200)) continue;
++            if (stat(path, &st)) continue;
++            bool rom = st.st_size == 0x300000 || st.st_size == 0x300200 || st.st_size == 0x100000 || st.st_size == 0x100200;
++            bool zip = st.st_size > 1000 && st.st_size < 0x500000 && strlen(e->d_name) > 4 && !strcasecmp(e->d_name + strlen(e->d_name) - 4, ".zip");
++            if (!rom && !zip) continue;
 +            size_t len;
 +            unsigned char *b = readFile(path, &len);
-+            bool sm_ = false;
-+            if (b && isBase(b, len, &sm_)) {
-+                size_t off = (len & 0x1FF) ? 0x200 : 0;
-+                unsigned char **slot = sm_ ? sm : z3;
-+                char md5[33];
-+                smz_md5_hex(b + off, len - off, md5);
-+                if (strcmp(md5, sm_ ? SMZ_MD5_SM : SMZ_MD5_Z3)) {
-+                    if (!wrongRom[0]) snprintf(wrongRom, sizeof wrongRom, sm_ ? "Super Metroid ROM must be (JU), md5 21f3e98d" : "ALttP ROM must be Japanese v1.0 (03a63945)");
-+                } else if (!*slot) { *slot = (unsigned char *)malloc(len - off); memcpy(*slot, b + off, len - off); }
++            if (b && rom) offer(b, len);
++            else if (b && smz_is_zip(b, len)) {
++                for (int i = 0;; i++) {
++                    size_t k;
++                    unsigned char *img = smz_zip_entry(b, len, i, &k);
++                    if (!img) break;
++                    offer(img, k);
++                    free(img);
++                }
 +            }
 +            free(b);
 +        }
@@ -385,7 +401,7 @@ index 0000000..88c7fc0
 +    GenJob job;
 +    memset(&job, 0, sizeof job);
 +    if (!findBaseRoms(&job.sm, &job.z3)) {
-+        snprintf(message, cap, "%s", wrongRom[0] ? wrongRom : "Need Super Metroid + ALttP in " SMZ_DIR "/base");
++        snprintf(message, cap, "%s", wrongRom[0] ? wrongRom : "Put both ROMs (or a zip) in " SMZ_DIR "/base");
 +        free(job.sm); free(job.z3);
 +        return false;
 +    }
