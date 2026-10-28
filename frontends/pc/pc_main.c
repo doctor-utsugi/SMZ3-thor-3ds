@@ -12,6 +12,7 @@
 #include "pc_assets.h"
 #include "pc_gfx.h"
 #include "pc_map.h"
+#include "pc_music.h"
 #include "pc_online.h"
 #include "pc_store.h"
 #include "smz3_host.h"
@@ -227,7 +228,7 @@ static int cmd_selftest(int argc, char **argv)
     if (argc < 1) { fprintf(stderr, "selftest ROM [frames]\n"); return 2; }
     size_t n;
     uint8_t *rom = store_read(argv[0], &n);
-    if (!rom || emu_open(rom, n)) { fprintf(stderr, "cannot load %s\n", argv[0]); return 1; }
+    if (!rom || emu_open(rom, n, argv[0])) { fprintf(stderr, "cannot load %s\n", argv[0]); return 1; }
     int frames = argc > 1 ? atoi(argv[1]) : 600;
     static SmzTracker t;
     smz_tracker_reset(&t, 0, 0, 0, 0);
@@ -296,6 +297,11 @@ static void refill_sprites(void)
         }
         ui_set_sprites(&ui, g, list, n);
     }
+    static char packs[UI_MAX_SPRITES][32];
+    const char *plist[UI_MAX_SPRITES];
+    int np = music_packages(packs, UI_MAX_SPRITES - 3);
+    for (int i = 0; i < np; i++) plist[i] = packs[i];
+    ui_set_sprites(&ui, 3, plist, np);
 }
 
 static int base_ok(void)
@@ -384,6 +390,8 @@ static const char *setup_path(const char *path)
 }
 
 static const char *accept_rom(const char *path) { return setup_path(path); }
+
+static int cmd_flush(void) { online_flush(); printf("finished runs waiting were sent\n"); return 0; }
 
 static int cmd_setup(int argc, char **argv)
 {
@@ -690,7 +698,8 @@ static void play(int slot, int game_save_only)
     size_t rl;
     uint8_t *rom = store_read(romp, &rl);
     if (!rom || rl != SMZ_HOST_ROM_SIZE) { free(rom); note("the ROM of this run is missing; make a new run"); return; }
-    int ok = emu_open(rom, rl) == 0;
+    music_prepare(romp, run.settings, run.seed);
+    int ok = emu_open(rom, rl, romp) == 0;
     free(rom);
     if (!ok) { note("the emulator could not load the ROM"); return; }
 
@@ -930,16 +939,25 @@ static UiButton map_key(SDL_Keycode k, int *ok)
     }
 }
 
+static uint8_t *load_preview(const char *key, size_t *len)
+{
+    char name[64];
+    snprintf(name, sizeof name, "%s", key);
+    return store_read(store_path("sprites/%s.pv", name), len);
+}
+
 static void window_main(int start_slot)
 {
     char err[200];
     SDL_Window *w = win; (void)w;
     ui_init(&ui);
+    gfx_set_preview_loader(load_preview);
     refill_sprites();
     refill_slots();
     online_init(&ui);
     ui_ladder_enable(&ui, 1);
     if (getenv("SMZ3_LADDER")) ui_input(&ui, BTN_RIGHT);   /* test hook: open the online tables */
+    if (getenv("SMZ3_SPRITES")) { ui.screen = UI_SPRITES; ui.sprite_game = atoi(getenv("SMZ3_SPRITES")); ui.sprite_cursor = 0; }   /* test hook: open a sprite picker */
     if (getenv("SMZ3_MODE_MENU")) ui.screen = UI_MODE;   /* test hook: open the run mode list */
     detach(monthly_thread, NULL);
     detach(flush_thread, NULL);
@@ -1068,6 +1086,7 @@ int main(int argc, char **argv)
         if (!strcmp(argv[1], "online")) return cmd_online();
         if (!strcmp(argv[1], "new")) return cmd_new(argc - 2, argv + 2);
         if (!strcmp(argv[1], "selftest")) return cmd_selftest(argc - 2, argv + 2);
+        if (!strcmp(argv[1], "flush")) return cmd_flush();
         if (!strcmp(argv[1], "setup")) return cmd_setup(argc - 2, argv + 2);
         if (!strcmp(argv[1], "config")) return cmd_config(argc - 2, argv + 2);
         if (!strcmp(argv[1], "--help") || !strcmp(argv[1], "-h") || !strcmp(argv[1], "help")) { usage(); return 0; }

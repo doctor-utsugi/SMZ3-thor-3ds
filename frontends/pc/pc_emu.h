@@ -10,7 +10,8 @@ enum { PAD_B = 1 << 0, PAD_Y = 1 << 1, PAD_SELECT = 1 << 2, PAD_START = 1 << 3, 
        PAD_LEFT = 1 << 6, PAD_RIGHT = 1 << 7, PAD_A = 1 << 8, PAD_X = 1 << 9, PAD_L = 1 << 10, PAD_R = 1 << 11 };
 
 /* Loads a ROM (the buffer is copied). Returns 0 or -1. */
-int emu_open(const uint8_t *rom, size_t len);
+/* path is where the ROM lives (so MSU-1 music files next to it are found); NULL when it has none. */
+int emu_open(const uint8_t *rom, size_t len, const char *path);
 void emu_close(void);
 int emu_sample_rate(void);
 void emu_set_pad(int bits);

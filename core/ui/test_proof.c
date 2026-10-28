@@ -45,6 +45,10 @@ int main(void)
     q = P; q.ms[q.n - 1] = total + 60000;
     smz_proof_check(J, &q, total, &v);
     if (v.ok) { puts("late check accepted"); bad++; }
+    q = P;                                                        /* every check within a second or two: too fast to be played */
+    for (int i = 0; i < q.n; i++) q.ms[i] = 20000 + i * 1000;
+    smz_proof_check(J, &q, q.ms[q.n - 1] + 5000, &v);
+    if (!v.suspect) { puts("hurried run accepted"); bad++; }
     /* the same checks in the reverse order lean on items found later */
     q = P;
     for (int i = 0; i < P.n; i++) { q.loc[i] = P.loc[P.n - 1 - i]; q.ms[i] = P.ms[i]; }

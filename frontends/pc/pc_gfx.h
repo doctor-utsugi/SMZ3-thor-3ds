@@ -3,6 +3,8 @@
 #define PC_GFX_H
 
 #include <SDL.h>
+#include <stddef.h>
+#include <stdint.h>
 #include "smz3_ui.h"
 
 void gfx_init(SDL_Renderer *r);
@@ -13,6 +15,8 @@ void gfx_rect(float x, float y, float w, float h, SDL_Color c);
 SDL_Color gfx_ui_color(int index);
 /* Draws the menu's last ui_draw command list scaled to fit the area, centred. Returns the scale (window px per canvas px)
  * and the origin through ox, oy. */
+/* Gives the loader of sprite previews: key "link/<name>" or "samus/<name>" -> the bytes of its .pv file (malloc'd) or NULL. */
+void gfx_set_preview_loader(uint8_t *(*load)(const char *key, size_t *len));
 float gfx_ui(const SmzUi *u, int win_w, int win_h, float *ox, float *oy);
 
 #endif

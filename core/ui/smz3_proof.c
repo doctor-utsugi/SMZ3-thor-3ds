@@ -85,5 +85,11 @@ void smz_proof_check(const char *settings_json, const SmzProof *p, int64_t time_
     if (v->out_of_logic * 10 > p->n) {
         v->suspect = 1;
         snprintf(v->reason, sizeof v->reason, "%d of %d checks out of logic", v->out_of_logic, p->n);
+    } else if (p->ms[0] < 15000) {
+        v->suspect = 1;
+        snprintf(v->reason, sizeof v->reason, "first check after %lld ms", (long long)p->ms[0]);
+    } else if (time_ms / p->n < 6000) {
+        v->suspect = 1;
+        snprintf(v->reason, sizeof v->reason, "%d checks in %lld s", p->n, (long long)(time_ms / 1000));
     }
 }

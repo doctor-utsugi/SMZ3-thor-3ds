@@ -729,3 +729,11 @@ a stored zip, a folder and a wrong revision (USA ALttP is refused with the reaso
   button now pages through the original, monthly, weekly and custom-runs tables (cached per table in `files/runs/`).
 - Verified: PC against a local server with sample runs (screenshot), 3DS in Azahar against the real server (empty tables), the tablet in
   the "No connection" state. Not verified: the Thor's bottom-screen pages (compile only), a table with rows on Android/3DS.
+
+## Done: limits and loose ends
+
+- **Proof plausibility holds**: besides the hard refusals, a finish is held (hidden until `node admin.js approve N`) when its first check comes in under 15 s or the average is under 6 s per check. A forged but coherent proof can still pass; the top of the ladder is meant to be reviewed by hand.
+- **`smz3 flush`** sends a finished run's stored token and proof; `SMZ3_SERVER` points the PC client at another server. Used for an end-to-end test against a local server (forged old token, recorded proof, seed 4242): the run appeared on the ladder.
+- **PC sprite previews**: UiCmd kind 2 draws `sprites/<kind>/<name>.pv` with a texture cache.
+- **PC music packages** (`pc_music.c`): packages are folders of `.pcm` under `<data>/music/<name>/`; at play time the `.msu` marker and `<rom>-N.pcm` links (symlink, Windows hardlink or copy) are made next to the ROM, and `emu_open` now receives the ROM path so snes9x finds them. `Random` deals every package with the seed like `Smz3Music.prepare`. Checked with a link-level harness only, not by listening to a game.
+- **Not done**: dungeon floor maps and the "Original" sprite icons on PC (ROM-derived, not committed); Android's original ladder still allows autosave.

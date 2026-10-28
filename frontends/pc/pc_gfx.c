@@ -1,8 +1,10 @@
 #include <math.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include "pc_font.h"
 #include "pc_gfx.h"
+#include "smz3_preview.h"
 
 static SDL_Renderer *R;
 static SDL_Texture *font;
@@ -55,6 +57,39 @@ void gfx_rect(float x, float y, float w, float h, SDL_Color c)
     SDL_RenderFillRectF(R, &r);
 }
 
+static uint8_t *(*preview_loader)(const char *key, size_t *len);
+void gfx_set_preview_loader(uint8_t *(*load)(const char *key, size_t *len)) { preview_loader = load; }
+
+typedef struct { char key[48]; SDL_Texture *tex; int w, h; } Preview;
+static Preview previews[64];
+static int preview_next;
+
+/* The picture of a preview key, loaded once (w == 0 when the key has none). */
+static const Preview *get_preview(const char *key)
+{
+    for (int i = 0; i < 64; i++) if (previews[i].key[0] && !strcmp(previews[i].key, key)) return previews[i].w ? &previews[i] : NULL;
+    Preview *p = &previews[preview_next];
+    preview_next = (preview_next + 1) % 64;
+    if (p->tex) SDL_DestroyTexture(p->tex);
+    memset(p, 0, sizeof *p);
+    snprintf(p->key, sizeof p->key, "%s", key);
+    size_t len;
+    uint8_t *buf = preview_loader ? preview_loader(key, &len) : NULL;
+    int w, h;
+    const uint8_t *rgba;
+    if (buf && smz_preview_parse(buf, len, &w, &h, &rgba)) {
+        p->tex = SDL_CreateTexture(R, SDL_PIXELFORMAT_ABGR8888, SDL_TEXTUREACCESS_STATIC, w, h);
+        if (p->tex) {
+            SDL_UpdateTexture(p->tex, NULL, rgba, w * 4);
+            SDL_SetTextureBlendMode(p->tex, SDL_BLENDMODE_BLEND);
+            SDL_SetTextureScaleMode(p->tex, SDL_ScaleModeNearest);
+            p->w = w; p->h = h;
+        }
+    }
+    free(buf);
+    return p->w ? p : NULL;
+}
+
 float gfx_ui(const SmzUi *u, int win_w, int win_h, float *ox, float *oy)
 {
     float k = (float)win_w / UI_W < (float)win_h / UI_H ? (float)win_w / UI_W : (float)win_h / UI_H;
@@ -75,6 +110,14 @@ float gfx_ui(const SmzUi *u, int win_w, int win_h, float *ox, float *oy)
             int idx[6] = {0, 1, 2, 0, 2, 3};
             SDL_SetRenderDrawBlendMode(R, SDL_BLENDMODE_BLEND);
             SDL_RenderGeometry(R, NULL, v, 4, idx, 6);
+        } else if (c->kind == 2) {
+            const Preview *p = get_preview(c->text);
+            if (p) {   /* centred in its box and scaled to fit, the way the other frontends draw it */
+                float bw = c->w * k, bh = c->h * k, s = bw / p->w < bh / p->h ? bw / p->w : bh / p->h;
+                SDL_FRect d = {x + (bw - p->w * s) / 2, y + (bh - p->h * s) / 2, p->w * s, p->h * s};
+                SDL_SetTextureColorMod(p->tex, 255, 255, 255);
+                SDL_RenderCopyF(R, p->tex, NULL, &d);
+            }
         } else if (c->kind == 1) {
             gfx_text(x, y - 2 * k, 12 * k, col, c->align, c->text);
         }

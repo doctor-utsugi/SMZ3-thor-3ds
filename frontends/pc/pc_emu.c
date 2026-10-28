@@ -69,7 +69,7 @@ static int16_t input_cb(unsigned port, unsigned device, unsigned index, unsigned
     return id < 16 ? (g_pad >> id) & 1 : 0;
 }
 
-int emu_open(const uint8_t *rom, size_t len)
+int emu_open(const uint8_t *rom, size_t len, const char *path)
 {
     static int inited;
     if (g_open) emu_close();
@@ -85,7 +85,7 @@ int emu_open(const uint8_t *rom, size_t len)
     }
     uint8_t *copy = malloc(len);
     memcpy(copy, rom, len);
-    struct retro_game_info gi = {"smz3.sfc", copy, len, NULL};
+    struct retro_game_info gi = {path && *path ? path : "smz3.sfc", copy, len, NULL};
     if (!retro_load_game(&gi)) { free(copy); return -1; }
     free(copy);   /* snes9x keeps its own copy */
     struct retro_system_av_info av;
