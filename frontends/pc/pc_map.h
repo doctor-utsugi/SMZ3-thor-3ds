@@ -14,6 +14,9 @@ void map_view_move(MapView *v, float dx, float dy, float dz);
 void map_draw(SDL_Renderer *r, MapView *v, SDL_Rect area, const SmzTracker *t, const SmzDiscovery *d, int discovered_only,
               const uint8_t *in_logic, const uint8_t *wram, size_t wram_len, Uint32 ticks);
 
+/* A filled disc (ring = 0) or a ring (1), for the dungeon pictures as well. */
+void map_circle(SDL_Renderer *r, float x, float y, float rad, SDL_Color c, int ring);
+
 /* The inventory icon (file name as in smz3_inventory_items) as a texture, NULL when there is none. */
 SDL_Texture *map_item_icon(SDL_Renderer *r, const char *icon);
 

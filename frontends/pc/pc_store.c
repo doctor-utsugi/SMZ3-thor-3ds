@@ -97,7 +97,14 @@ int store_write(const char *path, const void *data, size_t len)
     if (!f) return -1;
     int ok = fwrite(data, 1, len, f) == len;
     ok = fclose(f) == 0 && ok;
+#ifdef _WIN32
+    /* rename() refuses to replace an existing file on Windows */
+    if (ok && MoveFileExA(tmp, path, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) return 0;
+    remove(tmp);
+    return -1;
+#else
     return ok && rename(tmp, path) == 0 ? 0 : -1;
+#endif
 }
 
 void store_roms_get(char sm[512], char z3[512])

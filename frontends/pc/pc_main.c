@@ -11,10 +11,12 @@
 #include "pc_emu.h"
 #include "pc_assets.h"
 #include "pc_gfx.h"
+#include "pc_dungeon.h"
 #include "pc_map.h"
 #include "pc_music.h"
 #include "pc_pad.h"
 #include "pc_settings.h"
+#include "smz3_dungeonmaps.h"
 #include "smz3_romderived.h"
 #include "pc_online.h"
 #include "pc_store.h"
@@ -317,6 +319,13 @@ static void derive_data(const uint8_t *sm, const uint8_t *z3)
     if (access(rp, F_OK) != 0) {
         int n = smz_sm_rooms(sm, 0x300000, rooms, SMZ_SM_ROOMS_MAX);
         if (n > 0) store_write(rp, rooms, (size_t)n * 6 * sizeof(int));
+    }
+    const char *dp = store_path("derived/dungeons.bin");
+    if (access(dp, F_OK) != 0) {
+        size_t atlas = (size_t)SMZ_DM_ATLAS_W * SMZ_DM_ATLAS_H * 4;
+        SmzDungeonMeta *dm = malloc(sizeof *dm + 2 * atlas);
+        if (dm && smz_dungeon_maps(z3, 0x100000, dm, (uint8_t *)(dm + 1), (uint8_t *)(dm + 1) + atlas)) store_write(dp, dm, sizeof *dm + 2 * atlas);
+        free(dm);
     }
     char lp[512], sp[512];
     snprintf(lp, sizeof lp, "%s", store_path("sprites/link/Original.pv"));
@@ -632,7 +641,8 @@ enum { TAB_RUN, TAB_ITEMS, TAB_CHECKS, TAB_MAP, TAB_HELP, TAB_COUNT };
 static const char *const TAB_NAMES[TAB_COUNT] = {"RUN", "ITEMS", "CHECKS", "MAP", "HELP"};
 
 static void overlay(const SmzTracker *t, const SmzRun *r, int tab, int scroll, int pause, int win_w, int win_h, MapView *mv,
-                    const SmzDiscovery *disc, int discovered_only, const uint8_t *in_logic, const uint8_t *wram, size_t wram_len)
+                    const SmzDiscovery *disc, int discovered_only, const uint8_t *in_logic, const uint8_t *wram, size_t wram_len,
+                    const uint8_t *sram, size_t sram_len, DungeonView *dv, const DungeonLive *live)
 {
     float u = win_h / 720.0f, x0 = win_w * 0.08f, w = win_w * 0.84f, y0 = 40 * u;
     SDL_Color back = {0x10, 0x14, 0x1C, 235};
@@ -696,13 +706,17 @@ static void overlay(const SmzTracker *t, const SmzRun *r, int tab, int scroll, i
         gfx_text(x0 + w, bottom, 18 * u, C(0x87, 0x93, 0xA6), 2, s);
     } else if (tab == TAB_MAP) {
         SDL_Rect area = {(int)x0, (int)y, (int)w, (int)(bottom - y - 30 * u)};
-        map_draw(ren, mv, area, t, disc, discovered_only, in_logic, wram, wram_len, SDL_GetTicks());
-        gfx_text(x0 + w - 6, bottom - 24 * u, 18 * u, C(0xE8, 0xEC, 0xF2), 2, mv->follow ? "Arrows pan   +/- zoom   F: following Samus/Link" : "Arrows pan   +/- zoom   F: follow Samus/Link");
+        if (dungeon_showing(dv, live)) dungeon_draw(ren, dv, area, t, in_logic, live, wram, wram_len, sram, sram_len, !discovered_only, SDL_GetTicks());
+        else {
+            map_draw(ren, mv, area, t, disc, discovered_only, in_logic, wram, wram_len, SDL_GetTicks());
+            gfx_text(x0 + w - 6, bottom - 24 * u, 18 * u, C(0xE8, 0xEC, 0xF2), 2, mv->follow ? "Arrows pan   +/- zoom   F: following Samus/Link   D / Y: dungeons" : "Arrows pan   +/- zoom   F: follow Samus/Link   D / Y: dungeons");
+        }
     } else {
         static const char *const HELP[] = {
-            "Tab / right stick   tracker on and off", "Q / E or shoulders   change tab", "P   pause or keep playing while the tracker is open",
+            "Tab / the tracker button (R3)   tracker on and off", "Q / E or shoulders   change tab", "P   pause or keep playing while the tracker is open",
             "Map tab: arrows pan, +/- or triggers zoom, F follows the player",
-            "Space / right trigger   fast forward (play time counts at that speed)", "Esc   leave the run (progress is saved)", "F11   full screen",
+            "Map tab: D / Y dungeon pictures; arrows or D-pad pick dungeon and floor; H / A back to Link's floor",
+            "Space / right trigger   fast forward (play time counts at that speed)", "Esc / L3   leave the run (progress is saved)", "Menu: Select or F1 opens settings (controller buttons, ROM files)", "F11   full screen",
             "Arrows move, X = A, Z = B, S = X, A = Y, Q/W = L/R, Enter = Start, Backspace = Select",
         };
         for (unsigned i = 0; i < sizeof HELP / sizeof HELP[0]; i++, y += 34 * u) gfx_text(x0, y, 22 * u, C(0xE8, 0xEC, 0xF2), 0, HELP[i]);
@@ -794,10 +808,22 @@ static void play(int slot, int game_save_only)
     float aspect = shape_aspect(run.settings);
     SDL_Texture *tex = NULL;
     int tw = 0, th = 0, tab = getenv("SMZ3_TAB") ? atoi(getenv("SMZ3_TAB")) % TAB_COUNT : TAB_RUN, scroll = 0, show = getenv("SMZ3_TAB") != NULL, pause_on_overlay = 1, leaving = 0, running = 1, finished = 0, fast = 0;
+    DungeonView dv;
+    DungeonLive live = {0};
+    int have_live = 0;
+    dungeon_available(ren);
+    dungeon_view_init(&dv);
+    if (getenv("SMZ3_DUNGEON")) { int dd = atoi(getenv("SMZ3_DUNGEON")); dungeon_step(&dv, NULL, dd - dv.d); }   /* test hook: open a dungeon picture */
     Uint64 freq = SDL_GetPerformanceFrequency(), next = SDL_GetPerformanceCounter(), last_tick = next, last_save = next;
     int64_t last_tick_ms = 0;
     (void)last_tick_ms;
     while (running) {
+        {
+            size_t lwl;
+            const uint8_t *lw = emu_wram(&lwl);
+            have_live = lw ? dungeon_live(lw, lwl, &live) : 0;
+        }
+        const DungeonLive *lp = have_live ? &live : NULL;
         SDL_Event e;
         while (SDL_PollEvent(&e)) {
             int pcode = pad_event_code(&e);
@@ -808,6 +834,14 @@ static void play(int slot, int game_save_only)
                 if (k == SDLK_TAB) show = !show;
                 else if (k == SDLK_ESCAPE) { if (show) show = 0; else leaving = 1; }
                 else if (k == SDLK_F11) SDL_SetWindowFullscreen(win, SDL_GetWindowFlags(win) & SDL_WINDOW_FULLSCREEN_DESKTOP ? 0 : SDL_WINDOW_FULLSCREEN_DESKTOP);
+                else if (show && tab == TAB_MAP && k == SDLK_d) dungeon_toggle(&dv, lp);
+                else if (show && tab == TAB_MAP && dungeon_showing(&dv, lp) && (k == SDLK_LEFT || k == SDLK_RIGHT || k == SDLK_UP || k == SDLK_DOWN || k == SDLK_h)) {
+                    if (k == SDLK_LEFT) dungeon_step(&dv, lp, -1);
+                    else if (k == SDLK_RIGHT) dungeon_step(&dv, lp, 1);
+                    else if (k == SDLK_UP) dungeon_floor(&dv, lp, 1);
+                    else if (k == SDLK_DOWN) dungeon_floor(&dv, lp, -1);
+                    else dungeon_here(&dv);
+                }
                 else if (show) {
                     if (k == SDLK_e || (k == SDLK_RIGHT && tab != TAB_MAP)) tab = (tab + 1) % TAB_COUNT;
                     else if (k == SDLK_q || (k == SDLK_LEFT && tab != TAB_MAP)) tab = (tab + TAB_COUNT - 1) % TAB_COUNT;
@@ -827,11 +861,23 @@ static void play(int slot, int game_save_only)
                 else if (show && b == SDL_CONTROLLER_BUTTON_LEFTSHOULDER) tab = (tab + TAB_COUNT - 1) % TAB_COUNT;
                 else if (show && b == SDL_CONTROLLER_BUTTON_DPAD_DOWN && tab != TAB_MAP) scroll++;
                 else if (show && b == SDL_CONTROLLER_BUTTON_DPAD_UP && scroll > 0 && tab != TAB_MAP) scroll--;
-                else if (show && b == SDL_CONTROLLER_BUTTON_A && tab == TAB_MAP) mv.follow = !mv.follow;
+                else if (show && b == SDL_CONTROLLER_BUTTON_Y && tab == TAB_MAP) dungeon_toggle(&dv, lp);
+                else if (show && b == SDL_CONTROLLER_BUTTON_A && tab == TAB_MAP) { if (dungeon_showing(&dv, lp)) dungeon_here(&dv); else mv.follow = !mv.follow; }
             }
         }
         const Uint8 *keys = SDL_GetKeyboardState(NULL);
-        if (show && tab == TAB_MAP) {
+        {   /* the D-pad and the left stick choose the dungeon and the floor while the dungeon pictures are up */
+            static int last_dirs;
+            int dirs = pad_dirs(pad), fresh = dirs & ~last_dirs;
+            last_dirs = dirs;
+            if (show && tab == TAB_MAP && dungeon_showing(&dv, lp)) {
+                if (fresh & 4) dungeon_step(&dv, lp, -1);
+                if (fresh & 8) dungeon_step(&dv, lp, 1);
+                if (fresh & 1) dungeon_floor(&dv, lp, 1);
+                if (fresh & 2) dungeon_floor(&dv, lp, -1);
+            }
+        }
+        if (show && tab == TAB_MAP && !dungeon_showing(&dv, lp)) {
             float sp = 14, dx = 0, dy = 0, dz = 1;
             if (keys[SDL_SCANCODE_LEFT]) dx -= sp; if (keys[SDL_SCANCODE_RIGHT]) dx += sp;
             if (keys[SDL_SCANCODE_UP]) dy -= sp; if (keys[SDL_SCANCODE_DOWN]) dy += sp;
@@ -926,7 +972,7 @@ static void play(int slot, int game_save_only)
         if (show) {
             size_t owl;
             const uint8_t *ow = emu_wram(&owl);
-            overlay(&trk, &run, tab, scroll, pause_on_overlay, ww, wh, &mv, &disc, discovered_only, have_logic ? in_logic : NULL, ow, owl);
+            overlay(&trk, &run, tab, scroll, pause_on_overlay, ww, wh, &mv, &disc, discovered_only, have_logic ? in_logic : NULL, ow, owl, sram, sl, &dv, have_live ? &live : NULL);
         }
         if (leaving) {
             gfx_rect(0, 0, (float)ww, (float)wh, (SDL_Color){0, 0, 0, 170});

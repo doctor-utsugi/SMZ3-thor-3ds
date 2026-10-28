@@ -17,6 +17,7 @@ static int map_w, map_h;
 static signed short stack_head[512];     /* per location: index of the first check on the same dot, or itself */
 static unsigned char stack_size[512];    /* checks on the dot of a head */
 static int ready;
+static void load(SDL_Renderer *r);
 
 static SDL_Texture *make_disc(SDL_Renderer *r, int ring)
 {
@@ -37,8 +38,9 @@ static SDL_Texture *make_disc(SDL_Renderer *r, int ring)
     return t;
 }
 
-static void circle(SDL_Renderer *r, float x, float y, float rad, SDL_Color c, int ring)
+void map_circle(SDL_Renderer *r, float x, float y, float rad, SDL_Color c, int ring)
 {
+    if (!ready) load(r);
     SDL_Texture *t = ring ? ring_tex : disc_tex;
     SDL_SetTextureColorMod(t, c.r, c.g, c.b);
     SDL_SetTextureAlphaMod(t, c.a);
@@ -142,13 +144,13 @@ void map_draw(SDL_Renderer *r, MapView *v, SDL_Rect area, const SmzTracker *t, c
             if (stacked) { for (unsigned j = 0; j < smz3_location_count && j < 512; j++) if (stack_head[j] == head && !t->cleared[j] && in_logic[j]) reachable = 1; }
             else reachable = in_logic[i];
         }
-        if (done) { circle(r, px, py, rad * 0.65f * 1.15f, black, 0); circle(r, px, py, rad * 0.65f, white, 0); }
-        else if (!reachable) { circle(r, px, py, rad * 0.7f, dim, 0); circle(r, px, py, rad * 0.7f, (SDL_Color){0xF0, 0xF4, 0xF8, 240}, 1); }
+        if (done) { map_circle(r, px, py, rad * 0.65f * 1.15f, black, 0); map_circle(r, px, py, rad * 0.65f, white, 0); }
+        else if (!reachable) { map_circle(r, px, py, rad * 0.7f, dim, 0); map_circle(r, px, py, rad * 0.7f, (SDL_Color){0xF0, 0xF4, 0xF8, 240}, 1); }
         else {
             float rr = rad * (1 + 0.22f * pulse);
-            circle(r, px, py, rr + 2, white, 0);
-            circle(r, px, py, rr + 0.5f, black, 0);
-            circle(r, px, py, rr - 0.8f, amber, 0);
+            map_circle(r, px, py, rr + 2, white, 0);
+            map_circle(r, px, py, rr + 0.5f, black, 0);
+            map_circle(r, px, py, rr - 0.8f, amber, 0);
         }
     }
     SmzBossMark boss[16];
@@ -164,8 +166,8 @@ void map_draw(SDL_Renderer *r, MapView *v, SDL_Rect area, const SmzTracker *t, c
     }
     if (d->has_position) {
         float px = ox + d->x * z, py = oy + d->y * z, pr = fminf(14, fmaxf(7, 6 + 2 * z));
-        if ((ticks / 350) % 2 == 0) { circle(r, px, py, pr * 1.5f, black, 0); circle(r, px, py, pr * 1.15f, white, 0); circle(r, px, py, pr, (SDL_Color){0xE9, 0xA2, 0x3B, 255}, 0); }
-        else circle(r, px, py, pr * 0.45f, white, 0);
+        if ((ticks / 350) % 2 == 0) { map_circle(r, px, py, pr * 1.5f, black, 0); map_circle(r, px, py, pr * 1.15f, white, 0); map_circle(r, px, py, pr, (SDL_Color){0xE9, 0xA2, 0x3B, 255}, 0); }
+        else map_circle(r, px, py, pr * 0.45f, white, 0);
     }
     SDL_RenderSetClipRect(r, NULL);
 }
