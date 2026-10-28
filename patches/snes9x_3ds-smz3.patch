@@ -586,7 +586,7 @@ index 0000000..bebcc89
 +#endif
 diff --git a/source/smz3run.cpp b/source/smz3run.cpp
 new file mode 100644
-index 0000000..71c37e5
+index 0000000..55051f4
 --- /dev/null
 +++ b/source/smz3run.cpp
 @@ -0,0 +1,623 @@
@@ -1180,7 +1180,7 @@ index 0000000..71c37e5
 +bool smz3IsRun(void) { return strncmp(Memory.ROMFilename, RUN_DIR "/", sizeof RUN_DIR) == 0; }
 +
 +// Monthly and weekly runs allow no save states of any kind.
-+bool smz3NoStates(void) { return smz3IsRun() && gPlaySlot >= 0 && smzOnlineSlotKind(gPlaySlot) >= 2; }
++bool smz3NoStates(void) { return smz3IsRun() && gPlaySlot >= 0 && smzOnlineSlotKind(gPlaySlot) >= 1; }
 +
 +// Gives the next hint (a help is spent in the limited mode). The text is for a dialog.
 +void smz3AskHelp(char *out, size_t cap)

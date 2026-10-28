@@ -64,15 +64,21 @@ int music_packages(char names[][32], int max)
     return n;
 }
 
-static void link_track(const char *base, int track, const char *file)
+/* Returns 1 when the track is in place. */
+static int link_track(const char *base, int track, const char *file)
 {
     char dst[1100];
     snprintf(dst, sizeof dst, "%s-%d.pcm", base, track);
     remove(dst);
 #ifdef _WIN32
-    if (!CreateSymbolicLinkA(dst, file, 0x2) && !CreateHardLinkA(dst, file, NULL)) CopyFileA(file, dst, FALSE);
+    /* symbolic links need a privilege on older Windows; a hard link needs the same volume; a copy always works */
+    if (CreateSymbolicLinkA(dst, file, 0x2)) {
+        if (GetFileAttributesA(dst) != INVALID_FILE_ATTRIBUTES) return 1;   /* some systems accept the call but leave a link that does not resolve */
+        DeleteFileA(dst);
+    }
+    return CreateHardLinkA(dst, file, NULL) || CopyFileA(file, dst, FALSE);
 #else
-    if (symlink(file, dst)) { /* the track stays on the game's own music */ }
+    return symlink(file, dst) == 0;   /* a track that fails to link stays on the game's own music */
 #endif
 }
 
@@ -164,15 +170,14 @@ int music_prepare(const char *rom_path, const char *settings_json, const char *s
         if (strcmp(pkg, "*")) {
             for (int i = 0; i < n; i++) {
                 const char *name = strrchr(files[i], '/') + 1, *dash = strrchr(name, '-');
-                if (dash && atoi(dash + 1) > 0 && is_pcm(name)) { link_track(base, atoi(dash + 1), files[i]); fixed++; }
+                if (dash && atoi(dash + 1) > 0 && is_pcm(name)) { fixed += link_track(base, atoi(dash + 1), files[i]); }
             }
         }
         if (fixed) linked = fixed;
         else {
             jr_init((int64_t)java_hash(seed) * 31 + 7);
             for (int i = n; i > 1; i--) { int j = jr_int(i); char *t = files[i - 1]; files[i - 1] = files[j]; files[j] = t; }
-            for (int i = 0; i < SLOT_COUNT; i++) link_track(base, SLOTS[i], files[i % n]);
-            linked = SLOT_COUNT;
+            for (int i = 0; i < SLOT_COUNT; i++) linked += link_track(base, SLOTS[i], files[i % n]);
         }
     }
     for (int i = 0; i < n; i++) free(files[i]);

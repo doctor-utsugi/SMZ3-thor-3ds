@@ -13,6 +13,7 @@
 #include "pc_gfx.h"
 #include "pc_map.h"
 #include "pc_music.h"
+#include "smz3_romderived.h"
 #include "pc_online.h"
 #include "pc_store.h"
 #include "smz3_host.h"
@@ -276,8 +277,10 @@ static void usage(void)
 
 /* ---------- menu helpers ---------- */
 
+static int base_ok(void);
 static void refill_sprites(void)
 {
+    base_ok();   /* first run after setup: writes the Original previews the pickers show */
     static const char *const KIND[2] = {"link", "samus"};
     for (int g = 0; g < 2; g++) {
         static char names[UI_MAX_SPRITES][32];
@@ -304,11 +307,47 @@ static void refill_sprites(void)
     ui_set_sprites(&ui, 3, plist, np);
 }
 
+/* Reads the Super Metroid room table and the Original sprite previews out of the base ROMs the first time (kept in the data folder). */
+static void derive_data(const uint8_t *sm, const uint8_t *z3)
+{
+    static int rooms[SMZ_SM_ROOMS_MAX * 6];
+    const char *rp = store_path("derived/sm_rooms.bin");
+    if (access(rp, F_OK) != 0) {
+        int n = smz_sm_rooms(sm, 0x300000, rooms, SMZ_SM_ROOMS_MAX);
+        if (n > 0) store_write(rp, rooms, (size_t)n * 6 * sizeof(int));
+    }
+    char lp[512], sp[512];
+    snprintf(lp, sizeof lp, "%s", store_path("sprites/link/Original.pv"));
+    snprintf(sp, sizeof sp, "%s", store_path("sprites/samus/Original.pv"));
+    if (access(lp, F_OK) != 0 || access(sp, F_OK) != 0) {
+        uint8_t l[SMZ_PV_LINK_LEN], s[SMZ_PV_SAMUS_LEN];
+        if (smz_original_previews(sm, 0x300000, z3, 0x100000, l, s)) { store_write(lp, l, sizeof l); store_write(sp, s, sizeof s); }
+    }
+}
+
+/* The map data built into the program, with the room table taken from the data folder when setup has written it. */
+static SmzMapData map_data(void)
+{
+    static SmzSmRoom rooms[SMZ_SM_ROOMS_MAX];
+    SmzMapData d = PC_MAP_DATA;
+    size_t n;
+    int *raw = (int *)store_read(store_path("derived/sm_rooms.bin"), &n);
+    if (raw && n >= 6 * sizeof(int)) {
+        int count = (int)(n / (6 * sizeof(int)));
+        if (count > SMZ_SM_ROOMS_MAX) count = SMZ_SM_ROOMS_MAX;
+        for (int i = 0; i < count; i++) rooms[i] = (SmzSmRoom){raw[i * 6], raw[i * 6 + 1], raw[i * 6 + 2], raw[i * 6 + 3], raw[i * 6 + 4], raw[i * 6 + 5]};
+        d.rooms = rooms; d.n_rooms = count;
+    }
+    free(raw);
+    return d;
+}
+
 static int base_ok(void)
 {
     uint8_t *a, *b;
     char err[64];
     if (store_load_base(&a, &b, err, sizeof err)) return 0;
+    derive_data(a, b);
     free(a); free(b);
     return 1;
 }
@@ -400,6 +439,7 @@ static int cmd_setup(int argc, char **argv)
     uint8_t *a, *b;
     char err[200];
     if (store_load_base(&a, &b, err, sizeof err)) { printf("not ready: %s\n", err); return 1; }
+    derive_data(a, b);
     free(a); free(b);
     printf("ready: both base ROMs are kept in %s\n", store_path("base"));
     return 0;
@@ -703,7 +743,7 @@ static void play(int slot, int game_save_only)
     free(rom);
     if (!ok) { note("the emulator could not load the ROM"); return; }
 
-    int states = json_flag(run.settings, "saveStates", 0);
+    int states = json_flag(run.settings, "saveStates", 0) && !online_slot_kind(slot + 1);   /* ladder runs never allow states */
     size_t sl;
     uint8_t *sram = emu_sram(&sl);
     size_t fl;
@@ -722,7 +762,9 @@ static void play(int slot, int game_save_only)
     if (audio) SDL_PauseAudioDevice(audio, 0);
 
     static SmzDiscovery disc;
-    smz_disc_init(&disc, &PC_MAP_DATA);
+    static SmzMapData mapd;
+    mapd = map_data();
+    smz_disc_init(&disc, &mapd);
     {
         size_t n;
         char *text = (char *)store_read(store_path("runs/slot%d.discovery", slot + 1), &n);

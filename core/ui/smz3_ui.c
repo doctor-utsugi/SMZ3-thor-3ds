@@ -1233,12 +1233,13 @@ void ui_draw(SmzUi *u)
     }
     case UI_ONLINE: {
         title(u, "Online ladder");
-        text(u, 12, 36, C_TEXT, 0, "Send the time of this run to the online ladder?");
-        text(u, 12, 54, C_DIM, 0, "Only Original-rules runs count.");
+        text(u, 12, 32, C_TEXT, 0, "Send this run's time to the");
+        text(u, 12, 48, C_TEXT, 0, "online ladder?");
+        text(u, 12, 64, C_DIM, 0, "No save states while it counts.");
         static const char *const ROW[3] = {"Yes", "Not now", "No, don't ask again"};
-        static const char *const SUB[3] = {"Upload and choose a name and flag", "Offline this time, ask again next run", "Change it later in the Player row"};
+        static const char *const SUB[3] = {"Pick a name and flag", "Offline now, ask next run", "Change it in the Player row"};
         for (int r = 0; r < 3; r++) {
-            int y = 78 + r * 46;
+            int y = 86 + r * 46;
             rect(u, 8, y, UI_W - 16, 42, r == u->online_cursor ? C_SEL : C_PANEL);
             rect(u, 8, y, 5, 42, r == 0 ? C_GREEN : C_ACCENT);
             hit(u, H_ONLINE, r, 8, y, UI_W - 16, 42);
