@@ -3,7 +3,8 @@
 Dual-screen SMZ3 (Super Metroid + A Link to the Past combo randomizer) for the Nintendo 3DS / New 3DS and the AYN Thor.
 The top screen runs the game; the bottom screen shows the run: current map, items and checks, run data, and what is reachable by logic.
 
-Status: planning. See [docs/PLAN.md](docs/PLAN.md).
+Status: playable on the AYN Thor, the 3DS (Azahar-tested) and PC (Linux; Windows cross-built and run under Wine; macOS untested). See
+[docs/PLAN.md](docs/PLAN.md).
 
 ## Android app (AYN Thor)
 
@@ -24,6 +25,20 @@ The app has its own data: runs made in the old `com.swordfish.lemuroid.debug` bu
 | Options (QoL tab) | Run screen |
 |---|---|
 | ![Create run, QoL tab](docs/shots/create-qol-tab-thor.png) | ![Run tab](docs/shots/run-tab-redesign-thor.png) |
+
+## Getting started on each device
+
+Nothing derived from a ROM is shipped. You need your own **Super Metroid (JU)** and **A Link to the Past (Japan v1.0)** dumps (other revisions are
+refused with the reason). Loose files, zips or a folder all work, with or without a copier header.
+
+| Device | How the two ROMs get in |
+|---|---|
+| **PC** (Linux, Windows, macOS) | Drop both files (or a zip) on the window, or `smz3 setup <rom|zip|folder>...`. A copy is kept in the data folder (`%APPDATA%\smz3`, `~/.local/share/smz3`, `~/Library/Application Support/smz3`; `portable.txt` beside the program keeps it next to it). |
+| **Thor / Android** | Create a run: with no ROMs known, the system file picker opens (select both files or a zip once). |
+| **3DS** | Copy both ROMs (or a zip) to `/SMZ3/base` on the SD card (`roms`, `roms/snes` and the card root are searched too). |
+
+Builds: `./build-pc.sh` (native), `./build-pc.sh windows` (MinGW cross-build), `.github/workflows/pc.yml` (Linux, Windows and macOS artifacts),
+`./build-android.sh`, `./build-3ds.sh`.
 
 ## Building it yourself
 
