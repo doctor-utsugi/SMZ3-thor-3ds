@@ -68,6 +68,22 @@ jobs:
           python3 tools/prepare_assets.py
       - run: brew install sdl2 && pip3 install pillow --break-system-packages
       - run: ./build-pc.sh
+      - name: Smoke test (no ROMs on CI)
+        shell: bash
+        run: |
+          export HOME="$RUNNER_TEMP/home" SDL_VIDEODRIVER=dummy SDL_AUDIODRIVER=dummy
+          mkdir -p "$HOME"
+          file build/pc/smz3
+          ./build/pc/smz3 help
+          ./build/pc/smz3 runs
+          head -c 300000 /dev/urandom > "$RUNNER_TEMP/notarom.bin"
+          if ./build/pc/smz3 setup "$RUNNER_TEMP/notarom.bin"; then echo "setup accepted a random file"; exit 1; fi
+          ls "$HOME/Library/Application Support/smz3" || true
+          set +e
+          perl -e 'alarm 8; exec @ARGV' ./build/pc/smz3
+          rc=$?
+          echo "window run exit code $rc (142 = still running when the alarm fired)"
+          [ $rc -eq 142 ] || exit 1
       - run: tar czf smz3-macos.tar.gz -C build/pc smz3
       - uses: actions/upload-artifact@v4
         with:
