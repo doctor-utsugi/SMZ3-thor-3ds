@@ -773,10 +773,10 @@ index 0000000..a674689
 +private fun Color.toArgb(): Int = android.graphics.Color.argb((alpha * 255).toInt(), (red * 255).toInt(), (green * 255).toInt(), (blue * 255).toInt())
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/OnlineLadder.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/OnlineLadder.kt
 new file mode 100644
-index 0000000..c64508f
+index 0000000..481e953
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/OnlineLadder.kt
-@@ -0,0 +1,175 @@
+@@ -0,0 +1,200 @@
 +package com.swordfish.lemuroid.app.mobile.feature.runs
 +
 +import android.content.Context
@@ -821,12 +821,33 @@ index 0000000..c64508f
 +    /** Name and flag shown on the ladder, set in the start screen of a new run. */
 +    fun playerName(context: Context) = profile(context).first
 +
++    private fun proofFile(context: Context, slot: Int) = File(dir(context), "slot$slot.proof")
++
++    private var proofSlot = -1
++    private val proofSeen = HashSet<Int>()
++
++    /** Proof of run: appends the checks of [cleared] not recorded yet with the play time [ms] they were first seen at. Only online runs keep one. */
++    @Synchronized
++    fun noteChecks(context: Context, slot: Int, cleared: Set<Int>, ms: Long) {
++        if (!onlineFile(context, slot).exists()) return
++        val file = proofFile(context, slot)
++        if (proofSlot != slot) {
++            proofSlot = slot
++            proofSeen.clear()
++            runCatching { file.readLines().forEach { l -> l.substringBefore(' ').toIntOrNull()?.let { proofSeen.add(it) } } }
++        }
++        val fresh = cleared.filter { it >= 0 && proofSeen.add(it) }
++        if (fresh.isNotEmpty() && proofSeen.size <= 512) runCatching { file.appendText(fresh.joinToString("") { "$it $ms\n" }) }
++    }
++
 +    private fun onlineFile(context: Context, slot: Int) = File(dir(context), "slot$slot.online")
 +
 +    /** Records whether the run just generated in [slot] goes to the online ladder; the answer given in the menu then. */
 +    fun markRun(context: Context, slot: Int, online: Boolean, kind: String) {
 +        tokenFile(context, slot).delete()
 +        finishFile(context, slot).delete()
++        proofFile(context, slot).delete()
++        proofSlot = -1
 +        if (online) runCatching { onlineFile(context, slot).writeText(kind) } else onlineFile(context, slot).delete()
 +    }
 +
@@ -891,25 +912,29 @@ index 0000000..c64508f
 +
 +    /** Remembers the final time of a finished run so it is sent now or at the next chance. */
 +    @Synchronized
-+    fun queueFinish(context: Context, slot: Int, timeMs: Long) {
++    fun queueFinish(context: Context, slot: Int, timeMs: Long, seed: String) {
 +        if (!tokenFile(context, slot).exists()) return
-+        finishFile(context, slot).writeText(timeMs.toString())
++        finishFile(context, slot).writeText("$timeMs $seed")
 +    }
 +
 +    /** Sends every finished run waiting; the server's refusals drop the run, network failures retry later. Call off the main thread. */
 +    @Synchronized
 +    fun flush(context: Context) {
 +        for (slot in 0 until RunStore.SLOTS) {
-+            val time = runCatching { finishFile(context, slot).readText().trim().toLong() }.getOrNull() ?: continue
++            val fields = runCatching { finishFile(context, slot).readText().trim().split(' ') }.getOrNull() ?: continue
++            val time = fields[0].toLongOrNull() ?: continue
 +            val token = runCatching { tokenFile(context, slot).readText().trim() }.getOrNull() ?: continue
 +            val (name, country) = profile(context)
 +            val body = JSONObject().put("token", token).put("timeMs", time).put("player", name)
 +            if (country.length == 2) body.put("country", country)
++            fields.getOrNull(1)?.takeIf { it.length in 1..9 && it.all { c -> c.isDigit() } }?.let { body.put("seed", it) }
++            body.put("proof", runCatching { proofFile(context, slot).readText() }.getOrDefault(""))
 +            val (code, reply) = post("/api/finish", body)
 +            if (code == 400) runCatching { File(dir(context), "last_online_error.txt").writeText("slot ${slot + 1}: $reply") }
 +            if (code == 200 || code == 400) {
 +                finishFile(context, slot).delete()
 +                tokenFile(context, slot).delete()
++                proofFile(context, slot).delete()
 +            }
 +        }
 +    }
@@ -3120,10 +3145,10 @@ index 0000000..2410812
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3MapView.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3MapView.kt
 new file mode 100644
-index 0000000..8abb799
+index 0000000..d48cd86
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3MapView.kt
-@@ -0,0 +1,475 @@
+@@ -0,0 +1,492 @@
 +package com.swordfish.lemuroid.app.shared.game.viewmodel
 +
 +import android.content.Context
@@ -3272,12 +3297,14 @@ index 0000000..8abb799
 +        }
 +
 +        override fun onScroll(e1: MotionEvent?, e2: MotionEvent, dx: Float, dy: Float): Boolean {
++            if (following) return true
 +            matrix.postTranslate(-dx, -dy)
 +            invalidate()
 +            return true
 +        }
 +
 +        override fun onDoubleTap(e: MotionEvent): Boolean {
++            if (following) return true
 +            fit()
 +            invalidate()
 +            return true
@@ -3400,6 +3427,21 @@ index 0000000..8abb799
 +
 +    private fun isSeen(x: Float, y: Float) = seen.any { it.contains(x, y) }
 +
++    /** The [FOLLOW] button: while on, the map keeps the player in the middle (any zoom) and cannot be dragged. */
++    var following = false
++        set(on) {
++            field = on
++            if (on) keepCentered()
++            invalidate()
++        }
++
++    private fun keepCentered() {
++        val pos = position ?: return
++        val pts = floatArrayOf(pos.x, pos.y)
++        matrix.mapPoints(pts)
++        matrix.postTranslate(width / 2f - pts[0], height / 2f - pts[1])
++    }
++
 +    private fun centerOnPlayer() {
 +        val pos = position ?: return fit()
 +        val s = width / 240f * miniZoom
@@ -3479,7 +3521,7 @@ index 0000000..8abb799
 +        canvas.drawColor(Color.parseColor("#0B0E12"))
 +        if (panel.showsDungeon()) { panel.drawDungeon(canvas, width, height); if (follow) drawZoom(canvas); postInvalidateDelayed(175); return }
 +        val bmp = bitmap ?: return
-+        if (follow) centerOnPlayer()
++        if (follow) centerOnPlayer() else if (following) keepCentered()
 +        canvas.save()
 +        canvas.concat(matrix)
 +        canvas.drawBitmap(bmp, null, mapRect, bitmapPaint)
@@ -3754,10 +3796,10 @@ index 0000000..0b14570
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Presentation.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Presentation.kt
 new file mode 100644
-index 0000000..9dd6525
+index 0000000..f1909d5
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Presentation.kt
-@@ -0,0 +1,715 @@
+@@ -0,0 +1,729 @@
 +package com.swordfish.lemuroid.app.shared.game.viewmodel
 +
 +import android.app.Presentation
@@ -4040,13 +4082,27 @@ index 0000000..9dd6525
 +            setBackgroundColor(Color.argb(170, 0, 0, 0))
 +            setOnClickListener { view.centerOnPlayerNow() }
 +        }
++        val followBtn = label(14f, Role.ACCENT).apply {
++            text = "[FOLLOW]"
++            setPadding(dp(14), dp(10), dp(14), dp(10))
++            setBackgroundColor(Color.argb(170, 0, 0, 0))
++            setOnClickListener {
++                view.following = !view.following
++                text = if (view.following) "[FOLLOW: ON]" else "[FOLLOW]"
++            }
++        }
 +        val overlay = buildMarkOverlay().also { markOverlay = it }
 +        view.onMapTap = { x, y -> showAddMark(x, y) }
 +        view.onMarkTap = { mark -> showMark(mark) }
 +        return FrameLayout(context).apply {
 +            addView(view, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
++            val buttons = LinearLayout(context).apply {
++                orientation = LinearLayout.HORIZONTAL
++                addView(followBtn)
++                addView(center, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { setMargins(dp(8), 0, 0, 0) })
++            }
 +            addView(
-+                center,
++                buttons,
 +                FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM or Gravity.END)
 +                    .apply { setMargins(0, 0, dp(10), dp(10)) },
 +            )
@@ -4663,10 +4719,10 @@ index 0000000..378f91a
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Tracker.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Tracker.kt
 new file mode 100644
-index 0000000..829788e
+index 0000000..2964fd2
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Tracker.kt
-@@ -0,0 +1,333 @@
+@@ -0,0 +1,334 @@
 +package com.swordfish.lemuroid.app.shared.game.viewmodel
 +
 +import android.app.Presentation
@@ -4931,6 +4987,7 @@ index 0000000..829788e
 +                val delta = now - lastTick
 +                lastTick = now
 +                RunStore.activeSlot(context)?.let { slot ->
++                    if (started) OnlineLadder.noteChecks(context, slot, cleared, baseMs + pendingPlayTime)
 +                    if (started && running) {
 +                        val scaled = delta * speed
 +                        pendingPlayTime += scaled
@@ -4951,7 +5008,7 @@ index 0000000..829788e
 +                                val isDefault = runCatching { org.json.JSONObject(run.settings).optBoolean("defaultRules", false) }.getOrDefault(false)
 +                                Leaderboard.add(context, LeaderboardEntry(run.name, run.seed, totalMs, System.currentTimeMillis(), isDefault))
 +                                if (isDefault) {
-+                                    OnlineLadder.queueFinish(context, slot, totalMs)
++                                    OnlineLadder.queueFinish(context, slot, totalMs, run.seed)
 +                                    Thread { OnlineLadder.flush(context) }.start()
 +                                }
 +                            }

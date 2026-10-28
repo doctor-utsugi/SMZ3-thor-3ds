@@ -1,11 +1,13 @@
 // SMZ3 online ladder: a tiny HTTP service with no dependencies.
 //   POST /api/start   {install, kind}              -> {token, seed?}   (kind: original | monthly | weekly)
-//   POST /api/finish  {token, timeMs, player}      -> {ok, rank}
+//   POST /api/finish  {token, timeMs, player, country, proof, seed?} -> {ok, rank}   (proof: "loc ms" lines, see below)
 //   GET  /api/ladder  ?kind=original | ?kind=monthly&month=YYYY-MM | ?kind=weekly&week=YYYY-Www
 //   GET  /api/monthly                              -> {month, seed, months:[...]}
 //   GET  /api/weekly                               -> {week, seed, weeks:[...], endsAt}
 // A finished run is only accepted with a token the server signed when the run began, and its time
-// cannot be longer than the wall clock time since then or shorter than MIN_MS.
+// cannot be longer than the wall clock time since then or shorter than MIN_MS. It must also carry a proof of run, the
+// checks it cleared with their play times; smz3check replays them against the known seed. A proof that cannot have
+// happened is refused, one that leans on far too many checks out of logic is held (hold) until admin.js approves it.
 const http = require('http');
 const fs = require('fs');
 const path = require('path');
@@ -17,7 +19,9 @@ const DATA = path.join(DIR, 'ladder.json');
 const SECRET_FILE = path.join(DIR, 'secret');
 const MIN_MS = 10 * 60 * 1000;
 const MAX_MS = 3 * 24 * 3600 * 1000;      // a token is good for this long after it was issued
-const MAX_BODY = 1024;
+const MAX_BODY = 16384;
+const { execFile } = require('child_process');
+const CHECKER = process.env.SMZ3CHECK || path.join(__dirname, 'smz3check');
 const START_PER_HOUR = 20;
 const FINISH_PER_HOUR = 20;
 
@@ -74,11 +78,30 @@ const periodOfRun = r => r.period || r.month;
 function ladder(kind, month) {
   const best = new Map();   // best run per install
   for (const r of db.runs) {
-    if (r.kind !== kind || (kind !== 'original' && periodOfRun(r) !== month)) continue;
+    if (r.hold || r.kind !== kind || (kind !== 'original' && periodOfRun(r) !== month)) continue;
     if (!best.has(r.install) || r.timeMs < best.get(r.install).timeMs) best.set(r.install, r);
   }
   return [...best.values()].sort((a, b) => a.timeMs - b.timeMs).slice(0, 100)
     .map(({ install, ...r }) => r);
+}
+
+// The rules a ladder fixes, as the settings the checker rebuilds the seed from.
+function proofSettings(kind, period, seed) {
+  if (kind === 'original' && !/^\d{1,9}$/.test(String(seed || ''))) return '{"nologic":1}';
+  const s = { seed: kind === 'original' ? String(seed) : seedOf(period) };
+  if (kind === 'weekly') Object.assign(s, { ganonCrystals: 2, ganonsTowerCrystals: 2, tourianBosses: 1 });
+  return JSON.stringify(s);
+}
+
+function verifyProof(kind, period, b, timeMs, done) {
+  const child = execFile(CHECKER, [String(timeMs)], { timeout: 60000, maxBuffer: 1 << 16 }, (err, out) => {
+    let v;
+    try { v = JSON.parse(out); } catch (e) { return done('proof check failed'); }
+    if (!v.ok) return done('proof refused: ' + v.reason);
+    done(null, { suspect: !!v.suspect, reason: v.reason });
+  });
+  child.stdin.on('error', () => {});
+  child.stdin.end(proofSettings(kind, period, b.seed) + '\n' + b.proof);
 }
 
 function send(res, code, body, type = 'application/json') {
@@ -139,7 +162,7 @@ http.createServer((req, res) => {
   if (req.method === 'POST' && url.pathname === '/api/finish') {
     if (limited('f', ip, FINISH_PER_HOUR)) return send(res, 429, { error: 'slow down' });
     return readJson(req, res, b => {
-      if (!onlyKeys(b, ['token', 'timeMs', 'player', 'country']) || typeof b.token !== 'string') return send(res, 400, { error: 'invalid' });
+      if (!onlyKeys(b, ['token', 'timeMs', 'player', 'country', 'proof', 'seed']) || typeof b.token !== 'string' || typeof b.proof !== 'string' || b.proof.length > 12000) return send(res, 400, { error: 'invalid' });
       const parts = b.token.split('.');
       if (parts.length !== 6) return send(res, 400, { error: 'invalid' });
       const body = parts.slice(0, 5).join('.');
@@ -149,15 +172,19 @@ http.createServer((req, res) => {
       const timeMs = b.timeMs, elapsed = Date.now() - Number(startedAt);
       if (!Number.isInteger(timeMs) || timeMs < MIN_MS || timeMs > MAX_MS || timeMs > elapsed || elapsed > MAX_MS) return send(res, 400, { error: 'invalid time' });
       if (used.has(id)) return send(res, 200, { ok: true, duplicate: true });
-      used.add(id);
-      const mine = db.runs.findIndex(r => r.install === install && r.kind === kind && (kind !== 'original' ? periodOfRun(r) === month : true));
-      const entry = { kind, month: kind === 'monthly' ? month : undefined, period: kind === 'weekly' ? month : undefined, player: clean(b.player, 24) || 'Player', country: /^[A-Z]{2}$/.test(b.country) ? b.country : '', timeMs, finishedAt: Date.now(), install };
-      if (mine < 0) db.runs.push(entry);
-      else if (db.runs[mine].timeMs > timeMs) db.runs[mine] = entry;      // one entry per install and ladder: its best
-      else { db.runs[mine].player = entry.player; db.runs[mine].country = entry.country; }
-      save();
-      const rank = ladder(kind, month).findIndex(r => r.timeMs === timeMs) + 1;
-      send(res, 200, { ok: true, rank });
+      verifyProof(kind, month, b, timeMs, (err, verdict) => {
+        if (err) return send(res, 400, { error: err });
+        if (used.has(id)) return send(res, 200, { ok: true, duplicate: true });
+        used.add(id);
+        const mine = db.runs.findIndex(r => r.install === install && r.kind === kind && (kind !== 'original' ? periodOfRun(r) === month : true) && !r.hold === !verdict.suspect);
+        const entry = { kind, month: kind === 'monthly' ? month : undefined, period: kind === 'weekly' ? month : undefined, player: clean(b.player, 24) || 'Player', country: /^[A-Z]{2}$/.test(b.country) ? b.country : '', timeMs, finishedAt: Date.now(), install, hold: verdict.suspect ? verdict.reason : undefined };
+        if (mine < 0) db.runs.push(entry);
+        else if (db.runs[mine].timeMs > timeMs) db.runs[mine] = entry;      // one entry per install and ladder: its best
+        else { db.runs[mine].player = entry.player; db.runs[mine].country = entry.country; }
+        save();
+        const rank = verdict.suspect ? 0 : ladder(kind, month).findIndex(r => r.timeMs === timeMs) + 1;
+        send(res, 200, { ok: true, rank, held: verdict.suspect ? true : undefined });
+      });
     });
   }
   send(res, 404, { error: 'not found' });

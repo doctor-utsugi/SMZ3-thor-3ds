@@ -21,7 +21,8 @@ int online_weekly(char label[16], int *seed);
 int online_weekly_days_left(void);
 /* Asks for the token of an online run once; 1 when the slot has one (or is not online). Blocks. */
 int online_ensure_token(int slot);
-void online_queue_finish(int slot, int64_t time_ms);
+/* seed is sent for the original ladder, whose seed the server cannot know; the proof of run is read from the slot's .proof file. */
+void online_queue_finish(int slot, int64_t time_ms, int seed);
 /* Sends the finished runs waiting. Blocks. */
 void online_flush(void);
 

@@ -130,6 +130,7 @@ void online_mark_run(int slot, int online, int kind)
 {
     remove(store_path("runs/slot%d.token", slot));
     remove(store_path("runs/slot%d.finish", slot));
+    remove(store_path("runs/slot%d.proof", slot));
     if (online) {
         const char *k = kind == 3 ? "weekly" : kind == 2 ? "monthly" : "original";
         store_write(store_path("runs/slot%d.online", slot), k, strlen(k));
@@ -197,11 +198,11 @@ int online_ensure_token(int slot)
     return 1;
 }
 
-void online_queue_finish(int slot, int64_t time_ms)
+void online_queue_finish(int slot, int64_t time_ms, int seed)
 {
     if (access(store_path("runs/slot%d.token", slot), F_OK) != 0) return;
-    char t[32];
-    int n = snprintf(t, sizeof t, "%lld", (long long)time_ms);
+    char t[48];
+    int n = snprintf(t, sizeof t, "%lld %d", (long long)time_ms, seed);
     store_write(store_path("runs/slot%d.finish", slot), t, (size_t)n);
 }
 
@@ -212,11 +213,24 @@ void online_flush(void)
         char *tk = read_text(store_path("runs/slot%d.token", slot));
         if (ft && tk) {
             tk[strcspn(tk, "\r\n ")] = 0;
-            char name[32], country[4], body[1024], reply[1024];
+            char name[32], country[4], reply[1024];
+            static char body[16384];
+            long long ms = 0;
+            int seed = 0;
+            sscanf(ft, "%lld %d", &ms, &seed);
             profile(name, country);
-            int n = snprintf(body, sizeof body, "{\"token\":\"%s\",\"timeMs\":%lld,\"player\":\"%s\"", tk, atoll(ft), name);
+            int n = snprintf(body, sizeof body, "{\"token\":\"%s\",\"timeMs\":%lld,\"player\":\"%s\"", tk, ms, name);
             if (country[0]) n += snprintf(body + n, sizeof body - n, ",\"country\":\"%s\"", country);
-            snprintf(body + n, sizeof body - n, "}");
+            if (seed > 0) n += snprintf(body + n, sizeof body - n, ",\"seed\":\"%d\"", seed);
+            n += snprintf(body + n, sizeof body - n, ",\"proof\":\"");
+            char *pf = read_text(store_path("runs/slot%d.proof", slot));
+            for (const char *c = pf ? pf : ""; *c && n < (int)sizeof body - 8; c++) {
+                if (*c == '\n') { body[n++] = '\\'; body[n++] = 'n'; }
+                else if (*c >= '0' && *c <= '9') body[n++] = *c;
+                else if (*c == ' ') body[n++] = ' ';
+            }
+            free(pf);
+            snprintf(body + n, sizeof body - n, "\"}");
             int code = http("POST", "/api/finish", body, reply, sizeof reply);
             if (code == 400) {
                 char msg[1100];
@@ -225,6 +239,7 @@ void online_flush(void)
             }
             if (code == 200 || code == 400) {
                 remove(store_path("runs/slot%d.finish", slot));
+                remove(store_path("runs/slot%d.proof", slot));
                 remove(store_path("runs/slot%d.token", slot));
             }
         }

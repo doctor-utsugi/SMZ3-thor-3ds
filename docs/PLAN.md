@@ -629,3 +629,26 @@ A third online ladder next to Original and the monthly seed: a short run with a 
 - Monthly and weekly runs (`runs/slotN.online` = monthly or weekly) allow no save state of any kind. The hotkeys were already off for runs made without "Save states" (the default of both). New: the app's automatic state (written every minute and on exit, loaded by Continue) is switched off for these runs (`Smz3Hotkeys.noAutosave`, used by `GameViewModelSaves.isAutoSaveEnabled`) and Continue loads only the game's own save, with no load choice. Before, an automatic state of up to a minute old could be loaded by killing the app. Original-rules ladder runs still use the automatic state. On PC states are only used when the run was made with Save states, so these runs never use them.
 - Honest limit: this is a client rule. Anyone who builds a modified program, edits the save RAM or the time, or plays with an emulator tool can bypass it; the server cannot see states. What it does is keep honest players honest.
 - The "Music package" row of the options is hidden while no package is installed (always the case on the 3DS).
+
+## Proof of run (ladder anti-tamper)
+
+A client cannot be trusted (the project is open source, so anyone can build a client that reports what it likes) and hardware
+attestation does not fit an APK / 3DS / Linux project, so the server checks that what a client reports is coherent with the seed.
+
+- Each online run records a proof: the checks it cleared (`SmzProof`, `core/ui/smz3_proof.c`) with the play time of the first reading
+  that showed each one. PC keeps it in `runs/slotN.proof`, Android in `files/runs/slotN.proof`, and it is sent with `/api/finish`
+  (`proof`, plus `seed` for the original ladder, whose seed the server cannot know).
+- The server runs `smz3check` (`server/ladder/smz3check.c`, built from the same C core: see `build-check.sh`) with the settings the ladder
+  fixes (monthly/weekly: the seed it issues and the weekly goals; original: the client's seed with default rules).
+- Refused (400): fewer than 12 checks, a repeated or unknown check, times going backwards, a check after the claimed finish time,
+  a run that ends long after its last check, a seed that cannot be rebuilt.
+- Held (`hold` on the entry, hidden from the ladder until `node admin.js approve N`): more than 10% of the checks were not in logic
+  for the items collected before them in the proof's own order (savestate/edit tricks, or an honest sequence break).
+- Not covered: a custom client can still fabricate a proof that is coherent with the seed, and the original ladder only checks
+  coherence for the seed the client names. Reviewing the top entries by hand (`admin.js list`, `remove`) stays part of the process.
+- Clients without proof support are refused until updated. Test: `core/ui/test_proof.c`.
+
+## Map follow
+
+The Android Map tab has a [FOLLOW] button next to [CENTER]: while on, the map keeps the player in the middle at the current zoom
+(so it also recentres when the game switches between ALttP and Super Metroid) and cannot be dragged. PC already had it on `F`.

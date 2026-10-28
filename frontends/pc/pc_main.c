@@ -17,6 +17,7 @@
 #include "smz3_host.h"
 #include "smz3_md5.h"
 #include "smz3_discovery.h"
+#include "smz3_proof.h"
 #include "smz3_runlogic.h"
 #include "smz3_tracker.h"
 #include "smz3_ui_gen.h"
@@ -353,6 +354,13 @@ static char g_week[16];
 static int g_week_seed, g_week_ready;
 static void *monthly_thread(void *arg) { (void)arg; char l[16]; int s; if (online_monthly(l, &s)) { snprintf(g_month, sizeof g_month, "%s", l); g_month_seed = s; g_month_ready = 1; }
     if (online_weekly(l, &s)) { snprintf(g_week, sizeof g_week, "%s", l); g_week_seed = s; g_week_ready = 1; } return NULL; }
+static void save_proof(int slot, const SmzProof *p)
+{
+    static char text[SMZ_PROOF_MAX * 24];
+    size_t n = smz_proof_format(p, text, sizeof text);
+    store_write(store_path("runs/slot%d.proof", slot), text, n);
+}
+
 static void *flush_thread(void *arg) { (void)arg; online_flush(); return NULL; }
 static void *token_thread(void *arg) { online_ensure_token((int)(intptr_t)arg); return NULL; }
 static void detach(void *(*fn)(void *), void *arg) { pthread_t t; if (!pthread_create(&t, NULL, fn, arg)) pthread_detach(t); }
@@ -642,6 +650,15 @@ static void play(int slot, int game_save_only)
     memset(in_logic, 0, sizeof in_logic);
     static SmzTracker trk;
     smz_tracker_reset(&trk, run.play_ms, run.save_ms, run.save_zelda, run.save_metroid);
+    static SmzProof proof;
+    {
+        size_t pn;
+        char *pt = (char *)store_read(store_path("runs/slot%d.proof", slot + 1), &pn);
+        if (pt) pt[pn] = 0;
+        smz_proof_parse(&proof, pt ? pt : "");
+        free(pt);
+    }
+    int proof_dirty = 0;
     float aspect = shape_aspect(run.settings);
     SDL_Texture *tex = NULL;
     int tw = 0, th = 0, tab = getenv("SMZ3_TAB") ? atoi(getenv("SMZ3_TAB")) % TAB_COUNT : TAB_RUN, scroll = 0, show = getenv("SMZ3_TAB") != NULL, pause_on_overlay = 1, leaving = 0, running = 1, finished = 0, fast = 0;
@@ -720,10 +737,12 @@ static void play(int slot, int game_save_only)
                 smz_tracker_tick(&trk, wram, wl, sram, sl, dt, fast ? 4 : 1);
                 if (trk.save_changed) store_write(store_path("runs/slot%d.srm", slot + 1), sram, sl);
                 if (trk.game == 3) finished = 1;
+                if (trk.started && smz_proof_note(&proof, trk.cleared, SMZ_TRK_MAX_LOCS, trk.base_ms + trk.pending_ms)) proof_dirty = 1;
                 if (trk.started && trk.running && SDL_GetTicks() >= next_token && online_slot_kind(slot + 1)) { next_token = SDL_GetTicks() + 60000; detach(token_thread, (void *)(intptr_t)(slot + 1)); }
                 if (finished && !queued && is_default && online_slot_kind(slot + 1)) {
                     queued = 1;
-                    online_queue_finish(slot + 1, trk.base_ms + trk.pending_ms);
+                    save_proof(slot + 1, &proof);
+                    online_queue_finish(slot + 1, trk.base_ms + trk.pending_ms, atoi(run.seed));
                     detach(flush_thread, NULL);
                 }
                 if (trk.started && !hold) smz_disc_update(&disc, wram, wl, (int)trk.game);
@@ -741,6 +760,7 @@ static void play(int slot, int game_save_only)
             last_save = now;
             snapshot_run(&run, &trk, finished);
             store_run_save(slot + 1, &run);
+            if (proof_dirty) { save_proof(slot + 1, &proof); proof_dirty = 0; }
             if (disc.dirty) {
                 char text[8192];
                 if (smz_disc_save(&disc, text, sizeof text) > 0) store_write(store_path("runs/slot%d.discovery", slot + 1), text, strlen(text));
