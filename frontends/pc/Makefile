@@ -50,6 +50,14 @@ $(OUT)/o/%.o: %.c
 	@mkdir -p $(OUT)/o
 	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
 
+# Explicit rules for the generated sources: the make shipped with macOS (3.81) does not find them through VPATH.
+$(OUT)/o/ips_data.o: $(OUT)/ips_data.c
+	@mkdir -p $(OUT)/o
+	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
+$(OUT)/o/map_data.o: $(OUT)/map_data.c
+	@mkdir -p $(OUT)/o
+	$(CC) $(CFLAGS) -MMD -MP -c $< -o $@
+
 $(OUT)/smz3$(EXE): $(OBJ) $(OUT)/libsnes9x.a
 	$(CC) $(OBJ) $(OUT)/libsnes9x.a -o $@ $(LIBS)
 
