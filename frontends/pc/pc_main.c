@@ -18,6 +18,7 @@
 #include "smz3_md5.h"
 #include "smz3_discovery.h"
 #include "smz3_proof.h"
+#include "smz3_romsetup.h"
 #include "smz3_runlogic.h"
 #include "smz3_tracker.h"
 #include "smz3_ui_gen.h"
@@ -262,6 +263,7 @@ static void usage(void)
          "  smz3 play N                   open the window and continue run N\n"
          "  smz3 runs                     list the saved runs\n"
          "  smz3 new [--preset P] [--seed N] [--name S] [--set Key=value]   make a run in the first free slot\n"
+         "  smz3 setup <rom|zip|folder>...  find the two base ROMs and keep a copy in the data folder\n"
          "  smz3 online                   show the monthly seed and which runs are on the online ladder\n"
          "  smz3 config [--sm F] [--z3 F] show or set the base ROM files (Super Metroid JU, ALttP JP v1.0)\n"
          "  smz3 gen --out FILE [--preset cozy|original|custom] [--seed N] [--set Key=value ...]\n"
@@ -305,24 +307,94 @@ static int base_ok(void)
     return 1;
 }
 
-/* Stores a dropped ROM file as the Super Metroid or the ALttP base, judged by its content. Returns a message. */
-static const char *accept_rom(const char *path)
+/* Keeps a copy of a recognised ROM (without copier header) in the data folder, so the originals can move or go away. */
+static int keep_rom(const uint8_t *data, size_t n, int kind, char sm[512], char z3[512])
 {
-    size_t n;
-    uint8_t *rom = store_read(path, &n);
-    if (!rom) return "cannot read that file";
-    uint8_t *start = rom;
-    if (n % 0x8000 == 0x200) { start += 0x200; n -= 0x200; }
-    char hex[33];
-    smz_md5_hex(start, n, hex);
+    const uint8_t *start;
+    size_t len;
+    smz_rom_classify(data, n, &start, &len);
+    const char *path = store_path(kind == SMZ_ROM_SM ? "base/supermetroid.sfc" : "base/alttp.sfc");
+    if (store_write(path, start, len)) return -1;
+    snprintf(kind == SMZ_ROM_SM ? sm : z3, 512, "%s", path);
+    return 0;
+}
+
+static void setup_image(const uint8_t *data, size_t n, char sm[512], char z3[512], const char **msg, int *found)
+{
+    int kind = smz_rom_classify(data, n, NULL, NULL);
+    if (kind == SMZ_ROM_SM || kind == SMZ_ROM_Z3) {
+        if (keep_rom(data, n, kind, sm, z3) == 0) { *msg = smz_rom_message(kind); (*found)++; }
+        else *msg = "cannot write into the data folder";
+    } else if (!*found) *msg = smz_rom_message(kind);
+}
+
+/* Takes a file, a zip or a folder, keeps what is Super Metroid (JU) or ALttP (JP v1.0) and records it. Returns a message. */
+static const char *setup_path(const char *path)
+{
     char sm[512], z3[512];
     store_roms_get(sm, z3);
-    const char *msg = "that is not Super Metroid (JU) or ALttP (JP v1.0)";
-    if (!strcmp(hex, SMZ_MD5_SM)) { snprintf(sm, sizeof sm, "%s", path); msg = "Super Metroid found"; }
-    else if (!strcmp(hex, SMZ_MD5_Z3)) { snprintf(z3, sizeof z3, "%s", path); msg = "A Link to the Past found"; }
-    free(rom);
+    const char *msg = "cannot read that file";
+    int found = 0;
+    DIR *d = opendir(path);
+    if (d) {
+        struct dirent *e;
+        msg = "no Super Metroid or ALttP ROM in that folder";
+        while ((e = readdir(d))) {
+            if (e->d_name[0] == '.') continue;
+            char full[1024];
+            snprintf(full, sizeof full, "%s/%s", path, e->d_name);
+            size_t n;
+            uint8_t *f = store_read(full, &n);
+            if (!f) continue;
+            if (smz_is_zip(f, n)) {
+                for (int i = 0;; i++) {
+                    size_t k;
+                    uint8_t *img = smz_zip_entry(f, n, i, &k);
+                    if (!img) break;
+                    const char *m = NULL;
+                    setup_image(img, k, sm, z3, &m, &found);
+                    free(img);
+                }
+            } else if (n >= 0x100000 && n <= 0x300200) { const char *m = NULL; setup_image(f, n, sm, z3, &m, &found); }
+            free(f);
+        }
+        closedir(d);
+        if (found) msg = found > 1 ? "both ROMs found" : "one ROM found";
+    } else {
+        size_t n;
+        uint8_t *f = store_read(path, &n);
+        if (f) {
+            if (smz_is_zip(f, n)) {
+                msg = "no Super Metroid or ALttP ROM in that zip";
+                for (int i = 0;; i++) {
+                    size_t k;
+                    uint8_t *img = smz_zip_entry(f, n, i, &k);
+                    if (!img) break;
+                    const char *m = NULL;
+                    setup_image(img, k, sm, z3, &m, &found);
+                    if (m && found) msg = m;
+                    free(img);
+                }
+            } else setup_image(f, n, sm, z3, &msg, &found);
+            free(f);
+        }
+    }
     store_roms_set(sm, z3);
     return msg;
+}
+
+static const char *accept_rom(const char *path) { return setup_path(path); }
+
+static int cmd_setup(int argc, char **argv)
+{
+    if (!argc) { fprintf(stderr, "usage: smz3 setup <rom | zip | folder> ...\n"); return 2; }
+    for (int i = 0; i < argc; i++) printf("%s: %s\n", argv[i], setup_path(argv[i]));
+    uint8_t *a, *b;
+    char err[200];
+    if (store_load_base(&a, &b, err, sizeof err)) { printf("not ready: %s\n", err); return 1; }
+    free(a); free(b);
+    printf("ready: both base ROMs are kept in %s\n", store_path("base"));
+    return 0;
 }
 
 /* Test hooks: SMZ3_SHOT=file.bmp [SMZ3_SHOT_AFTER=n] saves the window after n presents and exits; SMZ3_QUIT_AFTER=n closes
@@ -973,6 +1045,7 @@ int main(int argc, char **argv)
         if (!strcmp(argv[1], "online")) return cmd_online();
         if (!strcmp(argv[1], "new")) return cmd_new(argc - 2, argv + 2);
         if (!strcmp(argv[1], "selftest")) return cmd_selftest(argc - 2, argv + 2);
+        if (!strcmp(argv[1], "setup")) return cmd_setup(argc - 2, argv + 2);
         if (!strcmp(argv[1], "config")) return cmd_config(argc - 2, argv + 2);
         if (!strcmp(argv[1], "--help") || !strcmp(argv[1], "-h") || !strcmp(argv[1], "help")) { usage(); return 0; }
         if (strcmp(argv[1], "play") || argc < 3) { usage(); return 2; }

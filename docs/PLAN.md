@@ -659,11 +659,10 @@ Goal: the user downloads one file per platform, points it at their Super Metroid
 a ROM is ever shipped; the generator, patches (IPS), sprites and UI are all in the shared C core, so no extra tool or runtime is needed.
 
 ### Common "ROM setup" step (core, shared by every frontend)
-- `smz_rom_identify(bytes, len)` -> Super Metroid / ALttP / unknown, by size (with or without a 512-byte copier header, which is stripped),
-  internal header and MD5 against the accepted dumps (`smz3_md5.c` is already in the core). Reasons are shown plainly ("this is the
-  Japanese ALttP, use the USA/US-Europe dump").
+- `smz_rom_classify` (`core/gen/smz3_romsetup.c`) -> Super Metroid (JU) / ALttP (JP v1.0) / another revision / unknown, by size (a
+  512-byte copier header is stripped) and MD5. The patches only fit those two dumps; other revisions get a plain message.
 - Accepts the two ROMs in any order, in any of: a `.sfc/.smc/.zip` file, a folder (scanned), several files dropped at once. A zip is
-  read with a small inflate in the core (no zlib dependency).
+  read with a small inflate in the core (`smz_zip_entry`, no zlib dependency).
 - Result: a "base" file `smz3_base.bin` (the combined 4 MB input the generator needs) in the app data folder. Every run is generated
   from it, so the originals are not needed again and the user can delete them.
 
@@ -695,3 +694,8 @@ It never contains ROM data, so it can be published freely.
 2. PC drop window, then Windows and macOS builds and path/process wrappers.
 3. Thor: SAF picker feeding the same base file.
 4. 3DS: first-start scan + base file; then online through `3dsra_http`.
+
+### Done: ROM setup on PC (step 1)
+`smz3 setup <rom|zip|folder>...` and the window's drag and drop share `setup_path`: each recognised ROM is copied without header to
+`base/supermetroid.sfc` and `base/alttp.sfc` in the data folder and `config.txt` points there. Tested with loose files, a deflate zip,
+a stored zip, a folder and a wrong revision (USA ALttP is refused with the reason). Android and 3DS still use their own scans.
