@@ -70,4 +70,6 @@ jobs:
       - run: ./build-pc.sh
       - run: tar czf smz3-macos.tar.gz -C build/pc smz3
       - uses: actions/upload-artifact@v4
-        with: { name: smz3-${{ matrix.os }}, path: smz3-macos.tar.gz }
+        with:
+          name: smz3-${{ matrix.os }}
+          path: smz3-macos.tar.gz
