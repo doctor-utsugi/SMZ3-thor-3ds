@@ -71,6 +71,7 @@ for name, size in SIZES.items():
     legacy(size, True).save(os.path.join(d, "lemuroid_launcher_round.png"))
 
 nodpi = os.path.join(RES, "drawable-nodpi")
+os.makedirs(nodpi, exist_ok=True)
 layer(432).save(os.path.join(nodpi, "smz3_launcher_foreground.png"))
 monochrome(432).save(os.path.join(nodpi, "smz3_launcher_monochrome.png"))
 with open(os.path.join(RES, "values/lemuroid_launcher_background.xml"), "w") as f:
