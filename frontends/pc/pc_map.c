@@ -80,7 +80,7 @@ static void load(SDL_Renderer *r)
     for (unsigned i = 0; i < smz3_location_count && i < 512; i++) if (stack_size[stack_head[i]] < 255) stack_size[stack_head[i]]++;
 }
 
-void map_view_init(MapView *v) { v->cx = MAP_W / 2; v->cy = MAP_H / 2; v->zoom = 1.4f; v->follow = 1; }
+void map_view_init(MapView *v) { v->cx = MAP_W / 2; v->cy = MAP_H / 2; v->zoom = 1.4f; v->follow = 1; v->highlight = 0; }
 
 void map_view_move(MapView *v, float dx, float dy, float dz)
 {
@@ -92,6 +92,33 @@ static int seen_at(const SmzRect *rects, int n, float x, float y)
 {
     for (int i = 0; i < n; i++) if (x >= rects[i].x && x < rects[i].x + rects[i].w && y >= rects[i].y && y < rects[i].y + rects[i].h) return 1;
     return 0;
+}
+
+/* One line of "dot meaning" pairs ending at x (right aligned); the world map adds the collected dot and the player. */
+void map_legend(SDL_Renderer *r, float x, float y, float h, int dungeon, int logic)
+{
+    struct { int kind; const char *label; } L[5];
+    int n = 0;
+    if (logic) L[n++] = (typeof(L[0])){0, "reachable"};
+    L[n++] = (typeof(L[0])){1, logic ? "needs more items" : "to collect"};
+    if (!dungeon) L[n++] = (typeof(L[0])){2, "collected"};
+    L[n++] = (typeof(L[0])){3, "boss"};
+    if (!dungeon) L[n++] = (typeof(L[0])){4, "you"};
+    float total = 0, gap = h * 1.2f, dot = h * 0.9f;
+    for (int i = 0; i < n; i++) total += dot + gfx_text_width(h, L[i].label) + gap;
+    float cx = x - total + gap;
+    for (int i = 0; i < n; i++) {
+        float py = y + h * 0.55f, rad = h * 0.38f;
+        SDL_Color white = {255, 255, 255, 255}, black = {0, 0, 0, 255};
+        if (L[i].kind == 0) { map_circle(r, cx + rad, py, rad + 1.5f, white, 0); map_circle(r, cx + rad, py, rad, (SDL_Color){0xFF, 0xB3, 0, 255}, 0); }
+        else if (L[i].kind == 1) { map_circle(r, cx + rad, py, rad, (SDL_Color){0x24, 0x30, 0x38, 230}, 0); map_circle(r, cx + rad, py, rad, (SDL_Color){0xF0, 0xF4, 0xF8, 240}, 1); }
+        else if (L[i].kind == 2) { map_circle(r, cx + rad, py, rad + 1, black, 0); map_circle(r, cx + rad, py, rad, white, 0); }
+        else if (L[i].kind == 3) { gfx_rect(cx, py - rad, 2 * rad, 2 * rad, (SDL_Color){0xE0, 0x5A, 0x4F, 255}); }
+        else { map_circle(r, cx + rad, py, rad, (SDL_Color){0xE9, 0xA2, 0x3B, 255}, 0); }
+        cx += dot;
+        gfx_text(cx, y, h, (SDL_Color){0x87, 0x93, 0xA6, 255}, 0, L[i].label);
+        cx += gfx_text_width(h, L[i].label) + gap;
+    }
 }
 
 void map_draw(SDL_Renderer *r, MapView *v, SDL_Rect area, const SmzTracker *t, const SmzDiscovery *d, int discovered_only,
@@ -151,6 +178,11 @@ void map_draw(SDL_Renderer *r, MapView *v, SDL_Rect area, const SmzTracker *t, c
             map_circle(r, px, py, rr + 2, white, 0);
             map_circle(r, px, py, rr + 0.5f, black, 0);
             map_circle(r, px, py, rr - 0.8f, amber, 0);
+            if (v->highlight) {
+                float hr = rr * (1.9f + 0.5f * pulse);
+                map_circle(r, px, py, hr, (SDL_Color){0xFF, 0xD5, 0x4F, 255}, 1);
+                map_circle(r, px, py, hr + 1.5f, (SDL_Color){0xFF, 0xB3, 0, 160}, 1);
+            }
         }
     }
     SmzBossMark boss[16];

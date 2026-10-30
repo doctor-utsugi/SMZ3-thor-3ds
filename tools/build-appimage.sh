@@ -11,6 +11,9 @@ if [ ! -x "$LD" ]; then
     chmod +x "$LD"
 fi
 cp "$ROOT/build/pc/smz3" "$W/AppDir/usr/bin/smz3"
+mkdir -p "$W/AppDir/usr/share/smz3"
+rm -rf "$W/AppDir/usr/share/smz3/sprites"
+cp -r "$ROOT/assets/sprites" "$W/AppDir/usr/share/smz3/sprites"
 python3 - "$ROOT" "$W/AppDir/usr/share/icons/hicolor/256x256/apps/smz3.png" <<'PY'
 import sys
 from PIL import Image

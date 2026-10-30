@@ -71,6 +71,8 @@ static int http(const char *method, const char *path, const char *body, char *ou
         int nul = open("/dev/null", O_WRONLY);
         if (nul >= 0) dup2(nul, 2);
         close(in_pipe[1]); close(out_pipe[0]);
+        unsetenv("LD_LIBRARY_PATH");   /* the AppImage's bundled libs break the system curl */
+        unsetenv("LD_PRELOAD");
         if (body) execlp("curl", "curl", "-s", "-m", "8", "-X", method, "-H", "Content-Type: application/json", "--data-binary", "@-", "-w", "\n%{http_code}", url, (char *)NULL);
         execlp("curl", "curl", "-s", "-m", "8", "-w", "\n%{http_code}", url, (char *)NULL);
         _exit(127);
@@ -258,8 +260,11 @@ void online_queue_finish(int slot, int64_t time_ms, int seed)
     store_write(store_path("runs/slot%d.finish", slot), t, (size_t)n);
 }
 
+static void daily_flush(void);
+
 void online_flush(void)
 {
+    daily_flush();
     for (int slot = 1; slot <= UI_SLOTS; slot++) {
         char *ft = read_text(store_path("runs/slot%d.finish", slot));
         char *tk = read_text(store_path("runs/slot%d.token", slot));
@@ -297,4 +302,114 @@ void online_flush(void)
         }
         free(ft); free(tk);
     }
+}
+
+/* ---------- the daily challenge ---------- */
+
+int64_t online_now_ms(void)
+{
+    struct timespec t;
+    clock_gettime(CLOCK_REALTIME, &t);
+    return (int64_t)t.tv_sec * 1000 + t.tv_nsec / 1000000;
+}
+
+int online_daily_info(SmzDailyInfo *d)
+{
+    static char body[4096];
+    char id[48], path[96];
+    install_id(id);
+    snprintf(path, sizeof path, "/api/daily?install=%s", id);
+    if (http("GET", path, NULL, body, sizeof body) != 200) { memset(d, 0, sizeof *d); d->loaded = -1; return -1; }
+    return smz_daily_parse_info(body, online_now_ms(), d);
+}
+
+int online_daily_start(const char *window, SmzDailyRun *r, char *settings, size_t cap, char *err, size_t errcap)
+{
+    static char body[32768];
+    char id[48], req[160];
+    install_id(id);
+    snprintf(req, sizeof req, "{\"install\":\"%s\",\"window\":\"%s\"}", id, window);
+    int code = http("POST", "/api/daily/start", req, body, sizeof body);
+    if (code == 200 && smz_daily_parse_start(body, online_now_ms(), r, settings, cap) == 0) return 0;
+    char why[64] = "";
+    json_str(body, "error", why, sizeof why);
+    if (code < 0) snprintf(err, errcap, "No connection to the challenge server");
+    else if (why[0]) snprintf(err, errcap, "Cannot start: %s", why);
+    else snprintf(err, errcap, "Cannot start the challenge (%d)", code);
+    return -1;
+}
+
+int online_daily_hints(SmzDailyRun *r)
+{
+    static char body[8192];
+    char path[400];
+    snprintf(path, sizeof path, "/api/daily/hints?token=%s", r->token);
+    if (http("GET", path, NULL, body, sizeof body) != 200) return -1;
+    return smz_daily_parse_hints(body, online_now_ms(), r);
+}
+
+int online_daily_load(SmzDailyRun *r)
+{
+    char *t = read_text(store_path("runs/daily.txt"));
+    int rc = smz_daily_run_load(t, r);
+    free(t);
+    return rc;
+}
+
+void online_daily_save(const SmzDailyRun *r)
+{
+    static char text[8192];
+    int n = smz_daily_run_text(r, text, sizeof text);
+    if (n > 0) store_write(store_path("runs/daily.txt"), text, (size_t)n);
+}
+
+void online_daily_queue_finish(int64_t time_ms)
+{
+    char t[32];
+    int n = snprintf(t, sizeof t, "%lld", (long long)time_ms);
+    remove(store_path("runs/daily.result"));
+    store_write(store_path("runs/daily.finish"), t, (size_t)n);
+}
+
+int online_daily_result(char *out, size_t cap)
+{
+    char *t = read_text(store_path("runs/daily.result"));
+    if (!t) return 0;
+    snprintf(out, cap, "%s", t);
+    free(t);
+    return 1;
+}
+
+static void daily_flush(void)
+{
+    char *ft = read_text(store_path("runs/daily.finish"));
+    SmzDailyRun r;
+    if (!ft || online_daily_load(&r)) { free(ft); return; }
+    char name[32], country[4], reply[1024], line[160];
+    static char body[16384];
+    profile(name, country);
+    int n = snprintf(body, sizeof body, "{\"token\":\"%s\",\"timeMs\":%lld,\"player\":\"%s\"", r.token, atoll(ft), name);
+    free(ft);
+    if (country[0]) n += snprintf(body + n, sizeof body - n, ",\"country\":\"%s\"", country);
+    n += snprintf(body + n, sizeof body - n, ",\"proof\":\"");
+    char *pf = read_text(store_path("runs/slot%d.proof", DAILY_SLOT));
+    for (const char *c = pf ? pf : ""; *c && n < (int)sizeof body - 8; c++) {
+        if (*c == '\n') { body[n++] = '\\'; body[n++] = 'n'; }
+        else if ((*c >= '0' && *c <= '9') || *c == ' ') body[n++] = *c;
+    }
+    free(pf);
+    snprintf(body + n, sizeof body - n, "\"}");
+    int code = http("POST", "/api/daily/finish", body, reply, sizeof reply);
+    if (code != 200 && code != 400) return;   /* no answer: tried again later */
+    char why[64] = "", num[16];
+    if (code == 400) { json_str(reply, "error", why, sizeof why); snprintf(line, sizeof line, "Not counted: %s", why[0] ? why : "refused"); }
+    else if (strstr(reply, "\"held\":true")) snprintf(line, sizeof line, "Held for a check before it counts");
+    else if (strstr(reply, "\"late\":true")) snprintf(line, sizeof line, "After the window closed: on the late list, no prize");
+    else {
+        const char *rk = strstr(reply, "\"rank\":"), *tk = strstr(reply, "\"tokens\":"), *bl = strstr(reply, "\"balance\":");
+        snprintf(num, sizeof num, "%d", rk ? atoi(rk + 7) : 0);
+        snprintf(line, sizeof line, "Rank %s for now  -  +%d tokens (%d)", rk ? num : "?", tk ? atoi(tk + 9) : 0, bl ? atoi(bl + 10) : 0);
+    }
+    store_write(store_path("runs/daily.result"), line, strlen(line));
+    remove(store_path("runs/daily.finish"));
 }

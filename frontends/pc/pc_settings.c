@@ -5,19 +5,27 @@
 #include <sys/stat.h>
 #include "pc_compat.h"
 #include "pc_gfx.h"
+#include "pc_help.h"
 #include "pc_pad.h"
 #include "pc_settings.h"
+#include "pc_store.h"
 
-enum { S_OFF, S_MAIN, S_PAD, S_REBIND, S_FILES };
-static const char *const MAIN_ROWS[] = {"Controller buttons", "Find the ROM files", "Full screen", "Quit"};
-#define MAIN_COUNT 4
+enum { S_OFF, S_MAIN, S_PAD, S_REBIND, S_FILES, S_VIDEO };
+#define MAIN_COUNT 3
+#define VIDEO_ROWS 10
+#define VIDEO_COUNT (VIDEO_ROWS + 1)
+static const char *const ASPECTS[] = {"Run default", "4:3", "8:7 (square pixels)", "Stretch", "Pixel perfect"};
+static const char *const FILTERS[] = {"Sharp", "Smooth", "Scanlines", "LCD grid"};
+static const char *const SIZES[] = {"720p", "1080p", "1440p", "Desktop"};
+static const char *const MM_SIDES[] = {"Right", "Left", "Off"};
+static const char *const MM_SIZES[] = {"Small", "Medium", "Large"};
+static int vid_size = 1, vid_aspect, vid_filter, mm_side, mm_size = 2, ch_hide;   /* ch_hide: bits of the daily challenge info not shown in game */
 #define ROW_H 22
 #define SHOWN 8
 
 static SettingsHooks hk;
 static int screen, cursor, scroll, rebind_action;
 static Uint32 rebind_until;
-static int files_direct;   /* the browser was opened from outside the settings: closing it leaves the settings screen too */
 
 typedef struct { char name[200]; int dir; } Entry;
 static Entry *entries;
@@ -27,6 +35,80 @@ static char cwd[1024];
 void settings_init(const SettingsHooks *hooks) { hk = *hooks; }
 int settings_active(void) { return screen != S_OFF; }
 void settings_open(void) { screen = S_MAIN; cursor = 0; scroll = 0; }
+
+int settings_aspect(void) { return vid_aspect; }
+int settings_filter(void) { return vid_filter; }
+const char *settings_aspect_name(void) { return ASPECTS[vid_aspect]; }
+
+static void video_save(void)
+{
+    char t[128];
+    int n = snprintf(t, sizeof t, "fs=%d\nsize=%d\naspect=%d\nfilter=%d\nminimap=%d\nminimap_size=%d\nchallenge_hide=%d\n", hk.is_fullscreen ? hk.is_fullscreen() : 0, vid_size, vid_aspect, vid_filter, mm_side, mm_size, ch_hide);
+    store_write(store_path("video.cfg"), t, (size_t)n);
+}
+
+void settings_video_save_state(void) { video_save(); }
+
+static void apply_size(void)
+{
+    static const int W[] = {1280, 1920, 2560}, H[] = {720, 1080, 1440};
+    if (hk.window_size) { if (vid_size < 3) hk.window_size(W[vid_size], H[vid_size]); else hk.window_size(0, 0); }
+}
+
+void settings_cycle_aspect(void) { vid_aspect = (vid_aspect + 1) % 5; video_save(); char m[64]; snprintf(m, sizeof m, "Aspect: %s", ASPECTS[vid_aspect]); hk.note(m); }
+void settings_cycle_filter(void) { vid_filter = (vid_filter + 1) % 4; video_save(); char m[64]; snprintf(m, sizeof m, "Filter: %s", FILTERS[vid_filter]); hk.note(m); }
+
+void settings_video_load(void)
+{
+    size_t n;
+    char *t = (char *)store_read(store_path("video.cfg"), &n);
+    int fs = 0;
+    if (t) {
+        t[n] = 0;
+        for (char *line = strtok(t, "\n"); line; line = strtok(NULL, "\n")) {
+            int v = atoi(strchr(line, '=') ? strchr(line, '=') + 1 : "0");
+            if (!strncmp(line, "fs=", 3)) fs = v;
+            else if (!strncmp(line, "size=", 5) && v >= 0 && v < 4) vid_size = v;
+            else if (!strncmp(line, "aspect=", 7) && v >= 0 && v < 5) vid_aspect = v;
+            else if (!strncmp(line, "minimap_size=", 13) && atoi(line + 13) >= 0 && atoi(line + 13) < 3) mm_size = atoi(line + 13);
+            else if (!strncmp(line, "minimap=", 8) && atoi(line + 8) >= 0 && atoi(line + 8) < 3) mm_side = atoi(line + 8);
+            else if (!strncmp(line, "filter=", 7) && v >= 0 && v < 4) vid_filter = v;
+            else if (!strncmp(line, "challenge_hide=", 15)) ch_hide = v & 15;
+        }
+        free(t);
+    }
+    if (!fs) apply_size();
+    if (fs && hk.is_fullscreen && !hk.is_fullscreen()) hk.fullscreen();
+}
+
+static void video_change(int row, int dir)
+{
+    if (row == 0) { hk.fullscreen(); }
+    else if (row == 1) { vid_size = (vid_size + dir + 4) % 4; if (!hk.is_fullscreen()) apply_size(); }
+    else if (row == 2) vid_aspect = (vid_aspect + dir + 5) % 5;
+    else if (row == 3) vid_filter = (vid_filter + dir + 4) % 4;
+    else if (row == 4) mm_side = (mm_side + dir + 3) % 3;
+    else if (row == 5) mm_size = (mm_size + dir + 3) % 3;
+    else if (row >= 6 && row < 10) ch_hide ^= 1 << (row - 6);
+    video_save();
+}
+
+/* the compact video panel shown over the game */
+const char *settings_video_row(int row, char *val, size_t cap)
+{
+    static const char *const L[VIDEO_ROWS] = {"Full screen", "Window size", "Aspect ratio", "Filter", "Minimap", "Minimap size",
+                                              "Challenge: window clock", "Challenge: own time", "Challenge: goal and hints", "Challenge: next hint in"};
+    const char *v[VIDEO_ROWS] = {hk.is_fullscreen() ? "On" : "Off", SIZES[vid_size], ASPECTS[vid_aspect], FILTERS[vid_filter], MM_SIDES[mm_side], MM_SIZES[mm_size],
+                                 ch_hide & 1 ? "Hidden" : "Shown", ch_hide & 2 ? "Hidden" : "Shown", ch_hide & 4 ? "Hidden" : "Shown", ch_hide & 8 ? "Hidden" : "Shown"};
+    if (row < 0 || row >= VIDEO_ROWS) row = 0;
+    snprintf(val, cap, "%s", v[row]);
+    return L[row];
+}
+int settings_video_rows(void) { return VIDEO_ROWS; }
+void settings_video_change(int row, int dir) { if (row >= 0 && row < VIDEO_ROWS) video_change(row, dir); }
+int settings_minimap_side(void) { return mm_side; }
+float settings_minimap_scale(void) { return mm_size == 0 ? 0.6f : mm_size == 1 ? 0.8f : 1.0f; }
+int settings_challenge_show(int what) { return !(ch_hide >> what & 1); }
 
 /* ---- file browser ---- */
 static int is_rom_name(const char *n)
@@ -102,13 +184,11 @@ void settings_open_files(void)
     }
     list_dir(start);
     screen = S_FILES;
-    files_direct = 1;
 }
 
 static void leave_files(void)
 {
-    if (files_direct) screen = S_OFF;
-    else { screen = S_MAIN; cursor = 1; scroll = 0; }
+    screen = S_OFF;
 }
 
 static void file_pick(int row)
@@ -137,10 +217,11 @@ static void clamp_scroll(int rows)
 
 void settings_nav(UiButton b)
 {
-    int rows = screen == S_MAIN ? MAIN_COUNT : screen == S_PAD ? PA_COUNT + 2 : screen == S_FILES ? file_rows() : 0;
+    int rows = screen == S_MAIN ? MAIN_COUNT : screen == S_VIDEO ? VIDEO_COUNT : screen == S_PAD ? PA_COUNT + 2 : screen == S_FILES ? file_rows() : 0;
     if (screen == S_REBIND) return;
     if (b == BTN_DOWN && cursor < rows - 1) cursor++;
     else if (b == BTN_UP && cursor > 0) cursor--;
+    else if ((b == BTN_LEFT || b == BTN_RIGHT) && screen == S_VIDEO && cursor < VIDEO_ROWS) video_change(cursor, b == BTN_RIGHT ? 1 : -1);
     else if (b == BTN_R && screen == S_FILES) cursor = cursor + SHOWN < rows ? cursor + SHOWN : rows - 1;
     else if (b == BTN_L && screen == S_FILES) cursor = cursor > SHOWN ? cursor - SHOWN : 0;
     else if (b == BTN_B) {
@@ -150,9 +231,11 @@ void settings_nav(UiButton b)
     } else if (b == BTN_A) {
         if (screen == S_MAIN) {
             if (cursor == 0) { screen = S_PAD; cursor = 0; scroll = 0; }
-            else if (cursor == 1) { settings_open_files(); files_direct = 0; }
-            else if (cursor == 2) hk.fullscreen();
+            else if (cursor == 1) { screen = S_VIDEO; cursor = 0; scroll = 0; }
             else hk.quit();
+        } else if (screen == S_VIDEO) {
+            if (cursor == VIDEO_ROWS) { screen = S_MAIN; cursor = 1; scroll = 0; }
+            else video_change(cursor, 1);
         } else if (screen == S_PAD) {
             if (cursor < PA_COUNT) { rebind_action = cursor; rebind_until = SDL_GetTicks() + 6000; screen = S_REBIND; }
             else if (cursor == PA_COUNT) { pad_cfg_reset(); pad_cfg_save(); }
@@ -162,11 +245,10 @@ void settings_nav(UiButton b)
     clamp_scroll(rows);
 }
 
-int settings_raw(const SDL_Event *e)
+int settings_raw(const SDL_Event *e, int code)
 {
     if (screen != S_REBIND) return 0;
     if (e->type == SDL_KEYDOWN && e->key.keysym.sym == SDLK_ESCAPE) { screen = S_PAD; return 1; }
-    int code = pad_event_code(e);
     if (code >= 0) {
         pad_set(rebind_action, code);
         pad_cfg_save();
@@ -179,7 +261,7 @@ int settings_raw(const SDL_Event *e)
 /* ---- drawing ---- */
 static SDL_Color col(int i) { return gfx_ui_color(i); }
 
-static void rect(float k, float ox, float oy, float x, float y, float w, float h, int c) { gfx_rect(ox + x * k, oy + y * k, w * k, h * k, col(c)); }
+static void rect(float k, float ox, float oy, float x, float y, float w, float h, int c) { gfx_rect_idx(k, ox, oy, x, y, w, h, c); }
 static void text(float k, float ox, float oy, float x, float y, int c, int align, const char *s) { gfx_text(ox + x * k, oy + y * k, 12 * k, col(c), align, s); }
 
 static void row(float k, float ox, float oy, int i, const char *left, const char *right, int selected)
@@ -194,15 +276,29 @@ static void row(float k, float ox, float oy, int i, const char *left, const char
 void settings_draw(float k, float ox, float oy)
 {
     if (screen == S_OFF) return;
-    rect(k, ox, oy, 0, 0, 320, 240, 0);
+    gfx_backdrop_ui(k, ox, oy);
     rect(k, ox, oy, 0, 0, 320, 28, 1);
-    const char *title = screen == S_MAIN ? "Settings" : screen == S_FILES ? "Find the ROM files" : "Controller buttons";
-    text(k, ox, oy, 12, 6, 5, 0, title);
+    const char *title = screen == S_MAIN ? "Settings" : screen == S_FILES ? "Find the ROM files" : screen == S_VIDEO ? "Video" : "Controller buttons";
+    gfx_logo(ox + 8 * k, oy + 2 * k, 24 * k, 1);
+    text(k, ox, oy, 38, 6, 5, 0, title);
     const char *hint = "A choose   B back";
     (void)hint;
     if (screen == S_MAIN) {
-        for (int i = 0; i < MAIN_COUNT; i++) row(k, ox, oy, i, MAIN_ROWS[i], NULL, i == cursor);
-    } else if (screen == S_PAD || screen == S_REBIND) {
+        static const char *const L[] = {"Controller buttons", "Video", "Quit"};
+        for (int i = 0; i < MAIN_COUNT; i++) row(k, ox, oy, i, L[i], NULL, i == cursor);
+        hint = "A choose   B back";
+    } else if (screen == S_VIDEO) {
+        for (int i = 0; i < SHOWN && scroll + i < VIDEO_COUNT; i++) {
+            int r = scroll + i;
+            char val[48], v[64];
+            if (r == VIDEO_ROWS) { row(k, ox, oy, i, "Back", NULL, cursor == r); continue; }
+            const char *lab = settings_video_row(r, val, sizeof val);
+            snprintf(v, sizeof v, "< %s >", val);
+            row(k, ox, oy, i, lab, v, r == cursor);
+        }
+        float ny = 32 + SHOWN * ROW_H + 6;
+        text(k, ox, oy, 12, ny, 4, 0, "In game, V (X in the tracker) opens these over the game");
+        hint = "Left Right change   B back";    } else if (screen == S_PAD || screen == S_REBIND) {
         for (int i = 0; i < SHOWN && scroll + i < PA_COUNT + 2; i++) {
             int r = scroll + i;
             if (r < PA_COUNT) row(k, ox, oy, i, pad_action_name(r), pad_code_name(pad_code(r)), r == cursor);
@@ -234,8 +330,8 @@ void settings_draw(float k, float ox, float oy)
             }
         }
         size_t l = strlen(cwd);
-        text(k, ox, oy, 12, 210, 4, 0, l > 44 ? cwd + l - 44 : cwd);
+        text(k, ox, oy, 12, 206, 4, 0, l > 44 ? cwd + l - 44 : cwd);
         hint = "A open   B close   L R page";
     }
-    text(k, ox, oy, 12, 226, 4, 0, hint);
+    help_bar_hint(k, ox, oy, hint);
 }

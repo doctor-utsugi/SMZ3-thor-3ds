@@ -70,3 +70,15 @@ schema = root / "build/schema.json"
 if schema.exists():
     shutil.copyfile(schema, assets / "schema.json")
     print("schema copied")
+
+# Country flags of the profile and the ladder (assets/flags, made by tools/gen_flags.py)
+flags_dst = assets / "flags"
+flags_dst.mkdir(exist_ok=True)
+for f in sorted((root / "assets/flags").glob("*.png")):
+    shutil.copyfile(f, flags_dst / f.name)
+print("flags copied")
+
+# The app logo beside the menu titles
+import subprocess, sys
+subprocess.run([sys.executable, str(root / "tools/gen_pc_logo.py"), str(root / "assets/logo.png"), str(assets / "logo.png"), "96"], check=True)
+print("logo written")

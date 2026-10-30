@@ -29,6 +29,15 @@ static void hit(SmzUi *u, int kind, int idx, int x, int y, int w, int h)
 }
 static void rect(SmzUi *u, int x, int y, int w, int h, int color) { put(u, 0, x, y, w, h, color, 0, NULL); }
 static void text(SmzUi *u, int x, int y, int color, int align, const char *t) { put(u, 1, x, y, 0, 0, color, align, t); }
+/* A country as its flag (12x9, its left edge at x) when the host has the pictures, else as its code. */
+static void flag(SmzUi *u, int x, int y, int color, const char *cc)
+{
+    if (!cc[0]) return;
+    if (!u->flags) { text(u, x, y, color, 0, cc); return; }
+    char key[16];
+    snprintf(key, sizeof key, "flag/%s", cc);
+    put(u, 2, x, y, 12, 9, color, 0, key);
+}
 
 void ui_init(SmzUi *u)
 {
@@ -120,11 +129,15 @@ static void change(SmzUi *u, int opt, int dir, int big)
     }
 }
 
+/* slot rows on screen: the Daily row takes the first place */
+static int slots_shown(const SmzUi *u) { return UI_SLOTS_SHOWN - (u->daily_on != 0); }
+
 static void slot_view(SmzUi *u)
 {
+    int shown = slots_shown(u);
     if (u->slot_cursor < u->slot_scroll) u->slot_scroll = u->slot_cursor;
-    if (u->slot_cursor >= u->slot_scroll + UI_SLOTS_SHOWN) u->slot_scroll = u->slot_cursor - UI_SLOTS_SHOWN + 1;
-    if (u->slot_scroll > u->slot_count - UI_SLOTS_SHOWN) u->slot_scroll = u->slot_count - UI_SLOTS_SHOWN;
+    if (u->slot_cursor >= u->slot_scroll + shown) u->slot_scroll = u->slot_cursor - shown + 1;
+    if (u->slot_scroll > u->slot_count - shown) u->slot_scroll = u->slot_count - shown;
     if (u->slot_scroll < 0) u->slot_scroll = 0;
 }
 
@@ -142,7 +155,7 @@ static void move(int *cur, int *scroll, int n, int dir)
 /* ---- run modes and saved customs */
 
 typedef struct { const char *name, *desc, *spec; } UiPreset;
-static const UiPreset CHILL = {"Cozy run", "Zelda keys shuffled, easy wall jumps", "Keysanity=2,WallJumpDifficulty=0,LightDarkRooms=1,SaveStates=1"};
+static const UiPreset CHILL = {"Cozy run", "Zelda keys shuffled, easy wall jumps", "Keysanity=2,WallJumpDifficulty=0,LightDarkRooms=1,SaveStates=1,ShowReachable=1"};
 static const UiPreset ORIGINAL = {"Original", "The default randomizer rules", ""};
 static const UiPreset WEEKLY = {"Weekly run", "Short run: 2 crystals, 1 boss", "GanonCrystals=2,GtCrystals=2,TourianBosses=1"};
 static void spec_values(int *value, const char *spec);
@@ -300,6 +313,41 @@ static const struct { const char *code, *name; } COUNTRIES[] = {
 void ui_player_enable(SmzUi *u, int on) { u->player_on = on; }
 
 void ui_ladder_enable(SmzUi *u, int on) { u->ladder_on = on; }
+
+void ui_daily_enable(SmzUi *u, int on) { u->daily_on = on; if (!on) u->daily_sel = 0; slot_view(u); }
+static int daily_button(const SmzUi *u);
+void ui_daily_set(SmzUi *u, const SmzDailyInfo *d, int has_run)
+{
+    int had = daily_button(u);
+    u->daily = *d; u->daily_has_run = has_run;
+    if (u->screen == UI_DAILY && !had && daily_button(u)) u->daily_cursor = 0;   /* the answer came while the screen was open */
+}
+
+/* What the Daily screen's main button does: 0 nothing (finished, or no window open), 1 Start, 2 Continue. */
+static int daily_button(const SmzUi *u)
+{
+    const SmzDailyInfo *d = &u->daily;
+    if (d->loaded != 1 || !d->window[0] || d->state == DAILY_DONE || d->state == DAILY_LATE) return 0;
+    if (d->state == DAILY_OPEN) return u->daily_has_run ? 2 : 1;
+    return 2;   /* started (or past the window): the attempt goes on, also from another device's start */
+}
+
+static void daily_input(SmzUi *u, UiButton b)
+{
+    int go = daily_button(u);
+    if (u->daily_info) {   /* the Info page has only Back */
+        if (b == BTN_A || b == BTN_B) u->daily_info = 0;
+        return;
+    }
+    if (b == BTN_B) u->screen = UI_SLOTS_SCREEN;
+    else if (b == BTN_LEFT || b == BTN_UP) { if (u->daily_cursor > (go ? 0 : 1)) u->daily_cursor--; }
+    else if (b == BTN_RIGHT || b == BTN_DOWN) { if (u->daily_cursor < 2) u->daily_cursor++; }
+    else if (b == BTN_A) {
+        if (go && u->daily_cursor == 0) { u->action = ACT_DAILY; u->screen = UI_SLOTS_SCREEN; }
+        else if (u->daily_cursor == 1) u->daily_info = 1;
+        else u->screen = UI_SLOTS_SCREEN;
+    }
+}
 
 void ui_ladder_begin(SmzUi *u, int tab, const char *label, int ok)
 {
@@ -596,10 +644,31 @@ static void random_sprite(SmzUi *u, int game)
     u->value[game ? UIO_SAMUS : UIO_LINK] = 1 + (int)(u->rng % (uint32_t)(n - 1));
 }
 
+/* The options that differ from the Original rules, in list order; returns how many fit in idx. */
+static int changed_opts(const SmzUi *u, int *idx)
+{
+    int n = 0;
+    for (int i = 0; i < UI_OPT_COUNT && n < UI_MAX_OPTS; i++) {
+        OptKind k = UI_OPTS[i].kind;
+        if (k == OPT_SPRITE || k == OPT_SEED || u->value[i] == UI_OPTS[i].def) continue;
+        idx[n++] = i;
+    }
+    return n;
+}
+
+static void rules_input(SmzUi *u, UiButton b)
+{
+    int idx[UI_MAX_OPTS], n = changed_opts(u, idx), rows = ROWS_SHOWN;
+    if (b == BTN_B || b == BTN_A) u->screen = UI_START;
+    else if (b == BTN_DOWN && u->rules_scroll + rows < n) u->rules_scroll++;
+    else if (b == BTN_UP && u->rules_scroll > 0) u->rules_scroll--;
+}
+
 static void start_input(SmzUi *u, UiButton b)
 {
     int rows = START_ROW + 1, *cur = &u->start_cursor;
     if (b == BTN_B) { u->screen = u->start_from; return; }
+    if (b == BTN_L) { u->rules_scroll = 0; u->screen = UI_RULES; return; }
     if (b == BTN_UP || b == BTN_DOWN) {
         int d = b == BTN_UP ? rows - 1 : 1;
         *cur = (*cur + d) % rows;
@@ -659,9 +728,17 @@ void ui_input(SmzUi *u, UiButton b)
     u->notice[0] = 0;
     switch (u->screen) {
     case UI_SLOTS_SCREEN:
-        if (b == BTN_UP || b == BTN_DOWN) { u->slot_cursor = (u->slot_cursor + (b == BTN_UP ? u->slot_count - 1 : 1)) % u->slot_count; slot_view(u); }
+        if (u->daily_on && (b == BTN_UP || b == BTN_DOWN)) {   /* the Daily row sits between the last slot and the first */
+            if (u->daily_sel) { u->daily_sel = 0; u->slot_cursor = b == BTN_UP ? u->slot_count - 1 : 0; }
+            else if ((b == BTN_UP && u->slot_cursor == 0) || (b == BTN_DOWN && u->slot_cursor == u->slot_count - 1)) u->daily_sel = 1;
+            else u->slot_cursor += b == BTN_UP ? -1 : 1;
+            slot_view(u);
+        }
+        else if (b == BTN_UP || b == BTN_DOWN) { u->slot_cursor = (u->slot_cursor + (b == BTN_UP ? u->slot_count - 1 : 1)) % u->slot_count; slot_view(u); }
+        else if (b == BTN_A && u->daily_sel) { u->screen = UI_DAILY; u->daily_info = 0; u->daily_cursor = daily_button(u) ? 0 : 2; }
         else if (b == BTN_L || b == BTN_R) {
-            int c = u->slot_cursor + (b == BTN_L ? -UI_SLOTS_SHOWN : UI_SLOTS_SHOWN);
+            u->daily_sel = 0;
+            int c = u->slot_cursor + (b == BTN_L ? -slots_shown(u) : slots_shown(u));
             u->slot_cursor = c < 0 ? 0 : c >= u->slot_count ? u->slot_count - 1 : c;
             slot_view(u);
         }
@@ -749,6 +826,8 @@ void ui_input(SmzUi *u, UiButton b)
     case UI_ONLINE: online_input(u, b); break;
     case UI_LOADCHOICE: loadchoice_input(u, b); break;
     case UI_LADDER: ladder_input(u, b); break;
+    case UI_RULES: rules_input(u, b); break;
+    case UI_DAILY: daily_input(u, b); break;
     case UI_BUSY: break;
     }
 }
@@ -759,13 +838,15 @@ void ui_touch(SmzUi *u, int x, int y)
         const UiHit *t = &u->hit[i];
         if (x < t->x || y < t->y || x >= t->x + t->w || y >= t->y + t->h) continue;
         switch (t->kind) {
-        case H_SLOT: u->slot_cursor = t->idx; ui_input(u, BTN_A); break;
+        case H_SLOT: u->slot_cursor = t->idx; u->daily_sel = 0; ui_input(u, BTN_A); break;
+        case H_DAILY: u->daily_sel = 1; ui_input(u, BTN_A); break;
+        case H_DAILY_BTN: if (!u->daily_info) u->daily_cursor = t->idx; ui_input(u, BTN_A); break;
         case H_CHEVRON:
             u->slot_scroll += t->idx;
-            if (u->slot_scroll > u->slot_count - UI_SLOTS_SHOWN) u->slot_scroll = u->slot_count - UI_SLOTS_SHOWN;
+            if (u->slot_scroll > u->slot_count - slots_shown(u)) u->slot_scroll = u->slot_count - slots_shown(u);
             if (u->slot_scroll < 0) u->slot_scroll = 0;
             if (u->slot_cursor < u->slot_scroll) u->slot_cursor = u->slot_scroll;
-            if (u->slot_cursor >= u->slot_scroll + UI_SLOTS_SHOWN) u->slot_cursor = u->slot_scroll + UI_SLOTS_SHOWN - 1;
+            if (u->slot_cursor >= u->slot_scroll + slots_shown(u)) u->slot_cursor = u->slot_scroll + slots_shown(u) - 1;
             break;
         case H_LADDER: ladder_open(u); break;
         case H_LTAB: u->ladder_tab = t->idx; u->ladder_scroll = 0; break;
@@ -802,7 +883,9 @@ void ui_touch(SmzUi *u, int x, int y)
 static void title(SmzUi *u, const char *t)
 {
     rect(u, 0, 0, UI_W, 28, C_PANEL);
-    text(u, 8, 8, C_ACCENT, 0, t);
+    if (strncmp(t, "SMZ3", 4)) { text(u, 8, 8, C_ACCENT, 0, t); return; }
+    put(u, 2, 6, 3, 22, 22, C_TEXT, 0, "logo");   /* the app logo beside the name */
+    text(u, 32, 8, C_ACCENT, 0, t);
 }
 
 static void fmt_value(const SmzUi *u, int opt, int v, char *out, size_t n)
@@ -872,8 +955,14 @@ static void slot_rich(SmzUi *u, int i, int y, int w)
     char s[48];
     int digits = pct >= 100 ? 3 : pct >= 10 ? 2 : 1, x = 22;
     int color = pct >= 100 ? C_GREEN : C_ACCENT;
-    for (int d = 0, div = digits == 3 ? 100 : digits == 2 ? 10 : 1; d < digits; d++, div /= 10) { big_digit(u, x, y + 9, pct / div % 10, 5, color); x += 18; }
-    text(u, x, y + 24, C_DIM, 0, "%");
+    if (u->rings) {   /* the percent inside a ring that fills with it */
+        put(u, 4, 22, y + 2, 40, 40, color, (uint8_t)pct, NULL);
+        snprintf(s, sizeof s, "%d%%", pct);
+        text(u, 42, y + 16, C_TEXT, 1, s);
+    } else {
+        for (int d = 0, div = digits == 3 ? 100 : digits == 2 ? 10 : 1; d < digits; d++, div /= 10) { big_digit(u, x, y + 9, pct / div % 10, 5, color); x += 18; }
+        text(u, x, y + 24, C_DIM, 0, "%");
+    }
     snprintf(s, sizeof s, "%.20s", t->name);
     text(u, 88, y + 2, C_TEXT, 0, s);
     long long sec = t->play_ms / 1000;
@@ -887,11 +976,149 @@ static void slot_rich(SmzUi *u, int i, int y, int w)
     for (int b = 0; b < 4; b++) put(u, 2, 106 + b * 20, y + 30, 13, 13, t->boss_mask >> b & 1 ? C_TEXT : C_DIM, 0, BOSS[b]);
     if (t->online) {
         char who[24];
-        snprintf(who, sizeof who, "%.12s%s%s", u->player[0] ? u->player : "Online", u->country[0] ? " " : "", u->country);
-        text(u, 8 + w - 8, y + 14, t->online == 2 ? C_ACCENT : t->online == 3 ? C_GREEN : C_CYAN, 2, who);
+        int wc = t->online == 2 ? C_ACCENT : t->online == 3 ? C_GREEN : C_CYAN, fx = 8 + w - 8 - (u->flags ? 12 : 14);
+        snprintf(who, sizeof who, "%.12s", u->player[0] ? u->player : "Online");
+        flag(u, fx, y + 15, wc, u->country);
+        text(u, u->country[0] ? fx - 4 : 8 + w - 8, y + 14, wc, 2, who);
     }
     bar(u, 214, y + 27, w - 214, t->zelda_cleared, t->zelda_total, C_GREEN);
     bar(u, 214, y + 36, w - 214, t->metroid_cleared, t->metroid_total, C_ACCENT);
+}
+
+/* ---- the daily challenge: its row on top of the run list, the token counter and its own screen */
+
+static int64_t now_ms(void) { return (int64_t)time(NULL) * 1000; }
+
+static void token_chip(SmzUi *u, int x, int y)
+{
+    char s[16];
+    rect(u, x, y, 48, 20, C_PANEL);
+    gem(u, x + 5, y + 5, 1, 0);
+    snprintf(s, sizeof s, "%d", u->daily.tokens);
+    text(u, x + 44, y + 4, C_TEXT, 2, s);
+}
+
+/* Lines of at most n characters, broken at spaces, from y down; returns the y after the last one. */
+static int wrap(SmzUi *u, int x, int y, int color, int n, int line_h, int max_lines, const char *t)
+{
+    char line[64];
+    if (n > 63) n = 63;
+    for (int l = 0; *t && l < max_lines; l++, y += line_h) {
+        int len = (int)strlen(t);
+        if (len > n) { len = n; while (len > 0 && t[len] != ' ') len--; if (!len) len = n; }
+        snprintf(line, sizeof line, "%.*s", len, t);
+        if (l == max_lines - 1 && (int)strlen(t) > len && len > 3) memcpy(line + len - 3, "...", 4);
+        text(u, x, y, color, 0, line);
+        t += len;
+        while (*t == ' ') t++;
+    }
+    return y;
+}
+
+static void daily_status(const SmzUi *u, char *out, size_t cap)
+{
+    const SmzDailyInfo *d = &u->daily;
+    char t[24];
+    switch (d->state) {
+    case DAILY_STARTED: smz_daily_span(now_ms() - d->started_at, t, sizeof t); snprintf(out, cap, "Started  -  %s on the clock", t); break;
+    case DAILY_DONE: { long long s = d->time_ms / 1000; snprintf(out, cap, "Finished in %lld:%02lld:%02lld", s / 3600, s / 60 % 60, s % 60); break; }
+    case DAILY_LATE: snprintf(out, cap, "Finished after the window closed"); break;
+    case DAILY_FAILED: snprintf(out, cap, "Time is up: not finished in the window"); break;
+    default: snprintf(out, cap, "%s  -  about %d min", d->difficulty[0] ? d->difficulty : "Open", d->est_min); break;
+    }
+}
+
+static void daily_row(SmzUi *u, int y, int w)
+{
+    const SmzDailyInfo *d = &u->daily;
+    char s[64], t[24];
+    rect(u, 8, y, w, 44, u->daily_sel ? C_SEL : C_PANEL);
+    if (!u->daily_sel) put(u, 3, 13, y, w - 5, 44, C_NAVY, C_VIOLET, NULL);
+    rect(u, 8, y, 5, 44, C_GOLD);
+    hit(u, H_DAILY, 0, 8, y, w, 44);
+    text(u, 20, y + 3, C_ACCENT, 0, "DAILY CHALLENGE");
+    if (d->loaded == 0) { text(u, 20, y + 23, C_DIM, 0, "Connecting..."); return; }
+    if (d->loaded < 0) { text(u, 20, y + 23, C_DIM, 0, "Offline: the challenge needs the server"); return; }
+    if (!d->window[0]) {
+        smz_daily_span(d->next_opens_at - now_ms(), t, sizeof t);
+        snprintf(s, sizeof s, "Next one in %s", t);
+        text(u, 8 + w - 6, y + 3, C_TEXT, 2, s);
+        text(u, 20, y + 17, C_TEXT, 0, "Three a day, each open for 4 hours");
+        text(u, 20, y + 30, C_DIM, 0, "06:00, 14:00 and 22:00 UTC");
+        return;
+    }
+    int64_t left = d->closes_at - now_ms();
+    smz_daily_span(left, t, sizeof t);
+    snprintf(s, sizeof s, left > 0 ? "%s left" : "Closed", t);
+    text(u, 8 + w - 6, y + 3, left > 0 && left < 15 * 60000 ? C_WARN : C_TEXT, 2, s);
+    wrap(u, 20, y + 17, C_TEXT, 37, 13, 1, d->goal);
+    daily_status(u, s, sizeof s);
+    text(u, 20, y + 30, d->state == DAILY_DONE ? C_GREEN : d->state == DAILY_FAILED || d->state == DAILY_LATE ? C_WARN : C_DIM, 0, s);
+}
+
+/* The rules and the details, behind the Info button. */
+static void daily_info_page(SmzUi *u)
+{
+    const SmzDailyInfo *d = &u->daily;
+    char s[160];
+    title(u, "Daily challenge  -  Info");
+    int y = 34;
+    if (d->loaded == 1 && d->window[0]) {
+        s[0] = 0;
+        for (int i = 0; i < d->n_start; i++) { size_t n = strlen(s); snprintf(s + n, sizeof s - n, "%s%s", i ? ", " : "", d->start[i]); }
+        text(u, 16, y, C_DIM, 0, "You start with");
+        y = wrap(u, 16, y + 14, C_TEXT, 40, 13, 2, d->n_start ? s : "nothing extra") + 8;
+    }
+    /* NULL leaves a gap between the groups */
+    static const char *const RULES[] = {
+        "Three windows a day, 4 hours each.", "Everyone plays the same seed.", NULL,
+        "One try. The clock starts at Start", "and keeps running if you quit.", NULL,
+        "No fast forward or save states.", "Hints show up as you go.", NULL,
+        "Finish in time to rank and get tokens.",
+    };
+    for (int i = 0; i < (int)(sizeof RULES / sizeof RULES[0]); i++) {
+        if (!RULES[i]) { y += 6; continue; }
+        text(u, 16, y, C_TEXT, 0, RULES[i]);
+        y += 13;
+    }
+    rect(u, 8, 198, UI_W - 16, 24, C_SEL);
+    text(u, UI_W / 2, 204, C_TEXT, 1, "Back");
+    hit(u, H_DAILY_BTN, 2, 8, 198, UI_W - 16, 24);
+}
+
+static void daily_screen(SmzUi *u)
+{
+    if (u->daily_info) { daily_info_page(u); return; }
+    const SmzDailyInfo *d = &u->daily;
+    char s[96], t[24];
+    snprintf(s, sizeof s, "Daily challenge  %s", d->window);
+    title(u, s);
+    if (d->loaded == 1) token_chip(u, UI_W - 56, 4);
+    int y = 40;
+    if (d->loaded != 1 || !d->window[0]) {
+        text(u, 16, y + 8, C_TEXT, 0, d->loaded != 1 ? "The challenge needs the server." : "No challenge is open now.");
+        if (d->loaded == 1) { smz_daily_span(d->next_opens_at - now_ms(), t, sizeof t); snprintf(s, sizeof s, "The next one opens in %s.", t); text(u, 16, y + 26, C_DIM, 0, s); }
+    } else {
+        rect(u, 8, y, UI_W - 16, 60, C_PANEL);
+        text(u, 16, y + 4, C_DIM, 0, "Goal");
+        wrap(u, 16, y + 20, C_ACCENT, 40, 14, 2, d->goal);
+        y += 72;
+        int64_t left = d->closes_at - now_ms();
+        smz_daily_span(left, t, sizeof t);
+        snprintf(s, sizeof s, left > 0 ? "%s left" : "Window closed", t);
+        text(u, 16, y, left > 0 && left < 15 * 60000 ? C_WARN : C_TEXT, 0, s);
+        daily_status(u, s, sizeof s);
+        text(u, 16, y + 16, d->state == DAILY_DONE ? C_GREEN : d->state == DAILY_FAILED || d->state == DAILY_LATE ? C_WARN : C_DIM, 0, s);
+        if (d->state == DAILY_OPEN && left > 0 && left < 3600000) text(u, 16, y + 34, C_WARN, 0, "Under 1 hour left");
+    }
+    /* Start (when there is something to start), Info, Back */
+    int go = daily_button(u), by = 198, n = go ? 3 : 2, w = (UI_W - 16 - (n - 1) * 6) / n, x = 8;
+    static const char *const NAME[3] = {NULL, "Info", "Back"};
+    for (int id = go ? 0 : 1; id < 3; id++, x += w + 6) {
+        rect(u, x, by, w, 24, u->daily_cursor == id ? C_SEL : C_PANEL);
+        text(u, x + w / 2, by + 6, id == 0 ? C_ACCENT : C_TEXT, 1, id == 0 ? (go == 1 ? "Start" : "Continue") : NAME[id]);
+        hit(u, H_DAILY_BTN, id, x, by, w, 24);
+    }
 }
 
 void ui_draw(SmzUi *u)
@@ -902,18 +1129,21 @@ void ui_draw(SmzUi *u)
     rect(u, 0, 0, UI_W, UI_H, C_BG);
     switch (u->screen) {
     case UI_SLOTS_SCREEN: {
-        int more = u->slot_count > UI_SLOTS_SHOWN;
-        snprintf(buf, sizeof buf, more ? "SMZ3  -  Select a run  (%d/%d)" : "SMZ3  -  Select a run", u->slot_cursor + 1, u->slot_count);
+        int more = u->slot_count > slots_shown(u);
+        /* with the token counter beside Ladder the title is shorter, so it fits in the hosts' wider fonts too */
+        snprintf(buf, sizeof buf, more ? (u->daily_on ? "SMZ3  -  Runs  (%d/%d)" : "SMZ3  -  Select a run  (%d/%d)") : u->daily_on ? "SMZ3  -  Runs" : "SMZ3  -  Select a run", u->slot_cursor + 1, u->slot_count);
         title(u, buf);
         if (u->ladder_on) {
             rect(u, UI_W - 70, 4, 64, 20, C_SEL);
             text(u, UI_W - 38, 8, C_TEXT, 1, "Ladder");
             hit(u, H_LADDER, 0, UI_W - 70, 4, 64, 20);
         }
-        int w = UI_W - 16 - (more ? 26 : 0);
-        for (int r = 0; r < UI_SLOTS_SHOWN && u->slot_scroll + r < u->slot_count; r++) {
-            int i = u->slot_scroll + r, y = 36 + r * 50, used = u->slots[i].used;
-            rect(u, 8, y, w, 44, i == u->slot_cursor ? C_SEL : C_PANEL);
+        if (u->daily_on && u->daily.loaded == 1) token_chip(u, UI_W - 70 - 52, 4);
+        int w = UI_W - 16 - (more ? 26 : 0), top = 32, shown = slots_shown(u);
+        if (u->daily_on) { daily_row(u, top, w); top += 47; }
+        for (int r = 0; r < shown && u->slot_scroll + r < u->slot_count; r++) {
+            int i = u->slot_scroll + r, y = top + r * 47, used = u->slots[i].used;
+            rect(u, 8, y, w, 44, i == u->slot_cursor && !u->daily_sel ? C_SEL : C_PANEL);
             if (used) rect(u, 8, y, 5, 44, C_ACCENT);   /* a run with data has an orange bar on the left */
             hit(u, H_SLOT, i, 8, y, w, 44);
             if (used && u->slots[i].stats) slot_rich(u, i, y, w);
@@ -922,7 +1152,7 @@ void ui_draw(SmzUi *u)
                 text(u, 20, y + 7, C_TEXT, 0, buf);
                 text(u, 20, y + 25, C_DIM, 0, u->slots[i].summary);
             } else {   /* an empty slot: a plus where the percent goes and an invitation */
-                rect(u, 8, y, 5, 44, i == u->slot_cursor ? C_ACCENT : C_DIM);
+                rect(u, 8, y, 5, 44, i == u->slot_cursor && !u->daily_sel ? C_ACCENT : C_DIM);
                 rect(u, 24, y + 20, 26, 5, C_DIM);
                 rect(u, 34, y + 10, 5, 25, C_DIM);
                 text(u, 88, y + 16, C_ACCENT, 0, "New run");
@@ -930,8 +1160,8 @@ void ui_draw(SmzUi *u)
         }
         if (more) {
             int x = UI_W - 26;
-            if (u->slot_scroll > 0) { rect(u, x, 36, 20, 44, C_PANEL); text(u, x + 10, 50, C_ACCENT, 1, "^"); hit(u, H_CHEVRON, -1, x, 36, 20, 44); }
-            if (u->slot_scroll + UI_SLOTS_SHOWN < u->slot_count) { rect(u, x, 36 + 3 * 50, 20, 44, C_PANEL); text(u, x + 10, 36 + 3 * 50 + 14, C_ACCENT, 1, "v"); hit(u, H_CHEVRON, 1, x, 36 + 3 * 50, 20, 44); }
+            if (u->slot_scroll > 0) { rect(u, x, top, 20, 44, C_PANEL); text(u, x + 10, top + 14, C_ACCENT, 1, "^"); hit(u, H_CHEVRON, -1, x, top, 20, 44); }
+            if (u->slot_scroll + shown < u->slot_count) { rect(u, x, 32 + 3 * 47, 20, 44, C_PANEL); text(u, x + 10, 32 + 3 * 47 + 14, C_ACCENT, 1, "v"); hit(u, H_CHEVRON, 1, x, 32 + 3 * 47, 20, 44); }
         }
         break;
     }
@@ -997,24 +1227,24 @@ void ui_draw(SmzUi *u)
         rect(u, UI_W - 32, LIST_Y + 74, 28, 66, C_PANEL);
         text(u, UI_W - 18, LIST_Y + 98, C_ACCENT, 1, "v");
         hit(u, H_SCROLL, 1, UI_W - 32, LIST_Y + 74, 28, 66);
-        rect(u, UI_W - 92, UI_H - 44, 88, 38, C_SEL);
-        text(u, UI_W - 48, UI_H - 30, C_ACCENT, 1, "Next");
-        hit(u, H_CREATE, 0, UI_W - 92, UI_H - 44, 88, 38);
+        rect(u, UI_W - 92, UI_H - 54, 88, 32, C_SEL);
+        text(u, UI_W - 48, UI_H - 44, C_ACCENT, 1, "Next");
+        hit(u, H_CREATE, 0, UI_W - 92, UI_H - 54, 88, 32);
         {
             const char *tip = u->notice[0] ? u->notice : cur < n ? UI_OPTS[idx[cur]].tip : cur == n ? "Saves these options under a name." : "Choose the sprites, then start.";
             char line[44];
             size_t len = strlen(tip), cut = len;
             if (len > 28) { cut = 28; while (cut > 0 && tip[cut] != 0x20) cut--; if (!cut) cut = 28; }
             snprintf(line, sizeof line, "%.*s", (int)cut, tip);
-            text(u, 6, UI_H - 44, C_DIM, 0, line);
+            text(u, 6, UI_H - 52, C_DIM, 0, line);
             if (cut < len) {
                 const char *rest = tip + cut + (tip[cut] == ' ');
                 size_t rl = strlen(rest), c2 = rl > 28 ? 28 : rl;
                 if (rl > 28) { while (c2 > 0 && rest[c2] != ' ') c2--; if (!c2) c2 = 28; }
                 char l2[44];
                 snprintf(l2, sizeof l2, "%.*s", (int)c2, rest);
-                text(u, 6, UI_H - 30, C_DIM, 0, l2);
-                if (c2 < rl) text(u, 6, UI_H - 18, C_DIM, 0, rest + c2 + (rest[c2] == ' '));
+                text(u, 6, UI_H - 40, C_DIM, 0, l2);
+                if (c2 < rl) text(u, 6, UI_H - 28, C_DIM, 0, rest + c2 + (rest[c2] == ' '));
             }
         }
         text(u, 6, UI_H - 6, C_DIM, 0, "L/R tabs  B back");
@@ -1064,10 +1294,10 @@ void ui_draw(SmzUi *u)
     case UI_MODE: {
         snprintf(buf, sizeof buf, "New run  -  Slot %d", u->active_slot + 1);
         title(u, buf);
-        int rows = mode_rows(u), pitch = rows > 5 ? 34 : rows > 4 ? 40 : 50, rh = pitch - 6, dy = rows > 5 ? 3 : 5;
+        int rows = mode_rows(u), pitch = rows > 5 ? 31 : rows > 4 ? 40 : 50, rh = pitch - (rows > 5 ? 3 : 6), dy = rows > 5 ? 3 : 6;
         for (int r = 0; r < rows; r++) {
             int y = 34 + r * pitch, k = mode_kind(u, r);
-            const char *name = k == 0 ? CHILL.name : k == 1 ? ORIGINAL.name : k == 2 ? "Custom" : k == 3 ? "Saved customs" : k == 4 ? "Monthly seed" : WEEKLY.name;
+            const char *name = k == 0 ? CHILL.name : k == 1 ? ORIGINAL.name : k == 2 ? "Custom" : k == 3 ? "Saved customs" : k == 4 ? "Monthly run" : WEEKLY.name;
             char desc[48];
             if (k == 0) snprintf(desc, sizeof desc, "%s", CHILL.desc);
             else if (k == 1) snprintf(desc, sizeof desc, "%s", ORIGINAL.desc);
@@ -1080,8 +1310,8 @@ void ui_draw(SmzUi *u)
             rect(u, 8, y, UI_W - 16, rh, r == u->mode_cursor ? C_SEL : C_PANEL);
             rect(u, 8, y, 5, rh, k == 4 ? C_GREEN : k == 5 ? C_CYAN : C_ACCENT);
             hit(u, H_MODE, r, 8, y, UI_W - 16, rh);
-            text(u, 20, y + dy - (rows > 5 ? 2 : 0), C_TEXT, 0, name);
-            text(u, 20, y + rh - (rows > 5 ? 14 : 17), C_DIM, 0, desc);
+            text(u, 20, y + dy, C_TEXT, 0, name);
+            text(u, 20, y + rh - (rows > 5 ? 13 : 16), C_DIM, 0, desc);
         }
         text(u, 6, UI_H - 6, C_DIM, 0, "A choose  B back");
         break;
@@ -1133,6 +1363,24 @@ void ui_draw(SmzUi *u)
         text(u, 6, UI_H - 6, C_DIM, 0, "A type  L delete  R space  B back");
         break;
     }
+    case UI_RULES: {
+        int idx[UI_MAX_OPTS], n = changed_opts(u, idx);
+        char val[48], head[48];
+        title(u, "Run rules");
+        if (!n) snprintf(head, sizeof head, "Original run - no changes");
+        else snprintf(head, sizeof head, "Original run + %d change%s", n, n == 1 ? "" : "s");
+        text(u, UI_W - 8, 8, C_DIM, 2, head);
+        for (int r = 0; r < ROWS_SHOWN && u->rules_scroll + r < n; r++) {
+            int o = idx[u->rules_scroll + r], y = LIST_Y + r * ROW_H;
+            rect(u, 4, y, UI_W - 8, ROW_H - 2, C_PANEL);
+            ui_value_text(u, o, val, sizeof val);
+            text(u, 10, y + 4, C_TEXT, 0, UI_OPTS[o].label);
+            text(u, UI_W - 10, y + 4, C_ACCENT, 2, val);
+        }
+        if (!n) text(u, UI_W / 2, 110, C_DIM, 1, "The default randomizer rules");
+        text(u, 6, UI_H - 6, C_DIM, 0, n > ROWS_SHOWN ? "Up Down scroll  B back" : "B back");
+        break;
+    }
     case UI_START: {
         snprintf(buf, sizeof buf, "%s  -  Sprites", u->start_label);
         title(u, buf);
@@ -1164,7 +1412,8 @@ void ui_draw(SmzUi *u)
                 hit(u, H_START, 7, 244, y, 68, 36);
                 text(u, 16, y + 4, C_DIM, 0, "Online player");
                 text(u, 16, y + 19, u->player[0] ? C_ACCENT : C_DIM, 0, u->player[0] ? u->player : "Set your name");
-                text(u, 207, y + 12, u->country[0] ? C_ACCENT : C_DIM, 1, u->country[0] ? u->country : "Flag");
+                if (u->country[0] && u->flags) { snprintf(val, sizeof val, "flag/%s", u->country); put(u, 2, 195, y + 9, 24, 18, C_ACCENT, 0, val); }
+                else text(u, 207, y + 12, u->country[0] ? C_ACCENT : C_DIM, 1, u->country[0] ? u->country : "Flag");
                 text(u, 278, y + 12, C_GREEN, 1, "On");
             } else {
                 rect(u, 8, y, UI_W - 16, 36, sel ? C_SEL : C_PANEL);
@@ -1177,7 +1426,7 @@ void ui_draw(SmzUi *u)
         rect(u, 8, sy, UI_W - 16, sh, u->start_cursor == START_ROW ? C_SEL : C_PANEL);
         hit(u, H_START, 4, 8, sy, UI_W - 16, sh);
         text(u, UI_W / 2, sy + sh / 2 - 6, C_ACCENT, 1, "Start");
-        text(u, 6, UI_H - 6, C_DIM, 0, "A choose  Right: Random  B back");
+        text(u, 6, UI_H - 6, C_DIM, 0, "A choose  Right: Random  L rules  B back");
         break;
     }
     case UI_LOADCHOICE: {
@@ -1255,7 +1504,8 @@ void ui_draw(SmzUi *u)
             int i = u->country_scroll + r, y = 32 + r * 25;
             rect(u, 6, y, UI_W - 12, 23, i == u->country_cursor ? C_SEL : C_PANEL);
             hit(u, H_COUNTRY, i, 6, y, UI_W - 12, 23);
-            text(u, 14, y + 6, C_ACCENT, 0, COUNTRIES[i].code[0] ? COUNTRIES[i].code : "--");
+            if (COUNTRIES[i].code[0] && u->flags) flag(u, 14, y + 7, C_ACCENT, COUNTRIES[i].code);
+            else text(u, 14, y + 6, C_ACCENT, 0, COUNTRIES[i].code[0] ? COUNTRIES[i].code : "--");
             text(u, 54, y + 6, C_TEXT, 0, COUNTRIES[i].name);
         }
         text(u, 6, UI_H - 6, C_DIM, 0, "A choose  L R page  B back");
@@ -1282,14 +1532,15 @@ void ui_draw(SmzUi *u)
             snprintf(buf, sizeof buf, "%d", i + 1);
             text(u, 12, y + 4, i == 0 ? C_GOLD : C_DIM, 0, buf);
             text(u, 40, y + 4, C_TEXT, 0, l->row[i].name);
-            text(u, 196, y + 4, C_ACCENT, 0, l->row[i].cc);
+            flag(u, 196, y + 5, C_ACCENT, l->row[i].cc);
             int64_t s = l->row[i].ms / 1000;
-            snprintf(buf, sizeof buf, "%d:%02d:%02d", (int)(s / 3600), (int)(s / 60 % 60), (int)(s % 60));
+            snprintf(buf, sizeof buf, "%d:%02d:%02d.%02d", (int)(s / 3600), (int)(s / 60 % 60), (int)(s % 60), (int)(l->row[i].ms % 1000 / 10));
             text(u, UI_W - 10, y + 4, C_TEXT, 2, buf);
         }
         text(u, 6, UI_H - 16, C_DIM, 0, "Left Right tab  Up Down scroll  B back");
         break;
     }
+    case UI_DAILY: daily_screen(u); break;
     case UI_BUSY:
         title(u, "Generating");
         text(u, UI_W / 2, UI_H / 2 - 6, C_TEXT, 1, u->status);

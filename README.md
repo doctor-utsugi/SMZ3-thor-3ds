@@ -39,7 +39,14 @@ refused with the reason). Loose files, zips or a folder all work, with or withou
 
 ### PC controls
 
-The PC app works completely with a game controller. In the run list, **Select** (or F1) opens the settings: reassign the buttons, find the ROM files with a file browser (no drag and drop needed), full screen, quit. While playing, the right stick click toggles the tracker and the left stick click leaves the run (both can be reassigned too). In the tracker's Map tab, **Y** (or D) switches to the dungeon pictures; the D-pad picks the dungeon and floor and **A** returns to Link's floor.
+The PC app works completely with a game controller. In the run list, **Select** (or F1) opens the settings: reassign the buttons, video (full screen, window size, aspect ratio, filter, minimap side and size) and quit. If the ROMs go missing, the app asks for them again when it opens. While playing, the right stick click toggles the tracker and the left stick click leaves the run (both can be reassigned too). The tracker's Help tab lists every control with the buttons of the device in use.
+
+- **Map tab:** the triggers or the right stick zoom, **A** (or F) follows the player, **Y** (or D) switches to the dungeon pictures, where the D-pad picks the dungeon and floor (each one shows the checks still to get) and **A** returns to Link's floor.
+- **Video while playing:** V, or X in the tracker, opens the video options over the game so each change shows at once.
+- **Save states** (runs made with Save states on, never ladder runs): F5 save, F7 load, F6/F8 slot; on a pad, Select + R1 / L1 / Left / Right.
+- **Fast forward** (Space or the right trigger) keeps the music playing at its pitch.
+- **Reachable checks** on the map are a run option (Play tab), off by default and on in the Cozy run.
+- The run ends when control is lost: Link entering the Triforce room, or Samus entering her ship, once both final bosses are beaten. A card shows the final time with hundredths; ladder times keep the hundredths too.
 
 ### Installing the PC app
 

@@ -9,7 +9,8 @@
 
 /* Data folder: "<exe folder>/data" when a file named portable.txt sits beside the program, else ~/.local/share/smz3. */
 const char *store_dir(void);
-/* "<dir>/<rel>" in a static buffer (the folders are created on demand). */
+const char *store_exe_dir(void);
+/* "<dir>/<rel>" in a static buffer, one per thread (the folders are created on demand). */
 const char *store_path(const char *fmt, ...);
 
 /* Paths of the two base ROMs, kept in config.txt. */

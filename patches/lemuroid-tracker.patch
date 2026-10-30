@@ -413,7 +413,7 @@ index b4a1df8..3811237 100644
      SYSTEMS(MainRoute.SYSTEMS, R.string.title_systems, Icons.Filled.VideogameAsset, Icons.Outlined.VideogameAsset),
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/Leaderboard.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/Leaderboard.kt
 new file mode 100644
-index 0000000..c830243
+index 0000000..cbd6dbc
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/Leaderboard.kt
 @@ -0,0 +1,49 @@
@@ -463,20 +463,30 @@ index 0000000..c830243
 +
 +    fun format(ms: Long): String {
 +        val s = ms / 1000
-+        return "%d:%02d:%02d".format(s / 3600, s / 60 % 60, s % 60)
++        return "%d:%02d:%02d.%02d".format(s / 3600, s / 60 % 60, s % 60, ms % 1000 / 10)   // finished runs: with hundredths
 +    }
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/NativeMenuScreen.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/NativeMenuScreen.kt
 new file mode 100644
-index 0000000..d2e2c07
+index 0000000..b6345b0
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/NativeMenuScreen.kt
-@@ -0,0 +1,340 @@
+@@ -0,0 +1,497 @@
 +package com.swordfish.lemuroid.app.mobile.feature.runs
 +
 +import android.graphics.Paint
 +import android.graphics.Typeface
++import androidx.compose.animation.core.Animatable
++import androidx.compose.animation.core.FastOutSlowInEasing
++import androidx.compose.animation.core.RepeatMode
++import androidx.compose.animation.core.animateFloat
++import androidx.compose.animation.core.infiniteRepeatable
++import androidx.compose.animation.core.rememberInfiniteTransition
++import androidx.compose.animation.core.tween
 +import androidx.compose.foundation.Canvas
++import androidx.compose.ui.graphics.Brush
++import androidx.compose.ui.graphics.Path
++import androidx.compose.ui.graphics.drawscope.DrawScope
 +import androidx.compose.foundation.background
 +import androidx.compose.foundation.focusable
 +import androidx.compose.foundation.gestures.detectTapGestures
@@ -541,7 +551,7 @@ index 0000000..d2e2c07
 +    return (java.time.Duration.between(now, end).toMillis() / 86_400_000L).toInt()
 +}
 +
-+private enum class Act { NONE, CONTINUE, DELETE, GENERATE, LOAD_SAVE, LOAD_STATE, LADDER }
++private enum class Act { NONE, CONTINUE, DELETE, GENERATE, LOAD_SAVE, LOAD_STATE, LADDER, DAILY }
 +
 +private fun spriteDir(game: Int) = File("/sdcard/SMZ3/sprites", if (game == 0) "link" else "samus")
 +
@@ -553,6 +563,12 @@ index 0000000..d2e2c07
 +        if (key.startsWith("reward/")) {   // a boss token of the tracker, from the app's assets
 +            val bmp = context.assets.open("smz3/rewards/${key.substringAfter('/')}_boss_token.png").use { android.graphics.BitmapFactory.decodeStream(it) }
 +            return@runCatching com.swordfish.lemuroid.app.shared.game.viewmodel.cropToArt(bmp).asImageBitmap()
++        }
++        if (key == "logo") {   // the app logo beside the menu titles
++            return@runCatching context.assets.open("smz3/logo.png").use { android.graphics.BitmapFactory.decodeStream(it) }.asImageBitmap()
++        }
++        if (key.startsWith("flag/")) {   // a country flag, from the app's assets
++            return@runCatching context.assets.open("smz3/flags/${key.substringAfter('/')}.png").use { android.graphics.BitmapFactory.decodeStream(it) }.asImageBitmap()
 +        }
 +        val game = if (key.startsWith("link/")) 0 else 1
 +        val bytes = File(spriteDir(game), key.substringAfter('/') + ".pv").readBytes()
@@ -592,6 +608,9 @@ index 0000000..d2e2c07
 +    val pendingMonthly = remember { java.util.concurrent.atomic.AtomicReference<Pair<String, Int>?>(null) }
 +    val pendingLadder = remember { java.util.concurrent.atomic.AtomicReference<Array<String?>?>(null) }
 +    val pendingWeekly = remember { java.util.concurrent.atomic.AtomicReference<Pair<String, Int>?>(null) }
++    // the daily challenge's answer (null text: offline) and the device clock when it came
++    val pendingDaily = remember { java.util.concurrent.atomic.AtomicReference<Pair<String?, Long>?>(null) }
++    val dailyAgain = remember { java.util.concurrent.atomic.AtomicBoolean(false) }
 +    val savedCustoms = remember { File(context.filesDir, "saved_customs.txt") }
 +    val paint = remember { Paint(Paint.ANTI_ALIAS_FLAG).apply { typeface = Typeface.MONOSPACE } }
 +
@@ -613,7 +632,7 @@ index 0000000..d2e2c07
 +    // coming back from a run: its progress changed while this list was waiting
 +    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
 +    DisposableEffect(lifecycleOwner) {
-+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event -> if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) refreshSlots() }
++        val observer = androidx.lifecycle.LifecycleEventObserver { _, event -> if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) { refreshSlots(); dailyAgain.set(true) } }
 +        lifecycleOwner.lifecycle.addObserver(observer)
 +        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
 +    }
@@ -628,11 +647,29 @@ index 0000000..d2e2c07
 +        Smz3Native.uiSavedLoad(savedCustoms.takeIf { it.exists() }?.readText())
 +        Smz3Native.uiPlayerLoad(OnlineLadder.profileText(context))
 +        Smz3Native.uiLadderEnable(true)
++        Smz3Native.uiDailyEnable(true)
 +        Thread { pendingMonthly.set(OnlineLadder.monthly(context)); pendingWeekly.set(OnlineLadder.weekly(context)) }.start()
++        Thread { DailyChallenge.flush(context) }.start()   // a challenge finished offline
 +        refreshSlots()
 +        onDispose { }
 +    }
 +    LaunchedEffect(Unit) { runCatching { focus.requestFocus() } }
++    // the daily challenge: asked for every minute (and on coming back from a run), shown when the answer is there
++    LaunchedEffect(Unit) {
++        var next = 0L
++        while (true) {
++            if (System.currentTimeMillis() >= next || dailyAgain.getAndSet(false)) {
++                next = System.currentTimeMillis() + 60_000
++                Thread { pendingDaily.set(DailyChallenge.info(context) to System.currentTimeMillis()) }.start()
++            }
++            pendingDaily.getAndSet(null)?.let { (json, at) ->
++                val window = json?.let { runCatching { JSONObject(it).optJSONObject("current")?.optString("id") }.getOrNull() }.orEmpty()
++                Smz3Native.uiDailySet(json, at, DailyChallenge.kept(context, window))
++            }
++            kotlinx.coroutines.delay(1000)
++            version++   // the row's clocks
++        }
++    }
 +    // the online tables arrive from a thread: show them as soon as they are there
 +    LaunchedEffect(Unit) {
 +        while (true) {
@@ -722,6 +759,54 @@ index 0000000..d2e2c07
 +
 +    generateAgain[0] = ::generate
 +
++    /** Start or Continue on the Daily screen: makes the window's run in the daily slot unless it is there, then plays it. */
++    fun startDaily() {
++        val window = Smz3Native.uiDailyWindow()
++        if (DailyChallenge.kept(context, window)) { RunStore.load(context, DailyChallenge.SLOT)?.let { onContinue(it, false) }; return }
++        Smz3Native.uiBusy("Starting the challenge ...")
++        version++
++        scope.launch {
++            val outcome = runCatching {
++                val games = retrogradeDb.gameDao().selectListBySystem("snes")
++                val (sm, z3) = RunGenerator.findBaseRoms(context, games)
++                    ?: error(RunGenerator.wrongBaseRom ?: "Make a run first: it asks for the base ROMs")
++                val (attempt, server) = withContext(Dispatchers.IO) { DailyChallenge.start(context, window) }.getOrThrow()
++                val raw = Smz3Native.dailySettingsJson(server, attempt.check).ifEmpty { error("The challenge's settings do not fit") }
++                Smz3Native.uiSetPlando(null)
++                val settings = JSONObject(raw)
++                fun rdc(game: Int, key: String) = settings.optString(key).takeIf { it.isNotEmpty() }
++                    ?.let { File(spriteDir(game), "$it.rdc").takeIf(File::exists)?.readBytes() }
++                Smz3Native.uiBusy("Generating the challenge ...")
++                version++
++                val (rom, usedSeed) = RunGenerator.generate(context, sm, z3, settings, rdc(0, "linkSprite"), rdc(1, "samusSprite"))
++                RunStore.delete(context, DailyChallenge.SLOT)
++                val romFile = RunStore.newRomFile(context, usedSeed, raw)
++                romFile.writeBytes(rom)
++                val totals = Smz3Native.summarize(ByteArray(0), ByteArray(0))
++                RunStore.save(
++                    context,
++                    Run(
++                        slot = DailyChallenge.SLOT, name = "Daily ${attempt.window}", gameId = 0, createdAt = System.currentTimeMillis(),
++                        zeldaTotal = totals[3], metroidTotal = totals[5], keysanity = settings.optString("keysanity") != "None",
++                        logic = "Vanilla", romPath = romFile.path, seed = usedSeed, settings = raw, mapMode = settings.optString("mapMode", "all"),
++                    ),
++                )
++                OnlineLadder.markRun(context, DailyChallenge.SLOT, false, "")
++                DailyChallenge.begin(context, attempt)
++                RunStore.load(context, DailyChallenge.SLOT)
++            }.onFailure { android.util.Log.e("NativeMenu", "daily start failed", it) }
++            outcome.exceptionOrNull()?.let {
++                Smz3Native.uiBusy((it.message ?: "Cannot start the challenge").take(43))
++                version++
++                kotlinx.coroutines.delay(5000)
++            }
++            Smz3Native.uiIdle()
++            refreshSlots()
++            dailyAgain.set(true)
++            outcome.getOrNull()?.let { onContinue(it, false) }
++        }
++    }
++
 +    fun pollActions() {
 +        pendingWeekly.getAndSet(null)?.let { (label, seed) -> Smz3Native.uiSetWeekly(label, seed, daysLeftInWeek()); version++ }
 +        pendingMonthly.getAndSet(null)?.let { (label, seed) -> Smz3Native.uiSetMonthly(label, seed, daysLeftInMonth()); version++ }
@@ -742,11 +827,16 @@ index 0000000..d2e2c07
 +            Act.DELETE -> { RunStore.delete(context, slot); refreshSlots() }
 +            Act.GENERATE -> generate(slot)
 +            Act.LADDER -> Thread { pendingLadder.set(Array(3) { OnlineLadder.ladderJson(it) }) }.start()
++            Act.DAILY -> startDaily()
 +            Act.NONE -> {}
 +        }
 +    }
 +
 +    fun press(button: Int) { Smz3Native.uiInput(button); pollActions(); version++; publishSelection() }
++
++    val pulse by rememberInfiniteTransition(label = "pulse").animateFloat(0f, 1f, infiniteRepeatable(tween(1850, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "pulse")
++    val wipe = remember { Animatable(1f) }
++    val lastScreen = remember { arrayOf("") }
 +
 +    Box(modifier.fillMaxSize().background(palette[0]), contentAlignment = Alignment.Center) {
 +        Canvas(
@@ -777,6 +867,12 @@ index 0000000..d2e2c07
 +            version.let { }
 +            val scale = size.width / W
 +            val commands = Smz3Native.uiDraw()
++            drawBackdrop(scale)
++            val screenNow = Smz3Native.uiScreen().toString()
++            if (screenNow != lastScreen[0]) {   // a different screen (not a cursor move): the seam sweeps across
++                lastScreen[0] = screenNow
++                scope.launch { wipe.snapTo(0f); wipe.animateTo(1f, tween(500, easing = FastOutSlowInEasing)) }
++            }
 +            drawIntoCanvas { canvas ->
 +                for (line in commands) {
 +                    val f = line.split(",", limit = 8)
@@ -791,7 +887,15 @@ index 0000000..d2e2c07
 +                        // edges snap to whole pixels so neighbouring rectangles meet without a seam
 +                        val l = Math.round(x).toFloat(); val t = Math.round(y).toFloat()
 +                        val r = Math.round(x + f[3].toFloat() * scale).toFloat(); val b = Math.round(y + f[4].toFloat() * scale).toFloat()
-+                        drawRect(color, Offset(l, t), Size(r - l, b - t))
++                        drawStyledRect(f[5].toInt(), f[1].toFloat(), f[2].toFloat(), f[3].toFloat(), f[4].toFloat(), l, t, r - l, b - t, scale, pulse, color)
++                    } else if (kind == 4) {   // progress ring: a dark track, then the share in the align field (percent) from the top
++                        val d = f[3].toFloat() * scale; val th = 4.2f * scale
++                        val tl = Offset(x + th / 2, y + th / 2); val sz = Size(d - th, d - th)
++                        val stroke = androidx.compose.ui.graphics.drawscope.Stroke(width = th)
++                        drawArc(Color(0xFF25324A), 0f, 360f, false, tl, sz, style = stroke)
++                        val sweep = 360f * f[6].toInt() / 100f
++                        drawArc(color.copy(alpha = 0.25f), -90f, sweep, false, Offset(tl.x - th * 0.4f, tl.y - th * 0.4f), Size(sz.width + th * 0.8f, sz.height + th * 0.8f), style = androidx.compose.ui.graphics.drawscope.Stroke(width = th * 1.8f))
++                        drawArc(color, -90f, sweep, false, tl, sz, style = stroke)
 +                    } else if (kind == 2) {
 +                        preview(f[7], context)?.let { img ->
 +                            val bw = f[3].toFloat() * scale; val bh = f[4].toFloat() * scale
@@ -807,6 +911,59 @@ index 0000000..d2e2c07
 +                    }
 +                }
 +            }
++            drawWipe(wipe.value)
++        }
++    }
++}
++
++private fun DrawScope.drawBackdrop(scale: Float) {
++    drawRect(Color(0xFF0A0E15), Offset.Zero, size)
++    drawRect(Brush.verticalGradient(listOf(Color(0xE62A2112), Color(0x002A2112)), startY = 0f, endY = 90f * scale), Offset.Zero, Size(size.width, 90f * scale))
++    drawRect(Brush.verticalGradient(listOf(Color(0x000F2A2C), Color(0xCC0F2A2C)), startY = size.height - 70f * scale, endY = size.height), Offset(0f, size.height - 70f * scale), Size(size.width, 70f * scale))
++    for (i in 0..20) {
++        val d = Math.abs(i * 16 - 160) / 160f
++        drawRect(Color(0xFF4FC3F7).copy(alpha = 0.05f * (1 - d * d)), Offset(i * 16 * scale, 0f), Size(1f, size.height))
++    }
++}
++
++private fun DrawScope.chamfer(l: Float, t: Float, w: Float, h: Float, cut: Float): Path = Path().apply {
++    moveTo(l + cut, t); lineTo(l + w - cut, t); lineTo(l + w, t + cut); lineTo(l + w, t + h - cut)
++    lineTo(l + w - cut, t + h); lineTo(l + cut, t + h); lineTo(l, t + h - cut); lineTo(l, t + cut); close()
++}
++
++/** Rows and panels get cut corners; the chosen row glows amber and breathes; the title strip is a dark gradient. */
++private fun DrawScope.drawStyledRect(idx: Int, lx: Float, ly: Float, lw: Float, lh: Float, l: Float, t: Float, w: Float, h: Float, scale: Float, pulse: Float, color: Color) {
++    if (idx == 0 && lw >= 318f && lh >= 238f) return
++    if (idx == 1 && lw >= 280f && ly <= 2f) {
++        drawRect(Brush.verticalGradient(listOf(Color(0xFF141B27), Color(0xFF10161F)), startY = t, endY = t + h), Offset(l, t), Size(w, h))
++        drawRect(Color(0xFF25324A), Offset(l, t + h - 1f), Size(w, 1f))
++    } else if ((idx == 1 || idx == 2) && lw >= 24f && lh >= 10f) {
++        val cut = (if (lh >= 28f) 4f else 2f) * scale
++        if (idx == 2) {
++            for (g in 3 downTo 1) drawPath(chamfer(l - g * scale, t - g * scale, w + 2 * g * scale, h + 2 * g * scale, cut + g * scale), Color(0xFFF2A33A).copy(alpha = (0.10f + 0.10f * pulse) / g))
++            drawPath(chamfer(l, t, w, h, cut), Color(0xFFF2A33A).copy(alpha = 0.55f + 0.45f * pulse))
++            drawPath(chamfer(l + scale, t + scale, w - 2 * scale, h - 2 * scale, cut - scale), Color(0xFF24221C))
++            drawRect(Color(0xFFF2A33A).copy(alpha = 0.10f), Offset(l + scale, t + scale), Size(w / 2, h - 2 * scale))
++        } else {
++            drawPath(chamfer(l, t, w, h, cut), Color(0xFF25324A))
++            drawPath(chamfer(l + 0.7f * scale, t + 0.7f * scale, w - 1.4f * scale, h - 1.4f * scale, cut - 0.7f * scale), Color(0xFF141B27))
++        }
++    } else drawRect(color, Offset(l, t), Size(w, h))
++}
++
++/** The transition between screens: a bright diagonal seam crosses the screen, four bands locking in one after another. */
++private fun DrawScope.drawWipe(progress: Float) {
++    if (progress >= 1f) return
++    val w = size.width; val h = size.height; val band = h / 4f; val slope = 0.22f; val rows = 90
++    val p = progress
++    for (r in 0 until rows) {
++        val y = r * h / rows; val b = (y / band).toInt()
++        val edge = p * (w + h * slope + 0.54f * w) - 0.18f * w * b - y * slope
++        val cover = if (edge < 0f) 0f else edge
++        if (cover < w) drawRect(Color(0xFF0A0E15).copy(alpha = 0.96f), Offset(cover, y), Size(w - cover, h / rows + 1f))
++        if (edge > -8f && edge < w) {
++            drawRect(Color(0xFFF2A33A).copy(alpha = 0.22f * (1 - p)), Offset(edge - 5f, y), Size(14f, h / rows + 1f))
++            drawRect(Color(0xFFFFE7A8).copy(alpha = 1 - p * 0.6f), Offset(edge, y), Size(3f, h / rows + 1f))
 +        }
 +    }
 +}
@@ -814,10 +971,10 @@ index 0000000..d2e2c07
 +private fun Color.toArgb(): Int = android.graphics.Color.argb((alpha * 255).toInt(), (red * 255).toInt(), (green * 255).toInt(), (blue * 255).toInt())
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/OnlineLadder.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/OnlineLadder.kt
 new file mode 100644
-index 0000000..ed98cb9
+index 0000000..a93a4b6
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/OnlineLadder.kt
-@@ -0,0 +1,212 @@
+@@ -0,0 +1,217 @@
 +package com.swordfish.lemuroid.app.mobile.feature.runs
 +
 +import android.content.Context
@@ -844,6 +1001,8 @@ index 0000000..ed98cb9
 +            ?: UUID.randomUUID().toString().also { runCatching { f.writeText(it) } }
 +    }
 +
++    fun installIdFor(context: Context) = installId(context)
++
 +    private fun profileFile(context: Context) = File(dir(context), "player.txt")
 +
 +    /** The profile as the menu stores it: "name<TAB>CC", null while never set. */
@@ -859,6 +1018,9 @@ index 0000000..ed98cb9
 +        return name to parts.getOrNull(1).orEmpty()
 +    }
 +
++    /** Name and country code sent with a finished run. */
++    fun profileFor(context: Context) = profile(context)
++
 +    /** Name and flag shown on the ladder, set in the start screen of a new run. */
 +    fun playerName(context: Context) = profile(context).first
 +
@@ -867,10 +1029,10 @@ index 0000000..ed98cb9
 +    private var proofSlot = -1
 +    private val proofSeen = HashSet<Int>()
 +
-+    /** Proof of run: appends the checks of [cleared] not recorded yet with the play time [ms] they were first seen at. Only online runs keep one. */
++    /** Proof of run: appends the checks of [cleared] not recorded yet with the play time [ms] they were first seen at. Only online runs and the daily challenge keep one. */
 +    @Synchronized
 +    fun noteChecks(context: Context, slot: Int, cleared: Set<Int>, ms: Long) {
-+        if (!onlineFile(context, slot).exists()) return
++        if (!onlineFile(context, slot).exists() && slot != DailyChallenge.SLOT) return
 +        val file = proofFile(context, slot)
 +        if (proofSlot != slot) {
 +            proofSlot = slot
@@ -1675,10 +1837,55 @@ index 7985ccc..df2281c 100644
  
      suspend fun hdMode() = booleanPreference(R.string.pref_key_hd_mode, false)
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/BaseGameActivity.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/BaseGameActivity.kt
-index 6d06420..1ab1ea2 100644
+index 6d06420..4b8c6af 100644
 --- a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/BaseGameActivity.kt
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/BaseGameActivity.kt
-@@ -244,7 +244,7 @@ abstract class BaseGameActivity : ImmersiveActivity() {
+@@ -21,6 +21,7 @@ import com.swordfish.lemuroid.app.shared.ImmersiveActivity
+ import com.swordfish.lemuroid.app.shared.coreoptions.CoreOption
+ import com.swordfish.lemuroid.app.shared.coreoptions.LemuroidCoreOption
+ import com.swordfish.lemuroid.app.shared.game.viewmodel.GameViewModelSideEffects
++import com.swordfish.lemuroid.app.shared.game.viewmodel.Smz3Hotkeys
+ import com.swordfish.lemuroid.app.shared.input.InputDeviceManager
+ import com.swordfish.lemuroid.app.shared.rumble.RumbleManager
+ import com.swordfish.lemuroid.app.shared.settings.ControllerConfigsManager
+@@ -87,6 +88,8 @@ abstract class BaseGameActivity : ImmersiveActivity() {
+     private lateinit var baseGameScreenViewModel: BaseGameScreenViewModel
+ 
+     private val startGameTime = System.currentTimeMillis()
++    private var dailyOverlay: com.swordfish.lemuroid.app.shared.game.viewmodel.Smz3DailyOverlay? = null
++    private var completeLine: android.widget.TextView? = null
+     private var finishTriggered = false
+ 
+     override fun onCreate(savedInstanceState: Bundle?) {
+@@ -94,6 +97,10 @@ abstract class BaseGameActivity : ImmersiveActivity() {
+         setUpExceptionsHandler()
+         GameService.startService(applicationContext, intent)
+         game = intent.getSerializableExtra(EXTRA_GAME) as Game
++        com.swordfish.lemuroid.app.shared.game.viewmodel.Smz3Tracker.onRunComplete = { name, ms, zelda, metroid, ladder ->
++            runOnUiThread { showRunComplete(name, ms, zelda, metroid, ladder) }
++        }
++        com.swordfish.lemuroid.app.shared.game.viewmodel.Smz3Tracker.onDailyResult = { line -> runOnUiThread { completeLine?.text = line } }
+         systemCoreConfig = intent.getSerializableExtra(EXTRA_SYSTEM_CORE_CONFIG) as SystemCoreConfig
+         system = GameSystem.findById(game.systemId)
+ 
+@@ -126,6 +133,7 @@ abstract class BaseGameActivity : ImmersiveActivity() {
+                 }
+             }
+         }
++        dailyOverlay = com.swordfish.lemuroid.app.shared.game.viewmodel.Smz3DailyOverlay(this) { baseGameScreenViewModel.requestFinish() }.also { it.start() }
+ 
+         lifecycleScope.launch {
+             baseGameScreenViewModel.loadGame(
+@@ -209,7 +217,7 @@ abstract class BaseGameActivity : ImmersiveActivity() {
+                     GameMenuContract.EXTRA_AUDIO_ENABLED,
+                     baseGameScreenViewModel.retroGameView.retroGameView?.audioEnabled,
+                 )
+-                this.putExtra(GameMenuContract.EXTRA_FAST_FORWARD_SUPPORTED, system.fastForwardSupport)
++                this.putExtra(GameMenuContract.EXTRA_FAST_FORWARD_SUPPORTED, system.fastForwardSupport && !Smz3Hotkeys.challengeRun(this@BaseGameActivity))
+                 this.putExtra(
+                     GameMenuContract.EXTRA_FAST_FORWARD,
+                     (baseGameScreenViewModel.retroGameView.retroGameView?.frameSpeed ?: 1) > 1,
+@@ -244,7 +252,7 @@ abstract class BaseGameActivity : ImmersiveActivity() {
                              it.currentTiltConfiguration,
                              it.tiltConfigurations,
                          )
@@ -1687,13 +1894,40 @@ index 6d06420..1ab1ea2 100644
                      is GameViewModelSideEffects.UiEffect.SuccessfulFinish -> performSuccessfulActivityFinish()
                      is GameViewModelSideEffects.UiEffect.FailureFinish -> performErrorFinish(it.message)
                      is GameViewModelSideEffects.UiEffect.SaveQuickSave -> performSaveQuickSave()
-@@ -262,6 +262,34 @@ abstract class BaseGameActivity : ImmersiveActivity() {
+@@ -262,6 +270,61 @@ abstract class BaseGameActivity : ImmersiveActivity() {
          baseGameScreenViewModel.loadQuickSave()
      }
  
 +    private var cornerNote: android.widget.TextView? = null
 +
 +    /** Small white text in the bottom right corner that fades out: replaces the system toasts (saves, slots...). */
++    /** The run-complete card: the final time with hundredths (the in-game timer shows whole seconds). */
++    private fun showRunComplete(name: String, ms: Long, zelda: String, metroid: String, ladder: String) {
++        if (isFinishing) return
++        val s = ms / 1000
++        val time = String.format(java.util.Locale.US, "%d:%02d:%02d.%02d", s / 3600, s / 60 % 60, s % 60, ms % 1000 / 10)
++        val box = android.widget.LinearLayout(this).apply {
++            orientation = android.widget.LinearLayout.VERTICAL
++            gravity = android.view.Gravity.CENTER_HORIZONTAL
++            setPadding(48, 40, 48, 24)
++            setBackgroundColor(android.graphics.Color.rgb(0x10, 0x16, 0x1F))
++        }
++        fun line(text: String, sp: Float, color: Int, bold: Boolean = false) = box.addView(android.widget.TextView(this).apply {
++            this.text = text; textSize = sp; setTextColor(color); gravity = android.view.Gravity.CENTER
++            if (bold) setTypeface(typeface, android.graphics.Typeface.BOLD)
++            setPadding(0, 6, 0, 6)
++        })
++        line(if (name.startsWith("Daily ")) "CHALLENGE COMPLETE" else "RUN COMPLETE", 18f, android.graphics.Color.rgb(0xF2, 0xA3, 0x3A), true)
++        line(time, 44f, android.graphics.Color.rgb(0xE8, 0xEC, 0xF2), true)
++        line("$name    Zelda $zelda    Metroid $metroid", 14f, android.graphics.Color.rgb(0x87, 0x93, 0xA6))
++        line(ladder, 14f, if (ladder.startsWith("Sent") || name.startsWith("Daily ")) android.graphics.Color.rgb(0x4F, 0xC3, 0xF7) else android.graphics.Color.rgb(0x87, 0x93, 0xA6))
++        completeLine = box.getChildAt(box.childCount - 1) as android.widget.TextView   // the server's answer to a daily finish replaces it
++        android.app.AlertDialog.Builder(this)
++            .setView(box)
++            .setPositiveButton("Continue", null)
++            .show()
++    }
++
 +    private fun showCornerNote(message: String) {
 +        val view =
 +            cornerNote ?: android.widget.TextView(this).apply {
@@ -1722,6 +1956,16 @@ index 6d06420..1ab1ea2 100644
      private fun performToggleFastForward() {
          baseGameScreenViewModel.toggleFastForward()
      }
+@@ -351,6 +414,9 @@ abstract class BaseGameActivity : ImmersiveActivity() {
+     }
+ 
+     override fun onDestroy() {
++        com.swordfish.lemuroid.app.shared.game.viewmodel.Smz3Tracker.onRunComplete = null
++        com.swordfish.lemuroid.app.shared.game.viewmodel.Smz3Tracker.onDailyResult = null
++        dailyOverlay?.stop()
+         if (!isChangingConfigurations) {
+             GameService.requestTermination()
+         }
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/BaseGameScreenViewModel.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/BaseGameScreenViewModel.kt
 index 8f91e6c..06340fb 100644
 --- a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/BaseGameScreenViewModel.kt
@@ -1951,7 +2195,7 @@ index 0000000..d973310
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Discovery.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Discovery.kt
 new file mode 100644
-index 0000000..2056545
+index 0000000..7cf2d86
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Discovery.kt
 @@ -0,0 +1,213 @@
@@ -2158,7 +2402,7 @@ index 0000000..2056545
 +        private const val EAST_CRATERIA = 46
 +
 +        /** Combined-map pixel (full size) where each Super Metroid area's map tile grid starts, measured from the item positions. */
-+        private val SM_ORIGINS = listOf(998 to 80, 902 to 656, 1894 to 1296, 2086 to -240, 1798 to 656)
++        private val SM_ORIGINS = listOf(998 to 80, 902 to 656, 1894 to 1296, 2086 to -240, 1798 to 656, 900 to 84)   // Crateria, Brinstar, Norfair, Wrecked Ship, Maridia, Tourian
 +
 +        private val DUNGEONS = mapOf(
 +            0x00 to "Hyrule Castle", 0x02 to "Hyrule Castle", 0x04 to "Eastern Palace", 0x06 to "Desert Palace",
@@ -2594,10 +2838,10 @@ index 0000000..9d072d4
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Help.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Help.kt
 new file mode 100644
-index 0000000..b50ef12
+index 0000000..4263995
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Help.kt
-@@ -0,0 +1,107 @@
+@@ -0,0 +1,110 @@
 +package com.swordfish.lemuroid.app.shared.game.viewmodel
 +
 +import android.content.Context
@@ -2611,6 +2855,8 @@ index 0000000..b50ef12
 +data class HelpInfo(
 +    /** "all": hint tiles, remaining checks on the map and unlimited hints; "limited": only what is asked for; "none". */
 +    val mode: String = "all",
++    /** The map marks the checks reachable now ("showReachable"; runs made before the option: only the Cozy ones). */
++    val reachable: Boolean = false,
 +    val total: Int = 0,
 +    val used: Int = 0,
 +    /** Hints already given, oldest first. */
@@ -2645,7 +2891,8 @@ index 0000000..b50ef12
 +        info = HelpInfo()
 +        val run = slotNow?.let { RunStore.load(context, it) } ?: return
 +        val s = runCatching { JSONObject(run.settings.ifBlank { "{}" }) }.getOrDefault(JSONObject())
-+        var next = HelpInfo(mode = s.optString("helpMode", "all"), total = s.optInt("helpCount", 3))
++        var next = HelpInfo(mode = s.optString("helpMode", "all"), total = s.optInt("helpCount", 3),
++            reachable = if (s.has("showReachable")) s.optBoolean("showReachable") else run.name == "Cozy run")
 +        runCatching {
 +            val saved = JSONObject(file(context, slotNow).readText())
 +            val hints = saved.optJSONArray("hints") ?: JSONArray()
@@ -2707,10 +2954,10 @@ index 0000000..b50ef12
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Hotkeys.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Hotkeys.kt
 new file mode 100644
-index 0000000..9730080
+index 0000000..f6aec10
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Hotkeys.kt
-@@ -0,0 +1,164 @@
+@@ -0,0 +1,170 @@
 +package com.swordfish.lemuroid.app.shared.game.viewmodel
 +
 +import android.content.Context
@@ -2825,6 +3072,12 @@ index 0000000..9730080
 +        return runCatching { org.json.JSONObject(run.settings).optBoolean("saveStates", false) }.getOrDefault(false)
 +    }
 +
++    /** A daily challenge run (its settings have "challenge":true): no fast forward. */
++    fun challengeRun(context: Context): Boolean {
++        val run = RunStore.activeSlot(context)?.let { RunStore.load(context, it) } ?: return false
++        return runCatching { org.json.JSONObject(run.settings).optBoolean("challenge", false) }.getOrDefault(false)
++    }
++
 +    /** Runs on any online ladder (original, monthly, weekly) allow no save state of any kind: no hotkeys, no autosave, Continue loads the game's own save. */
 +    fun noAutosave(context: Context): Boolean {
 +        val slot = RunStore.activeSlot(context) ?: return false
@@ -2843,7 +3096,7 @@ index 0000000..9730080
 +        when (action) {
 +            Smz3HotkeyAction.SAVE_STATE -> { h.hotkeySaveState(slot(context)); h.hotkeyToast("State saved in slot ${slot(context)}") }
 +            Smz3HotkeyAction.LOAD_STATE -> { h.hotkeyLoadState(slot(context)); h.hotkeyToast("State loaded from slot ${slot(context)}") }
-+            Smz3HotkeyAction.FAST_FORWARD -> h.hotkeyFastForward(speed(context))   // held: released in onKey
++            Smz3HotkeyAction.FAST_FORWARD -> if (challengeRun(context)) h.hotkeyToast("No fast forward in a daily challenge") else h.hotkeyFastForward(speed(context))   // held: released in onKey
 +            Smz3HotkeyAction.NEXT_SLOT -> {
 +                val next = slot(context) % SLOTS + 1
 +                setSlot(context, next)
@@ -3815,10 +4068,10 @@ index 0000000..dc5944a
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Native.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Native.kt
 new file mode 100644
-index 0000000..f5e3df5
+index 0000000..80e52de
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Native.kt
-@@ -0,0 +1,82 @@
+@@ -0,0 +1,92 @@
 +package com.swordfish.lemuroid.app.shared.game.viewmodel
 +
 +/** JNI bridge to the shared C core (core/smz3_state.c). */
@@ -3829,6 +4082,9 @@ index 0000000..f5e3df5
 +
 +    /** {game, started, zeldaCleared, zeldaTotal, metroidCleared, metroidTotal}; game is 0 none, 1 zelda, 2 metroid, 3 credits. */
 +    @JvmStatic external fun summarize(wram: ByteArray, sram: ByteArray): IntArray
++    /** The daily challenge goal of the run being played, from its settings JSON (none clears it). */
++    @JvmStatic external fun setGoal(settings: String?)
++    @JvmStatic external fun preparedPokes(wram: ByteArray, sram: ByteArray): IntArray
 +
 +    @JvmStatic external fun clearedLocations(wram: ByteArray, sram: ByteArray): IntArray
 +
@@ -3900,13 +4156,20 @@ index 0000000..f5e3df5
 +    @JvmStatic external fun uiSetSlotCount(n: Int)
 +    @JvmStatic external fun uiSlot(): Int
 +    @JvmStatic external fun romName(settingsJson: String, seed: String): String
++
++    /** The daily challenge: the run list's Daily row, fed with each /api/daily answer (null: offline). */
++    @JvmStatic external fun uiDailyEnable(on: Boolean)
++    @JvmStatic external fun uiDailySet(json: String?, nowMs: Long, hasRun: Boolean)
++    @JvmStatic external fun uiDailyWindow(): String
++    /** The challenge run's settings in the app's format, from the server's ones; "" when they do not fit. */
++    @JvmStatic external fun dailySettingsJson(serverSettings: String, check: String): String
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Presentation.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Presentation.kt
 new file mode 100644
-index 0000000..f1909d5
+index 0000000..4f862de
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Presentation.kt
-@@ -0,0 +1,729 @@
+@@ -0,0 +1,772 @@
 +package com.swordfish.lemuroid.app.shared.game.viewmodel
 +
 +import android.app.Presentation
@@ -3938,7 +4201,7 @@ index 0000000..f1909d5
 +    private val density = context.resources.displayMetrics.density
 +    private fun dp(v: Int) = (v * density).toInt()
 +
-+    private companion object { const val HELP_TAB = 4; const val MAP_TAB = 3 }
++    private companion object { const val HELP_TAB = 4; const val MAP_TAB = 3; const val DAILY_TAB = 6 }
 +
 +    private enum class Role { TEXT, DIM, ACCENT }
 +
@@ -3976,7 +4239,7 @@ index 0000000..f1909d5
 +        root = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
 +        tabRow = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL }
 +        val content = FrameLayout(context)
-+        val pageViews = listOf("RUN" to buildRunPage(), "ITEMS" to buildItemsPage(), "CHECKS" to buildChecksPage(), "MAP" to buildMapPage(), "HELP" to buildHelpPage(), "CONFIG" to buildConfigPage())
++        val pageViews = listOf("RUN" to buildRunPage(), "ITEMS" to buildItemsPage(), "CHECKS" to buildChecksPage(), "MAP" to buildMapPage(), "HELP" to buildHelpPage(), "CONFIG" to buildConfigPage(), "DAILY" to buildDailyPage())
 +        pageViews.forEachIndexed { i, (title, page) ->
 +            val tab = label(15f, Role.DIM).apply {
 +                text = title
@@ -4417,7 +4680,49 @@ index 0000000..f1909d5
 +            LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(18) },
 +        )
 +        column.addView(label(12f, Role.DIM).apply { text = "The hotkeys work in game on the main screen. The state is saved in the active slot."; setPadding(0, dp(12), 0, 0) })
++        column.addView(label(13f, Role.DIM).apply { text = "DAILY CHALLENGE  (shown over the game)"; setPadding(0, dp(18), 0, 0) })
++        val daily = com.swordfish.lemuroid.app.mobile.feature.runs.DailyChallenge
++        daily.SHOW_TITLES.forEachIndexed { i, title ->
++            spinRow(title, { if (daily.shown(context, i)) "Shown" else "Hidden" }) { daily.toggle(context, i) }
++        }
 +        return ScrollView(context).apply { addView(column) }
++    }
++
++    private lateinit var dailyGoal: TextView
++    private lateinit var dailyClock: TextView
++    private lateinit var dailyHints: TextView
++
++    /** The daily challenge's tab: the goal, the window and own clocks, and every hint out so far. Shown only in a challenge run. */
++    private fun buildDailyPage(): View {
++        val column = LinearLayout(context).apply {
++            orientation = LinearLayout.VERTICAL
++            setPadding(dp(16), dp(16), dp(16), dp(16))
++        }
++        dailyGoal = label(20f, Role.ACCENT)
++        dailyClock = label(15f, Role.DIM).apply { setPadding(0, dp(8), 0, dp(14)) }
++        dailyHints = label(15f)
++        column.addView(dailyGoal)
++        column.addView(dailyClock)
++        column.addView(label(13f, Role.DIM).apply { text = "HINTS" })
++        column.addView(dailyHints)
++        return ScrollView(context).apply { addView(column) }
++    }
++
++    private fun renderDaily(finishedRun: Boolean): Boolean {
++        val daily = com.swordfish.lemuroid.app.mobile.feature.runs.DailyChallenge
++        val on = com.swordfish.lemuroid.app.mobile.feature.runs.RunStore.activeSlot(context) == daily.SLOT
++        tabs.getOrNull(DAILY_TAB)?.visibility = if (on) View.VISIBLE else View.GONE
++        if (!on && selectedTab == DAILY_TAB) select(0)
++        val a = (if (on) daily.attempt(context) else null) ?: return false
++        val now = System.currentTimeMillis()
++        val left = a.closesAt - now
++        dailyGoal.text = a.goal
++        dailyClock.text = (if (left > 0) "Window closes in ${daily.span(left)}" else "The window has closed: no prize") +
++            (if (finishedRun) "" else "    Own time ${daily.clock(now - a.startedAt)}")
++        dailyHints.text = (if (a.hints.isEmpty()) "None yet" else a.hints.joinToString("\n\n") { (at, t) -> "${(at - a.startedAt) / 60_000} min   $t" }) +
++            "\n\n" + (if (a.nextHintAt > 0) "Next hint in ${daily.span(a.nextHintAt - now)}" else "Every hint is out")
++        if (!finishedRun) time.text = daily.clock(now - a.startedAt)   // the challenge runs on the real clock
++        return true
 +    }
 +
 +    private lateinit var helpStatus: TextView
@@ -4599,6 +4904,7 @@ index 0000000..f1909d5
 +            }
 +        }
 +
++        renderDaily(s.game == 3)
 +        renderHelp(s.help)
 +        map?.setVisibleChecks(s.help.visibleChecks)
 +        miniMap?.setVisibleChecks(s.help.visibleChecks)
@@ -4826,10 +5132,10 @@ index 0000000..378f91a
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Tracker.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Tracker.kt
 new file mode 100644
-index 0000000..2964fd2
+index 0000000..389a3d3
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Tracker.kt
-@@ -0,0 +1,334 @@
+@@ -0,0 +1,373 @@
 +package com.swordfish.lemuroid.app.shared.game.viewmodel
 +
 +import android.app.Presentation
@@ -4906,6 +5212,12 @@ index 0000000..2964fd2
 +    private var baseMs = 0L
 +    private var baseSlot: Int? = null
 +    private var finishedSaved = false
++
++    /** Called (from the tracker thread) when a run ends in this session: name, final time in ms, checks per game, ladder line. */
++    @Volatile var onRunComplete: ((name: String, ms: Long, zelda: String, metroid: String, ladder: String) -> Unit)? = null
++
++    /** Called (from a thread) with the server's answer to a daily challenge's finish, to replace the card's last line. */
++    @Volatile var onDailyResult: ((String) -> Unit)? = null
 +    private var nextTokenTry = 0L
 +    private var lastSramHash: Int? = null
 +    private var pendingSave: LongArray? = null
@@ -4954,8 +5266,19 @@ index 0000000..2964fd2
 +            var seenRects = emptyList<android.graphics.RectF>()
 +            var seenCount = -1
 +            var discoveredOnly = false
++            var lastGame = 0
 +            while (isActive) {
-+                delay(500)
++                // a full read every 500 ms; in between, while a run is being played, a light check every 100 ms so the
++                // end of the run is taken close to the real moment (the final time is what the ladder keeps)
++                var waited = 0
++                while (waited < 500) {
++                    delay(100)
++                    waited += 100
++                    if (lastGame == 0 || lastGame == 3) continue
++                    val w = view.readMemory(GLRetroView.MEMORY_SYSTEM_RAM, 0, WRAM_SIZE)
++                    val sr = view.readMemory(GLRetroView.MEMORY_SAVE_RAM, 0, SRAM_SIZE)
++                    if (Smz3Native.summarize(w, sr)[0] == 3) break
++                }
 +                val wram = view.readMemory(GLRetroView.MEMORY_SYSTEM_RAM, 0, WRAM_SIZE)
 +                if (wram.size > 0x8D) {
 +                    val pad = (wram[0x8B].toInt() and 0xFF) or ((wram[0x8C].toInt() and 0xFF) shl 8)
@@ -4964,6 +5287,12 @@ index 0000000..2964fd2
 +                    if (pad != lastPad) { lastPad = pad; Timber.i("SMZ3 SM pad word \$8B = %04x".format(pad)) }
 +                }
 +                val sram = view.readMemory(GLRetroView.MEMORY_SAVE_RAM, 0, SRAM_SIZE)
++                // a mid-game daily start keeps its dead bosses dead (nothing to write for any other run)
++                val pokes = Smz3Native.preparedPokes(wram, sram)
++                for (i in pokes.indices step 3) {
++                    val region = if (pokes[i] == 0) GLRetroView.MEMORY_SYSTEM_RAM else GLRetroView.MEMORY_SAVE_RAM
++                    view.writeMemory(region, pokes[i + 1], byteArrayOf(pokes[i + 2].toByte()))
++                }
 +                // Both games bump a frame counter every frame (ALttP 0x7E001A, Super Metroid 0x7E05B6): when it does
 +                // not move between two reads the emulator is paused or in the background, so no play time is counted.
 +                val frame = if (wram.size > 0x05B6) (wram[0x1A].toInt() and 0xFF) or ((wram[0x05B6].toInt() and 0xFF) shl 8) else -1
@@ -5007,7 +5336,7 @@ index 0000000..2964fd2
 +                }
 +                inventoryBaseline = started
 +
-+                if (started && Smz3Help.current().mode == "all" && --logicCountdown <= 0) {
++                if (started && Smz3Help.current().mode == "all" && Smz3Help.current().reachable && --logicCountdown <= 0) {
 +                    logicCountdown = 6
 +                    val run = RunStore.activeSlot(context)?.let { RunStore.load(context, it) }
 +                    val settings = run?.settings ?: "{}"
@@ -5025,6 +5354,7 @@ index 0000000..2964fd2
 +                if (slotNow != baseSlot) {
 +                    baseSlot = slotNow
 +                    baseMs = slotNow?.let { RunStore.load(context, it)?.playTimeMs } ?: 0L
++                    Smz3Native.setGoal(slotNow?.let { RunStore.load(context, it)?.settings })   // a daily challenge ends at its goal
 +                    pendingPlayTime = 0
 +                }
 +                Smz3Help.select(context, slotNow)
@@ -5077,7 +5407,7 @@ index 0000000..2964fd2
 +                    elapsedMs = if (started) baseMs + pendingPlayTime else 0,
 +                    cleared = cleared,
 +                    inventory = inventoryCache.copyOf(),
-+                    inLogic = if (help.mode == "all") inLogic else null,   // which checks are in logic is a help too
++                    inLogic = if (help.mode == "all" && help.reachable) inLogic else null,   // which checks are in logic is a help too
 +                    help = help,
 +                    position = discovery.position,
 +                    dungeonLive = discovery.dungeonLive,
@@ -5087,7 +5417,9 @@ index 0000000..2964fd2
 +                    discoveredOnly = discoveredOnly,
 +                    bosses = if (started && slotNow != null) Smz3Bosses.marks(wram, discovery) else emptyList(),
 +                )
++                val wasOver = lastGame == 3   // the read that sees the end still counts the time up to it
 +                currentGame = if (started) s[0] else 0
++                lastGame = currentGame
 +                main.post { presentation?.render(snapshot) }
 +
 +                val now = SystemClock.elapsedRealtime()
@@ -5095,7 +5427,7 @@ index 0000000..2964fd2
 +                lastTick = now
 +                RunStore.activeSlot(context)?.let { slot ->
 +                    if (started) OnlineLadder.noteChecks(context, slot, cleared, baseMs + pendingPlayTime)
-+                    if (started && running) {
++                    if (started && running && !wasOver) {
 +                        val scaled = delta * speed
 +                        pendingPlayTime += scaled
 +                        if (now >= nextTokenTry) {   // retried every minute until the server has answered
@@ -5111,13 +5443,26 @@ index 0000000..2964fd2
 +                            val finished = run.completedAt == 0L && s[0] == 3
 +                            val totalMs = run.playTimeMs + pendingPlayTime
 +                            if (s[0] == 3) finishedSaved = true
-+                            if (finished) {
++                            if (finished && slot == com.swordfish.lemuroid.app.mobile.feature.runs.DailyChallenge.SLOT) {
++                                // the challenge's time is the real clock from Start; the server ranks it
++                                val daily = com.swordfish.lemuroid.app.mobile.feature.runs.DailyChallenge
++                                val attempt = daily.attempt(context)
++                                val realMs = attempt?.let { System.currentTimeMillis() - it.startedAt } ?: totalMs
++                                daily.queueFinish(context, realMs)
++                                Thread { daily.flush(context); daily.result(context)?.let { onDailyResult?.invoke(it) } }.start()
++                                val late = attempt != null && System.currentTimeMillis() > attempt.closesAt
++                                onRunComplete?.invoke(run.name, realMs, "${s[2]}/${s[3]}", "${s[4]}/${s[5]}",
++                                    if (late) "After the window closed: on the late list, no prize" else "Sending the time...")
++                            } else if (finished) {
 +                                val isDefault = runCatching { org.json.JSONObject(run.settings).optBoolean("defaultRules", false) }.getOrDefault(false)
 +                                Leaderboard.add(context, LeaderboardEntry(run.name, run.seed, totalMs, System.currentTimeMillis(), isDefault))
 +                                if (isDefault) {
 +                                    OnlineLadder.queueFinish(context, slot, totalMs, run.seed)
 +                                    Thread { OnlineLadder.flush(context) }.start()
 +                                }
++                                val online = OnlineLadder.slotKind(context, slot) != 0
++                                onRunComplete?.invoke(run.name, totalMs, "${s[2]}/${s[3]}", "${s[4]}/${s[5]}",
++                                    if (!online) "Offline run" else if (isDefault) "Sent to the online ladder" else "Changed rules: not on the ladder")
 +                            }
 +                            RunStore.save(
 +                                context,
@@ -7709,5 +8054,280 @@ index c3c69c7..13cb599 100644
 +includeBuild("../LibretroDroid") {
 +    dependencySubstitution {
 +        substitute(module("com.github.Swordfish90:LibretroDroid")).using(project(":libretrodroid"))
++    }
++}
+diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/DailyChallenge.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/DailyChallenge.kt
+new file mode 100644
+index 0000000..04714b7
+--- /dev/null
++++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/DailyChallenge.kt
+@@ -0,0 +1,158 @@
++package com.swordfish.lemuroid.app.mobile.feature.runs
++
++import android.content.Context
++import org.json.JSONArray
++import org.json.JSONObject
++import java.io.File
++import java.net.HttpURLConnection
++import java.net.URL
++
++/** One attempt at a daily challenge, its times in the device clock (ms since 1970). */
++data class DailyAttempt(
++    val window: String,
++    val token: String,
++    val goal: String,
++    val check: String,
++    val startedAt: Long,
++    val closesAt: Long,
++    val nextHintAt: Long,
++    val hints: List<Pair<Long, String>>,
++)
++
++/**
++ * The daily timed challenge (docs/DAILY.md): three windows a day, one attempt each, the real clock from Start, hints
++ * released by the server. The attempt's run lives in its own slot ([SLOT], never listed with the others); the attempt
++ * itself in runs/daily.json. Server times are moved to the device clock with the answers' "now".
++ */
++object DailyChallenge {
++    const val SLOT = RunStore.SLOTS
++    private const val BASE = "https://smz3.indieviral.com"
++
++    private fun dir(context: Context) = File(context.filesDir, "runs").apply { mkdirs() }
++    private fun attemptFile(context: Context) = File(dir(context), "daily.json")
++    private fun finishFile(context: Context) = File(dir(context), "daily.finish")
++    private fun resultFile(context: Context) = File(dir(context), "daily.result")
++    fun proofFile(context: Context) = File(dir(context), "slot$SLOT.proof")
++
++    /** Test hook: /sdcard/SMZ3/server.txt names another server (a local one). */
++    private fun base(): String = runCatching { File("/sdcard/SMZ3/server.txt").readText().trim() }.getOrNull()?.takeIf { it.startsWith("http") } ?: BASE
++
++    private fun installId(context: Context): String = OnlineLadder.installIdFor(context)
++
++    private fun request(method: String, path: String, body: JSONObject? = null): Pair<Int, String> = runCatching {
++        val c = URL(base() + path).openConnection() as HttpURLConnection
++        c.requestMethod = method
++        c.connectTimeout = 8000
++        c.readTimeout = 8000
++        if (body != null) {
++            c.doOutput = true
++            c.setRequestProperty("Content-Type", "application/json")
++            c.outputStream.use { it.write(body.toString().toByteArray()) }
++        }
++        val text = runCatching { (if (c.responseCode < 400) c.inputStream else c.errorStream).bufferedReader().use { it.readText() } }.getOrDefault("")
++        Pair(c.responseCode, text).also { c.disconnect() }
++    }.getOrDefault(Pair(-1, ""))
++
++    /** The /api/daily answer for this install, null offline. Call off the main thread. */
++    fun info(context: Context): String? = request("GET", "/api/daily?install=" + installId(context)).let { (code, text) -> if (code == 200) text else null }
++
++    fun attempt(context: Context): DailyAttempt? = runCatching {
++        val j = JSONObject(attemptFile(context).readText())
++        val h = j.getJSONArray("hints")
++        DailyAttempt(j.getString("window"), j.getString("token"), j.getString("goal"), j.getString("check"), j.getLong("startedAt"), j.getLong("closesAt"),
++            j.optLong("nextHintAt"), List(h.length()) { h.getJSONArray(it).let { p -> p.getLong(0) to p.getString(1) } })
++    }.getOrNull()
++
++    private fun save(context: Context, a: DailyAttempt) {
++        val h = JSONArray(a.hints.map { JSONArray().put(it.first).put(it.second) })
++        runCatching {
++            attemptFile(context).writeText(JSONObject().put("window", a.window).put("token", a.token).put("goal", a.goal).put("check", a.check)
++                .put("startedAt", a.startedAt).put("closesAt", a.closesAt).put("nextHintAt", a.nextHintAt).put("hints", h).toString())
++        }
++    }
++
++    /** True when the daily slot holds the run of [window]. */
++    fun kept(context: Context, window: String): Boolean = window.isNotEmpty() && attempt(context)?.window == window && RunStore.load(context, SLOT) != null
++
++    private fun hintsOf(j: JSONObject, shift: Long): Pair<List<Pair<Long, String>>, Long> {
++        val a = j.optJSONArray("hints") ?: JSONArray()
++        val next = if (j.isNull("nextHintAt")) 0L else j.optLong("nextHintAt").let { if (it > 0) it + shift else 0L }
++        return List(a.length()) { a.getJSONObject(it).let { h -> h.getLong("at") + shift to h.getString("text") } } to next
++    }
++
++    /** Starts (or resumes on the server) the attempt of [window]: the server's run settings, or the reason it failed. Call off the main thread. */
++    fun start(context: Context, window: String): Result<Pair<DailyAttempt, String>> {
++        val (code, text) = request("POST", "/api/daily/start", JSONObject().put("install", installId(context)).put("window", window))
++        if (code < 0) return Result.failure(Exception("No connection to the challenge server"))
++        val j = runCatching { JSONObject(text) }.getOrNull() ?: return Result.failure(Exception("Cannot start the challenge ($code)"))
++        if (code != 200) return Result.failure(Exception("Cannot start: " + j.optString("error", code.toString())))
++        val shift = System.currentTimeMillis() - j.optLong("now", System.currentTimeMillis())
++        val settings = j.optString("settings")
++        val check = Regex("\"goal\":\"([^\"]+)\"").find(settings)?.groupValues?.get(1) ?: return Result.failure(Exception("The challenge has no goal"))
++        val (hints, next) = hintsOf(j, shift)
++        val a = DailyAttempt(j.getString("window"), j.getString("token"), j.optJSONObject("goal")?.optString("text").orEmpty(), check,
++            j.getLong("startedAt") + shift, j.getLong("closesAt") + shift, next, hints)
++        return Result.success(a to settings)
++    }
++
++    /** Keeps the attempt beside the new run and forgets what the slot had before. */
++    fun begin(context: Context, a: DailyAttempt) {
++        finishFile(context).delete(); resultFile(context).delete(); proofFile(context).delete()
++        save(context, a)
++    }
++
++    /** Asks for the hints released by now; the updated attempt, or null offline. Call off the main thread. */
++    fun hints(context: Context, a: DailyAttempt): DailyAttempt? {
++        val (code, text) = request("GET", "/api/daily/hints?token=" + a.token)
++        if (code != 200) return null
++        val j = runCatching { JSONObject(text) }.getOrNull() ?: return null
++        val (hints, next) = hintsOf(j, System.currentTimeMillis() - j.optLong("now", System.currentTimeMillis()))
++        return a.copy(hints = hints, nextHintAt = next).also { save(context, it) }
++    }
++
++    /** Remembers the attempt's real time at the goal; [flush] sends it with the slot's proof. */
++    @Synchronized
++    fun queueFinish(context: Context, timeMs: Long) {
++        resultFile(context).delete()
++        runCatching { finishFile(context).writeText(timeMs.toString()) }
++    }
++
++    /** What the server answered to the finish, a line for the player; null while nothing came back. */
++    fun result(context: Context): String? = runCatching { resultFile(context).readText() }.getOrNull()
++
++    /** Sends the finish waiting, if any. Call off the main thread. */
++    @Synchronized
++    fun flush(context: Context) {
++        val time = runCatching { finishFile(context).readText().trim().toLong() }.getOrNull() ?: return
++        val a = attempt(context) ?: return
++        val (name, country) = OnlineLadder.profileFor(context)
++        val body = JSONObject().put("token", a.token).put("timeMs", time).put("player", name)
++        if (country.length == 2) body.put("country", country)
++        body.put("proof", runCatching { proofFile(context).readText() }.getOrDefault(""))
++        val (code, text) = request("POST", "/api/daily/finish", body)
++        if (code != 200 && code != 400) return   // no answer: sent again later
++        val j = runCatching { JSONObject(text) }.getOrDefault(JSONObject())
++        val line = when {
++            code == 400 -> "Not counted: " + j.optString("error", "refused")
++            j.optBoolean("held") -> "Held for a check before it counts"
++            j.optBoolean("late") -> "After the window closed: on the late list, no prize"
++            else -> "Rank ${j.optInt("rank").takeIf { it > 0 } ?: "?"} for now  -  +${j.optInt("tokens")} tokens (${j.optInt("balance")})"
++        }
++        runCatching { resultFile(context).writeText(line) }
++        finishFile(context).delete()
++    }
++
++    /** What the challenge shows over the game, each one can be hidden: 0 window clock, 1 own time, 2 goal and new hints, 3 next hint in. */
++    val SHOW_TITLES = listOf("Window clock", "Own time", "Goal and hints", "Next hint in")
++    private fun prefs(context: Context) = context.getSharedPreferences("smz3_daily", Context.MODE_PRIVATE)
++    fun shown(context: Context, what: Int) = (prefs(context).getInt("hide", 0) shr what and 1) == 0
++    fun toggle(context: Context, what: Int) = prefs(context).edit().putInt("hide", prefs(context).getInt("hide", 0) xor (1 shl what)).apply()
++
++    /** "2h 05m", "12m 30s", "45s". */
++    fun span(ms: Long): String {
++        val s = if (ms > 0) (ms + 999) / 1000 else 0
++        return if (s >= 3600) "%dh %02dm".format(s / 3600, s / 60 % 60) else if (s >= 60) "%dm %02ds".format(s / 60, s % 60) else "${s}s"
++    }
++
++    fun clock(ms: Long): String { val s = ms.coerceAtLeast(0) / 1000; return "%d:%02d:%02d".format(s / 3600, s / 60 % 60, s % 60) }
++}
+diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3DailyOverlay.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3DailyOverlay.kt
+new file mode 100644
+index 0000000..99f5a0a
+--- /dev/null
++++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3DailyOverlay.kt
+@@ -0,0 +1,105 @@
++package com.swordfish.lemuroid.app.shared.game.viewmodel
++
++import android.app.Activity
++import android.app.AlertDialog
++import android.graphics.Color
++import android.os.Handler
++import android.os.Looper
++import android.view.Gravity
++import android.view.ViewGroup
++import android.widget.FrameLayout
++import android.widget.TextView
++import com.swordfish.lemuroid.app.mobile.feature.runs.DailyAttempt
++import com.swordfish.lemuroid.app.mobile.feature.runs.DailyChallenge
++import com.swordfish.lemuroid.app.mobile.feature.runs.RunStore
++
++/**
++ * The daily challenge over the game: a box in the top-right corner with the window clock (red in its last 15 minutes),
++ * the own time from Start, the goal and the time to the next hint, each one hideable in the tracker's CONFIG tab. A new
++ * hint shows at the bottom for 15 seconds, and the TIME IS UP card comes once when the window closes before the goal.
++ */
++class Smz3DailyOverlay(private val activity: Activity, private val onLeave: () -> Unit) {
++    private val main = Handler(Looper.getMainLooper())
++    private var box: TextView? = null
++    private var note: TextView? = null
++    private var attempt: DailyAttempt? = null
++    private var asking = false
++    private var nextAsk = 0L
++    private var timeUpShown = false
++    private var noteUntil = 0L
++    private val tick = object : Runnable {
++        override fun run() { update(); main.postDelayed(this, 1000) }
++    }
++
++    fun start() {
++        if (RunStore.activeSlot(activity) != DailyChallenge.SLOT) return
++        attempt = DailyChallenge.attempt(activity) ?: return
++        timeUpShown = RunStore.load(activity, DailyChallenge.SLOT)?.completedAt?.let { it != 0L } ?: false
++        val pad = (8 * activity.resources.displayMetrics.density).toInt()
++        box = TextView(activity).apply {
++            setTextColor(Color.WHITE); textSize = 13f; setPadding(pad, pad / 2, pad, pad / 2)
++            setBackgroundColor(Color.argb(190, 8, 11, 17))
++            activity.addContentView(this, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.TOP or Gravity.END).apply { setMargins(pad, pad, pad, pad) })
++        }
++        note = TextView(activity).apply {
++            setTextColor(Color.rgb(0xF2, 0xA3, 0x3A)); textSize = 15f; setPadding(pad * 2, pad, pad * 2, pad); visibility = android.view.View.GONE
++            setBackgroundColor(Color.argb(215, 8, 11, 17))
++            activity.addContentView(this, FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply { setMargins(pad, pad, pad, pad * 3) })
++        }
++        main.post(tick)
++    }
++
++    fun stop() { main.removeCallbacks(tick) }
++
++    private fun update() {
++        val a = attempt ?: return
++        val now = System.currentTimeMillis()
++        val finished = Smz3Tracker.currentGame == 3
++        val left = a.closesAt - now
++        val lines = ArrayList<Pair<String, Int>>()
++        if (DailyChallenge.shown(activity, 0)) lines += (if (left > 0) "Window  ${DailyChallenge.span(left)}" else "Window closed") to (if (left < 15 * 60_000) Color.rgb(0xE0, 0x5A, 0x4F) else Color.WHITE)
++        if (DailyChallenge.shown(activity, 1) && !finished) lines += "Time  ${DailyChallenge.clock(now - a.startedAt)}" to Color.WHITE
++        if (DailyChallenge.shown(activity, 2)) lines += a.goal to Color.rgb(0xF2, 0xA3, 0x3A)
++        if (DailyChallenge.shown(activity, 3) && a.nextHintAt > 0 && !finished) lines += "Next hint in ${DailyChallenge.span(a.nextHintAt - now)}" to Color.rgb(0x87, 0x93, 0xA6)
++        box?.let { b ->
++            b.visibility = if (lines.isEmpty()) android.view.View.GONE else android.view.View.VISIBLE
++            val text = android.text.SpannableStringBuilder()
++            lines.forEachIndexed { i, (t, c) ->
++                if (i > 0) text.append('\n')
++                val from = text.length
++                text.append(t)
++                text.setSpan(android.text.style.ForegroundColorSpan(c), from, text.length, 0)
++            }
++            b.text = text
++        }
++        if (now >= noteUntil) note?.visibility = android.view.View.GONE
++        // a hint is due: ask for it (again every 15 seconds while the server has not released it)
++        if (!asking && a.nextHintAt > 0 && now >= a.nextHintAt && now >= nextAsk && !finished) {
++            asking = true
++            nextAsk = now + 15_000
++            Thread {
++                val fresh = DailyChallenge.hints(activity, a)
++                main.post {
++                    asking = false
++                    if (fresh != null) {
++                        if (fresh.hints.size > a.hints.size && DailyChallenge.shown(activity, 2)) {
++                            note?.text = "Hint: " + fresh.hints.last().second
++                            note?.visibility = android.view.View.VISIBLE
++                            noteUntil = System.currentTimeMillis() + 15_000
++                        }
++                        attempt = fresh
++                    }
++                }
++            }.start()
++        }
++        if (!timeUpShown && left <= 0 && !finished) {
++            timeUpShown = true
++            AlertDialog.Builder(activity)
++                .setTitle("TIME IS UP")
++                .setMessage("The window closed before the goal: this attempt is marked failed.\n\nYou can keep playing it. A finish now goes on the late list, without prize.")
++                .setPositiveButton("Keep playing", null)
++                .setNegativeButton("Leave the run") { _, _ -> onLeave() }
++                .show()
++        }
 +    }
 +}

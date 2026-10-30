@@ -5,6 +5,10 @@
 
 #include <stdint.h>
 #include "smz3_ui.h"
+#include "smz3_daily.h"
+
+/* The 1-based run slot of the daily challenge's attempt; it is never listed with the others. */
+#define DAILY_SLOT (UI_SLOTS + 1)
 
 /* Loads the stored profile into the menu and enables its Player row. */
 void online_init(SmzUi *u);
@@ -25,7 +29,21 @@ int online_weekly_days_left(void);
 int online_ensure_token(int slot);
 /* seed is sent for the original ladder, whose seed the server cannot know; the proof of run is read from the slot's .proof file. */
 void online_queue_finish(int slot, int64_t time_ms, int seed);
-/* Sends the finished runs waiting. Blocks. */
+/* Sends the finished runs waiting (the daily attempt's too). Blocks. */
 void online_flush(void);
+
+/* The daily challenge; each call blocks for one request. The attempt is kept in runs/daily.txt beside the daily slot. */
+int online_daily_info(SmzDailyInfo *d);
+/* Starts (or resumes) the attempt of a window: 0 with the run's settings JSON, or -1 with the reason in err. */
+int online_daily_start(const char *window, SmzDailyRun *r, char *settings, size_t cap, char *err, size_t errcap);
+int online_daily_hints(SmzDailyRun *r);
+int online_daily_load(SmzDailyRun *r);
+void online_daily_save(const SmzDailyRun *r);
+/* Queues the attempt's finish (real time from Start); online_flush sends it with the slot's proof. */
+void online_daily_queue_finish(int64_t time_ms);
+/* What the server answered to the finish: 1 with a line for the player, 0 while nothing came back. */
+int online_daily_result(char *out, size_t cap);
+/* The device clock in ms. */
+int64_t online_now_ms(void);
 
 #endif

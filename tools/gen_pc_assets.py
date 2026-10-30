@@ -14,10 +14,15 @@ out.append("const SmzMapData PC_MAP_DATA = {ROOMS, %d, REGIONS, %d, MARKERS, %d}
 out.append("const unsigned char PC_MAP_PNG[] = {" + ",".join(str(b) for b in png) + "};")
 out.append("const unsigned PC_MAP_PNG_LEN = %d;" % len(png))
 icons = sorted(os.listdir(os.path.join(src, "items")))
+# the boss tokens of the run list, named "rewards/<file>" beside the item icons (paths are relative to items/)
+icons += ["../rewards/" + n for n in sorted(os.listdir(os.path.join(src, "rewards")))]
+# the country flags (assets/flags, made by tools/gen_flags.py), named "flags/<CODE>.png"
+flags = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets", "flags")
+icons += [os.path.join(flags, n) for n in sorted(os.listdir(flags))]
 for i, n in enumerate(icons):
     out.append("static const unsigned char icon_%d[] = {" % i + ",".join(str(b) for b in open(os.path.join(src, "items", n), "rb").read()) + "};")
 out.append("const PcIcon PC_ITEM_ICONS[] = {")
 for i, n in enumerate(icons):
-    out.append('    {"%s", icon_%d, sizeof icon_%d},' % (n.replace('"', '\\"'), i, i))
+    out.append('    {"%s", icon_%d, sizeof icon_%d},' % ((n.replace("../", "") if not os.path.isabs(n) else "flags/" + os.path.basename(n)).replace('"', '\\"'), i, i))
 out.append("    {NULL, NULL, 0}\n};")
 open(dst, "w").write("\n".join(out) + "\n")

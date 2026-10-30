@@ -166,7 +166,7 @@ void dungeon_draw(SDL_Renderer *r, DungeonView *v, SDL_Rect area, const SmzTrack
     int map_mask = have_data ? u16(src, base + 0x368) : 0, compass_mask = have_data ? u16(src, base + 0x364) : 0;
     int have_map = have_data && (map_mask & (0x8000 >> d));
 
-    float title_h = 34 * u, side = 76 * u, foot = 30 * u;
+    float title_h = 34 * u, side = 76 * u, foot = 44 * u;
     float areaL = area.x + side, areaT = area.y + title_h, areaR = area.x + area.w - 10 * u, areaB = area.y + area.h - foot;
     float scale = fminf((areaR - areaL) / (cols * SMZ_DM_ROOM), (areaB - areaT) / (rows * SMZ_DM_ROOM));
     float picW = cols * SMZ_DM_ROOM * scale, picH = rows * SMZ_DM_ROOM * scale;
@@ -240,6 +240,22 @@ void dungeon_draw(SDL_Renderer *r, DungeonView *v, SDL_Rect area, const SmzTrack
         gfx_rect(area.x + 8 * u, y, 56 * u, 28 * u, i == idx ? (SDL_Color){0x3A, 0x4A, 0x66, 255} : (SDL_Color){0x1D, 0x24, 0x30, 255});
         gfx_text(area.x + 36 * u, y + 3 * u, 20 * u, i == idx ? amber : white, 1, label);
     }
-    gfx_text(area.x + area.w - 8 * u, area.y + area.h - foot + 4 * u, 17 * u, dim, 2, "Left/Right dungeon   Up/Down floor   A Link's floor   Y world map");
+    /* the strip to jump to any dungeon, and what the dots mean */
+    static const char *const SHORT[14] = {"Sewers", "Castle", "Eastern", "Desert", "Tower", "Swamp", "Dark", "Mire", "Skull", "Ice", "Hera", "Thieves", "Turtle", "Ganon"};
+    float cw = (area.w - 12 * u) / 14, cy = area.y + area.h - foot + 2 * u;
+    for (int i = 0; i < 14; i++) {
+        float cx = area.x + 6 * u + i * cw;
+        /* checks still to get in the dungeon (the sewers belong to Hyrule Castle), green when it is done */
+        const char *region = i == 0 ? "Hyrule Castle" : NAMES[i];
+        int left = 0, all = 0;
+        for (unsigned j = 0; j < smz3_location_count && j < SMZ_TRK_MAX_LOCS; j++)
+            if (!strcmp(smz3_locations[j].region, region)) { all++; if (!t->cleared[j]) left++; }
+        char n[16];
+        if (left) snprintf(n, sizeof n, "%d left", left); else snprintf(n, sizeof n, "done");
+        gfx_rect(cx, cy, cw - 3 * u, 38 * u, i == d ? (SDL_Color){0x3A, 0x4A, 0x66, 255} : (SDL_Color){0x1D, 0x24, 0x30, 255});
+        gfx_text(cx + (cw - 3 * u) / 2, cy + 2 * u, 16 * u, i == d ? amber : dim, 1, SHORT[i]);
+        if (all) gfx_text(cx + (cw - 3 * u) / 2, cy + 19 * u, 14 * u, left ? white : (SDL_Color){0x4C, 0xC3, 0x8A, 255}, 1, n);
+    }
+    map_legend(r, area.x + area.w - 10 * u, area.y + 8 * u, 16 * u, 1, in_logic != NULL);
     SDL_RenderSetClipRect(r, NULL);
 }

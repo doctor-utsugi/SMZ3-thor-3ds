@@ -135,7 +135,7 @@ int main(void)
     ui_touch(&u, 100, 40 + 2 * 46 + 10);
     assert(u.screen == UI_MODE && u.active_slot == 2);
     ui_draw(&u);
-    ui_touch(&u, 100, 36 + 2 * 50 + 20);
+    ui_touch(&u, 100, 32 + 2 * 47 + 20);
     assert(u.screen == UI_CREATE);
     ui_draw(&u);
     ui_touch(&u, 137, 10);
@@ -153,17 +153,25 @@ int main(void)
     ui_draw(&u);
     ui_touch(&u, 100, 40 + 2 * 46 + 10);               /* open Create again, then scroll and press the button by touch */
     ui_draw(&u);
-    ui_touch(&u, 100, 36 + 2 * 50 + 20);
+    ui_touch(&u, 100, 32 + 2 * 47 + 20);
     ui_draw(&u);
     ui_touch(&u, UI_W - 18, 44 + 100);
     assert(u.cursor[u.level] == 3);
     ui_draw(&u);
-    ui_touch(&u, UI_W - 40, UI_H - 20);
+    ui_touch(&u, UI_W - 40, UI_H - 40);   /* the Next button, above the help bar */
     assert(u.screen == UI_START);
     ui_draw(&u);
     ui_touch(&u, UI_W / 2, 180);
     assert(u.action == ACT_GENERATE && u.action_slot == 2);
     u.action = ACT_NONE; u.screen = UI_SLOTS_SCREEN;
+    {   /* reachable checks: off by default, on in the Cozy preset, and not a rule change */
+        SmzUi c; ui_init(&c); char js[4096];
+        ui_settings_json(&c, 77, js, sizeof js);
+        assert(strstr(js, "\"showReachable\":false") && strstr(js, "\"defaultRules\":true"));
+        c.screen = UI_MODE; c.mode_cursor = 0; ui_draw(&c); ui_input(&c, BTN_A);
+        ui_settings_json(&c, 77, js, sizeof js);
+        assert(strstr(js, "\"showReachable\":true"));
+    }
     {   /* monthly seed row appears once the host knows the seed */
         SmzUi m; ui_init(&m); m.screen = UI_MODE;
         ui_set_monthly(&m, "2026-10", 123456789, 5);

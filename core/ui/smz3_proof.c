@@ -56,7 +56,7 @@ void smz_proof_check(const char *settings_json, const SmzProof *p, int64_t time_
 {
     memset(v, 0, sizeof *v);
     v->checks = p->n;
-    if (p->n < SMZ_PROOF_MIN) return reject(v, "too few checks");
+    if (p->n < (strstr(settings_json, "\"challenge\":true") ? 1 : SMZ_PROOF_MIN)) return reject(v, "too few checks");   /* a daily challenge may need only a few */
     uint8_t used[SMZ_PROOF_MAX] = {0};
     int64_t last = 0;
     for (int i = 0; i < p->n; i++) {

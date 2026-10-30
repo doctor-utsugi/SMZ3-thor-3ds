@@ -46,7 +46,7 @@ jobs:
           python3 tools/prepare_assets.py
       - run: sudo apt-get update && sudo apt-get install -y gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64 python3-pil
       - run: ./build-pc.sh windows
-      - run: cd build/win && zip -9 ../../SMZ3-windows-x64.zip smz3.exe
+      - run: cp -r assets/sprites build/win/sprites && cd build/win && zip -9 -r ../../SMZ3-windows-x64.zip smz3.exe sprites
       - uses: actions/upload-artifact@v4
         with:
           name: smz3-windows
@@ -89,7 +89,7 @@ jobs:
           rc=$?
           echo "window run exit code $rc (142 = still running when the alarm fired)"
           [ $rc -eq 142 ] || exit 1
-      - run: tar czf SMZ3-macos-intel.tar.gz -C build/pc smz3
+      - run: cp -r assets/sprites build/pc/sprites && tar czf SMZ3-macos-intel.tar.gz -C build/pc smz3 sprites
       - uses: actions/upload-artifact@v4
         with:
           name: smz3-macos

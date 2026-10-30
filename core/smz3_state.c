@@ -29,6 +29,20 @@ int smz3_zelda_room_location(unsigned room)
     return -1;
 }
 
+/* The run is over at the moment control is lost, as the SMZ3 tracker counts it: Link entering the
+ * Triforce room (ALttP module 0x19) or Samus entering her ship (pose word 0x0FB2 = 0xAA4F) once
+ * both final bosses are down, or the credits as a fallback. The patch sets the done flags at
+ * Mother Brain's death (0xA17402) and at the Triforce room (0xA17506). */
+int smz3_run_finished(const uint8_t *wram, size_t wram_len, const uint8_t *sram, size_t sram_len)
+{
+    smz3_game g = smz3_current_game(sram, sram_len);
+    if (g == SMZ3_GAME_CREDITS) return 1;
+    if (sram_len <= 0x3506 || !sram[0x3402]) return 0;
+    if (g == SMZ3_GAME_ZELDA) return wram_len > 0x10 && wram[0x10] == 0x19;
+    if (g == SMZ3_GAME_METROID) return sram[0x3506] && wram_len > 0xFB3 && (wram[0xFB2] | wram[0xFB3] << 8) == 0xAA4F;
+    return 0;
+}
+
 /* Past the title and file select: ALttP module 6+ (file loaded), Super Metroid game state 6+ (game data loading). */
 int smz3_started(const uint8_t *wram, size_t wram_len, const uint8_t *sram, size_t sram_len)
 {
@@ -77,6 +91,7 @@ void smz3_summarize(const uint8_t *wram, size_t wram_len,
     *out = (smz3_summary){0};
     out->game = smz3_current_game(sram, sram_len);
     out->started = smz3_started(wram, wram_len, sram, sram_len);
+    out->finished = smz3_run_finished(wram, wram_len, sram, sram_len);
     if (!out->started || out->game == SMZ3_GAME_NONE) {
         for (unsigned i = 0; i < smz3_location_count; i++) {
             if (smz3_locations[i].game == SMZ3_GAME_ZELDA) out->zelda_total++;

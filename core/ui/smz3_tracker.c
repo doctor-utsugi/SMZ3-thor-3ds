@@ -46,6 +46,21 @@ int smz_boss_mask(const uint8_t *wram, size_t wram_len, const uint8_t *sram, siz
     return mask;
 }
 
+int smz_prepared_apply(int dead_mask, uint8_t *wram, size_t wram_len, uint8_t *sram, size_t sram_len)
+{
+    static const int area[4] = {1, 3, 4, 2};
+    if (!dead_mask || sram_len < 0x33FF) return 0;
+    int changed = 0;
+    if (sram[0x33FE] == 0xFF) {
+        /* only in game (state 8 and on): while the file loads the game fills these bytes itself */
+        if (wram_len < 0xD830 || (wram[0x998] | wram[0x999] << 8) < 8 || (wram[0x998] | wram[0x999] << 8) > 0x2A) return 0;
+        for (int i = 0; i < 4; i++) if ((dead_mask >> i & 1) && !(wram[0xD828 + area[i]] & 1)) { wram[0xD828 + area[i]] |= 1; changed = 1; }
+    } else if (sram[0x33FE] == 0x00 && sram_len >= 0x2080) {
+        for (int i = 0; i < 4; i++) if ((dead_mask >> i & 1) && !(sram[0x2078 + area[i]] & 1)) { sram[0x2078 + area[i]] |= 1; changed = 1; }
+    }
+    return changed;
+}
+
 int smz_crystal_mask(const uint8_t *wram, size_t wram_len, const uint8_t *sram, size_t sram_len, int game)
 {
     /* bit 0 of $7EF37A is crystal 6, then 1, 5, 7, 2, 4, 3 */
@@ -119,12 +134,14 @@ void smz_tracker_tick(SmzTracker *t, const uint8_t *wram, size_t wram_len, const
     }
     t->inv_baseline = started;
 
-    t->game = s.game; t->started = started;
+    int was_over = t->game == SMZ3_GAME_CREDITS;   /* the read that sees the end still counts the time up to it */
+    if (started && t->goal.kind != GOAL_NONE && smz_goal_done(&t->goal, wram, wram_len, sram, sram_len)) t->goal_met = 1;
+    t->game = s.finished || t->goal_met ? SMZ3_GAME_CREDITS : s.game; t->started = started;   /* game 3 tells the hosts the run is over */
     t->zelda_cleared = s.zelda_cleared; t->zelda_total = s.zelda_total;
     t->metroid_cleared = s.metroid_cleared; t->metroid_total = s.metroid_total;
     t->boss_mask = started ? smz_boss_mask(wram, wram_len, sram, sram_len, s.game) : 0;
     t->crystal_mask = started ? smz_crystal_mask(wram, wram_len, sram, sram_len, s.game) : 0;
-    if (started && t->running) t->pending_ms += (int64_t)dt_ms * (speed > 0 ? speed : 1);
+    if (started && t->running && !was_over) t->pending_ms += (int64_t)dt_ms * (speed > 0 ? speed : 1);
     t->elapsed_ms = started ? t->base_ms + t->pending_ms : 0;
 }
 

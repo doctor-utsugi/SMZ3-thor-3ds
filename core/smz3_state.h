@@ -30,12 +30,14 @@ extern const unsigned smz3_location_count;
 typedef struct {
     smz3_game game;
     int started;
+    int finished;       /* see smz3_run_finished */
     unsigned zelda_total, zelda_cleared;
     unsigned metroid_total, metroid_cleared;
 } smz3_summary;
 
 smz3_game smz3_current_game(const uint8_t *sram, size_t sram_len);
 int smz3_started(const uint8_t *wram, size_t wram_len, const uint8_t *sram, size_t sram_len);
+int smz3_run_finished(const uint8_t *wram, size_t wram_len, const uint8_t *sram, size_t sram_len);
 
 /* Index of the first ALttP chest location in the given room (WRAM 0xA0), or -1: lets the map place Link indoors. */
 int smz3_zelda_room_location(unsigned room);

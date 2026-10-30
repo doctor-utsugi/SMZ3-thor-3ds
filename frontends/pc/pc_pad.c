@@ -11,8 +11,9 @@ static const int DEFAULTS[PA_COUNT] = {
     SDL_CONTROLLER_BUTTON_A, SDL_CONTROLLER_BUTTON_B, SDL_CONTROLLER_BUTTON_X, SDL_CONTROLLER_BUTTON_Y,
     SDL_CONTROLLER_BUTTON_LEFTSHOULDER, SDL_CONTROLLER_BUTTON_RIGHTSHOULDER, SDL_CONTROLLER_BUTTON_START, SDL_CONTROLLER_BUTTON_BACK,
     SDL_CONTROLLER_BUTTON_RIGHTSTICK, SDL_CONTROLLER_BUTTON_LEFTSTICK, PAD_AXIS_BASE + SDL_CONTROLLER_AXIS_TRIGGERRIGHT,
+    -1, -1, -1, -1,   /* quick states: free by default, Select + R / L / D-pad also work while playing */
 };
-static const char *const NAMES[PA_COUNT] = {"SNES B", "SNES A", "SNES Y", "SNES X", "SNES L", "SNES R", "Start", "Select", "Tracker", "Leave run", "Fast forward"};
+static const char *const NAMES[PA_COUNT] = {"SNES B", "SNES A", "SNES Y", "SNES X", "SNES L", "SNES R", "Start", "Select", "Tracker", "Leave run", "Fast forward", "Save state", "Load state", "State slot -", "State slot +"};
 static const int SNES_BIT[8] = {PAD_B, PAD_A, PAD_Y, PAD_X, PAD_L, PAD_R, PAD_START, PAD_SELECT};
 
 void pad_cfg_reset(void) { memcpy(code_of, DEFAULTS, sizeof code_of); }
@@ -27,7 +28,7 @@ void pad_cfg_load(void)
     text[n] = 0;
     for (char *line = strtok(text, "\n"); line; line = strtok(NULL, "\n")) {
         int a, c;
-        if (sscanf(line, "%d=%d", &a, &c) == 2 && a >= 0 && a < PA_COUNT && c >= 0 && c < PAD_AXIS_BASE + SDL_CONTROLLER_AXIS_MAX) code_of[a] = c;
+        if (sscanf(line, "%d=%d", &a, &c) == 2 && a >= 0 && a < PA_COUNT && c >= -1 && c < PAD_AXIS_BASE + SDL_CONTROLLER_AXIS_MAX) code_of[a] = c;
     }
     free(text);
 }
@@ -48,6 +49,7 @@ const char *pad_code_name(int code)
 {
     static const char *const BUTTON[] = {"A", "B", "X", "Y", "Back", "Guide", "Start", "L3", "R3", "LB", "RB", "Up", "Down", "Left", "Right", "Share", "Paddle 1", "Paddle 2", "Paddle 3", "Paddle 4", "Touchpad"};
     static char other[24];
+    if (code < 0) return "None";
     if (code >= PAD_AXIS_BASE) {
         int axis = code - PAD_AXIS_BASE;
         if (axis == SDL_CONTROLLER_AXIS_TRIGGERLEFT) return "LT";
@@ -62,7 +64,7 @@ const char *pad_code_name(int code)
 
 int pad_held(SDL_GameController *c, int code)
 {
-    if (!c) return 0;
+    if (!c || code < 0) return 0;
     if (code >= PAD_AXIS_BASE) return SDL_GameControllerGetAxis(c, (SDL_GameControllerAxis)(code - PAD_AXIS_BASE)) > 16000;
     return SDL_GameControllerGetButton(c, (SDL_GameControllerButton)code) != 0;
 }

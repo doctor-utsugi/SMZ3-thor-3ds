@@ -1,10 +1,51 @@
 #include <jni.h>
 #include <stdio.h>
 #include "smz3_state.h"
+#include "smz3_goal.h"
+#include <string.h>
+#include "smz3_tracker.h"
+#include "smz3_daily.h"
 
 #define NATIVE(name) Java_com_swordfish_lemuroid_app_shared_game_viewmodel_Smz3Native_##name
 
-/* Returns {game, started, zeldaCleared, zeldaTotal, metroidCleared, metroidTotal}. */
+static SmzGoal g_goal;   /* the daily challenge goal of the run being played (smz3_goal.h) */
+
+/* Takes the goal from the run's settings JSON; a run without one clears it. */
+static int g_dead;   /* the run's Super Metroid bosses dead from the start (a mid-game daily start) */
+JNIEXPORT void JNICALL NATIVE(setGoal)(JNIEnv *env, jclass cls, jstring settings)
+{
+    const char *s = settings ? (*env)->GetStringUTFChars(env, settings, NULL) : NULL;
+    smz_goal_from_settings(s, &g_goal);
+    g_dead = smz_daily_prepared_bosses(s);
+    if (s) (*env)->ReleaseStringUTFChars(env, settings, s);
+}
+
+/* A mid-game daily start (setGoal's run): the bytes to write so its dead bosses stay dead, as {region (0 work RAM,
+ * 1 save RAM), offset, value, ...}; empty when nothing changes. */
+JNIEXPORT jintArray JNICALL NATIVE(preparedPokes)(JNIEnv *env, jclass cls, jbyteArray wram, jbyteArray sram)
+{
+    int out[48], n = 0;
+    jsize wl = (*env)->GetArrayLength(env, wram), sl = (*env)->GetArrayLength(env, sram);
+    if (g_dead) {
+        jbyte *w = (*env)->GetByteArrayElements(env, wram, NULL);
+        jbyte *s = (*env)->GetByteArrayElements(env, sram, NULL);
+        uint8_t before[2][8];
+        if (wl >= 0xD830) memcpy(before[0], w + 0xD828, 8);
+        if (sl >= 0x2080) memcpy(before[1], s + 0x2078, 8);
+        if (smz_prepared_apply(g_dead, (uint8_t *)w, (size_t)wl, (uint8_t *)s, (size_t)sl))
+            for (int i = 0; i < 8; i++) {
+                if (wl >= 0xD830 && (uint8_t)w[0xD828 + i] != before[0][i]) { out[n++] = 0; out[n++] = 0xD828 + i; out[n++] = (uint8_t)w[0xD828 + i]; }
+                if (sl >= 0x2080 && (uint8_t)s[0x2078 + i] != before[1][i]) { out[n++] = 1; out[n++] = 0x2078 + i; out[n++] = (uint8_t)s[0x2078 + i]; }
+            }
+        (*env)->ReleaseByteArrayElements(env, wram, w, JNI_ABORT);   /* the copies only: the caller writes the emulator's memory */
+        (*env)->ReleaseByteArrayElements(env, sram, s, JNI_ABORT);
+    }
+    jintArray r = (*env)->NewIntArray(env, n);
+    (*env)->SetIntArrayRegion(env, r, 0, n, out);
+    return r;
+}
+
+/* Returns {game (3 once the run is over, or its challenge goal met), started, zeldaCleared, zeldaTotal, metroidCleared, metroidTotal}. */
 JNIEXPORT jintArray JNICALL NATIVE(summarize)(JNIEnv *env, jclass cls, jbyteArray wram, jbyteArray sram)
 {
     jsize wl = (*env)->GetArrayLength(env, wram), sl = (*env)->GetArrayLength(env, sram);
@@ -12,10 +53,11 @@ JNIEXPORT jintArray JNICALL NATIVE(summarize)(JNIEnv *env, jclass cls, jbyteArra
     jbyte *s = (*env)->GetByteArrayElements(env, sram, NULL);
     smz3_summary sum;
     smz3_summarize((const uint8_t *)w, (size_t)wl, (const uint8_t *)s, (size_t)sl, &sum);
+    if (g_goal.kind != GOAL_NONE && smz_goal_done(&g_goal, (const uint8_t *)w, (size_t)wl, (const uint8_t *)s, (size_t)sl)) sum.finished = 1;
     (*env)->ReleaseByteArrayElements(env, wram, w, JNI_ABORT);
     (*env)->ReleaseByteArrayElements(env, sram, s, JNI_ABORT);
 
-    jint out[6] = {(jint)sum.game, sum.started, (jint)sum.zelda_cleared, (jint)sum.zelda_total,
+    jint out[6] = {(jint)(sum.finished ? SMZ3_GAME_CREDITS : sum.game), sum.started, (jint)sum.zelda_cleared, (jint)sum.zelda_total,
                    (jint)sum.metroid_cleared, (jint)sum.metroid_total};
     jintArray result = (*env)->NewIntArray(env, 6);
     (*env)->SetIntArrayRegion(env, result, 0, 6, out);
@@ -342,7 +384,7 @@ JNIEXPORT jobjectArray JNICALL NATIVE(helpTexts)(JNIEnv *env, jclass cls, jintAr
 
 static SmzUi g_ui;
 
-JNIEXPORT void JNICALL NATIVE(uiInit)(JNIEnv *env, jclass cls) { ui_init(&g_ui); }
+JNIEXPORT void JNICALL NATIVE(uiInit)(JNIEnv *env, jclass cls) { ui_init(&g_ui); g_ui.flags = 1; g_ui.rings = 1; }
 
 JNIEXPORT void JNICALL NATIVE(uiSetSlot)(JNIEnv *env, jclass cls, jint i, jboolean used, jstring name, jstring summary)
 {
@@ -510,7 +552,7 @@ JNIEXPORT jstring JNICALL NATIVE(uiRunLabel)(JNIEnv *env, jclass cls) { return (
 JNIEXPORT jint JNICALL NATIVE(uiOption)(JNIEnv *env, jclass cls, jint opt) { return opt >= 0 && opt < UI_OPT_COUNT ? g_ui.value[opt] : 0; }
 JNIEXPORT void JNICALL NATIVE(uiSetSlotCount)(JNIEnv *env, jclass cls, jint n) { ui_set_slot_count(&g_ui, n); }
 /* The slot the menu is on: the highlighted one in the list, the opened one in its menus. */
-JNIEXPORT jint JNICALL NATIVE(uiSlot)(JNIEnv *env, jclass cls) { return g_ui.screen == UI_SLOTS_SCREEN ? g_ui.slot_cursor : g_ui.screen == UI_SLOT_MENU || g_ui.screen == UI_CONFIRM ? g_ui.active_slot : -1; }
+JNIEXPORT jint JNICALL NATIVE(uiSlot)(JNIEnv *env, jclass cls) { return g_ui.screen == UI_SLOTS_SCREEN ? (g_ui.daily_sel ? -1 : g_ui.slot_cursor) : g_ui.screen == UI_SLOT_MENU || g_ui.screen == UI_CONFIRM ? g_ui.active_slot : -1; }
 JNIEXPORT jint JNICALL NATIVE(uiScreen)(JNIEnv *env, jclass cls) { return g_ui.screen; }
 
 JNIEXPORT jstring JNICALL NATIVE(romName)(JNIEnv *env, jclass cls, jstring json, jstring seed)
@@ -520,5 +562,41 @@ JNIEXPORT jstring JNICALL NATIVE(romName)(JNIEnv *env, jclass cls, jstring json,
     if (smz_run_rom_name(j, sd, buf, sizeof buf) < 0) buf[0] = 0;
     (*env)->ReleaseStringUTFChars(env, json, j);
     (*env)->ReleaseStringUTFChars(env, seed, sd);
+    return (*env)->NewStringUTF(env, buf);
+}
+
+/* ---- the daily challenge (core/ui/smz3_daily.h) */
+
+JNIEXPORT void JNICALL NATIVE(uiDailyEnable)(JNIEnv *env, jclass cls, jboolean on) { ui_daily_enable(&g_ui, on); }
+
+/* The /api/daily answer (null: offline) with the device clock at the answer, and whether the daily slot holds this window's run. */
+JNIEXPORT void JNICALL NATIVE(uiDailySet)(JNIEnv *env, jclass cls, jstring json, jlong nowMs, jboolean hasRun)
+{
+    SmzDailyInfo d;
+    memset(&d, 0, sizeof d);
+    d.loaded = -1;
+    const char *j = json ? (*env)->GetStringUTFChars(env, json, NULL) : NULL;
+    if (j) smz_daily_parse_info(j, nowMs, &d);
+    if (j) (*env)->ReleaseStringUTFChars(env, json, j);
+    ui_daily_set(&g_ui, &d, hasRun);
+}
+
+JNIEXPORT jstring JNICALL NATIVE(uiDailyWindow)(JNIEnv *env, jclass cls) { return (*env)->NewStringUTF(env, g_ui.daily.window); }
+
+/* The settings JSON of the challenge run in the app's format: the menu, set from the server's settings (the player's sprites
+ * kept), then marked with the goal. "" when it does not fit. */
+JNIEXPORT jstring JNICALL NATIVE(dailySettingsJson)(JNIEnv *env, jclass cls, jstring serverSettings, jstring check)
+{
+    static SmzUi u;
+    char buf[4096];
+    const char *s = (*env)->GetStringUTFChars(env, serverSettings, NULL), *c = (*env)->GetStringUTFChars(env, check, NULL);
+    u = g_ui;
+    ui_preset(&u, 1);
+    ui_apply_run_settings(&u, s);
+    u.value[UIO_LINK] = g_ui.value[UIO_LINK]; u.value[UIO_SAMUS] = g_ui.value[UIO_SAMUS];
+    u.value[UIO_PLANDO] = 0;
+    if (ui_settings_json(&u, 1, buf, sizeof buf) < 0 || smz_daily_mark_settings(buf, sizeof buf, c, s)) buf[0] = 0;
+    (*env)->ReleaseStringUTFChars(env, serverSettings, s);
+    (*env)->ReleaseStringUTFChars(env, check, c);
     return (*env)->NewStringUTF(env, buf);
 }

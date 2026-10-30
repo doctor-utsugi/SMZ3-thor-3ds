@@ -7,8 +7,9 @@
 #define EAST_CRATERIA 46
 #define NORMAL_GAMEPLAY 8
 
-/* where each Super Metroid area's map tile grid starts on the full-size map */
-static const int SM_ORIGINS[5][2] = {{998, 80}, {902, 656}, {1894, 1296}, {2086, -240}, {1798, 656}};
+/* where each Super Metroid area's map tile grid starts on the full-size map: Crateria, Brinstar, Norfair, Wrecked Ship, Maridia, Tourian */
+static const int SM_ORIGINS[6][2] = {{998, 80}, {902, 656}, {1894, 1296}, {2086, -240}, {1798, 656}, {900, 84}};
+#define SM_AREAS 6
 
 static const char *const DUNGEON_NAMES[] = {
     "Hyrule Castle", "Eastern Palace", "Desert Palace", "Castle Tower", "Swamp Palace", "Palace of Darkness", "Misery Mire",
@@ -131,7 +132,7 @@ static void update_metroid(SmzDiscovery *d, const uint8_t *w)
     if (!r) return;
     add_room(d, room);
     d->area = r->area;
-    if (r->area < 0 || r->area > 4) return;
+    if (r->area < 0 || r->area >= SM_AREAS) return;
     float tx = (float)u16(w, 0x7A1) + (float)u16(w, 0xAF6) / 256.0f, ty = (float)u16(w, 0x7A3) + (float)u16(w, 0xAFA) / 256.0f;
     d->x = (SM_ORIGINS[r->area][0] - 16 + 32 * (tx + room_col(r) - r->mx)) / 2.0f;
     d->y = (SM_ORIGINS[r->area][1] - 16 + 32 * ty) / 2.0f;
@@ -194,7 +195,7 @@ int smz_disc_rects(const SmzDiscovery *d, SmzRect *out, int cap)
     int n = 0;
     for (int i = 0; i < d->n_rooms && n < cap; i++) {
         const SmzSmRoom *r = find_room(d, d->rooms[i]);
-        if (r && r->area >= 0 && r->area <= 4) room_rect(r, &out[n++]);
+        if (r && r->area >= 0 && r->area < SM_AREAS) room_rect(r, &out[n++]);
     }
     float cell = 958.0f / 8 / 2;
     for (int s = 0; s < 128 && n < cap; s++) {
@@ -213,7 +214,7 @@ int smz_disc_rects(const SmzDiscovery *d, SmzRect *out, int cap)
 int smz_disc_area_box(const SmzDiscovery *d, int game, SmzRect *out)
 {
     if (game == 1) { *out = (SmzRect){0, 0, 480, 958}; return 1; }
-    if (d->area < 0 || d->area > 4) return 0;
+    if (d->area < 0 || d->area >= SM_AREAS) return 0;
     float x0 = 1e9f, y0 = 1e9f, x1 = -1e9f, y1 = -1e9f;
     for (int i = 0; i < d->data->n_rooms; i++) {
         const SmzSmRoom *r = &d->data->rooms[i];
@@ -231,7 +232,7 @@ int smz_disc_area_box(const SmzDiscovery *d, int game, SmzRect *out)
 int smz_disc_metroid_room_centre(const SmzDiscovery *d, int ptr, float *x, float *y)
 {
     const SmzSmRoom *r = find_room(d, ptr);
-    if (!r || r->area < 0 || r->area > 4) return 0;
+    if (!r || r->area < 0 || r->area >= SM_AREAS) return 0;
     SmzRect q;
     room_rect(r, &q);
     *x = q.x + 8.0f * r->w; *y = q.y + 8.0f * r->h;

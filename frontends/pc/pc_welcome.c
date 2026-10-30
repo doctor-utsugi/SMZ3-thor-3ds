@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include "pc_gfx.h"
+#include "pc_help.h"
 #include "pc_welcome.h"
 #include "smz3_md5.h"
 #include "smz3_romsetup.h"
@@ -157,10 +158,14 @@ static void chamfer_box(float k, float ox, float oy, float x, float y, float w, 
 
 static void hgrad(float k, float ox, float oy, float x, float y, float w, float h, float top_cut, SDL_Color a, SDL_Color b)
 {
-    for (int i = 0; i < (int)w; i++) {
-        float edge = i < w - 1 - i ? i : w - 1 - i, skip = edge < top_cut ? top_cut - edge : 0;
-        rect(k, ox, oy, x + i, y + skip, 1, h - skip, mix(a, b, i / w));
-    }
+    float c = top_cut, tl = c / w;
+    SDL_Color m1 = mix(a, b, tl), m2 = mix(a, b, 1 - tl);
+    float top[8] = {ox + (x + c) * k, oy + y * k, ox + (x + w - c) * k, oy + y * k, ox + (x + w) * k, oy + (y + c) * k, ox + x * k, oy + (y + c) * k};
+    SDL_Color tc[4] = {m1, m2, b, a};
+    gfx_quad(top, tc);
+    float bot[8] = {ox + x * k, oy + (y + c) * k, ox + (x + w) * k, oy + (y + c) * k, ox + (x + w) * k, oy + (y + h) * k, ox + x * k, oy + (y + h) * k};
+    SDL_Color bc[4] = {a, b, b, a};
+    gfx_quad(bot, bc);
 }
 
 static void disc(float k, float ox, float oy, float cx, float cy, float r, SDL_Color c)
@@ -174,13 +179,13 @@ static void disc(float k, float ox, float oy, float cx, float cy, float r, SDL_C
 static void backdrop(float k, float ox, float oy, float t, float fade)
 {
     rect(k, ox, oy, 0, 0, 320, 240, rgba(0x0A, 0x0E, 0x15, 1));
-    for (int y = 0; y < 90; y += 2) {
-        float f = 1 - y / 90.0f;
-        rect(k, ox, oy, 0, y, 320, 2, rgba(0x2A, 0x21, 0x12, f * f * 0.9f * fade));
-    }
-    for (int y = 0; y < 70; y += 2) {
-        float f = 1 - y / 70.0f;
-        rect(k, ox, oy, 0, 240 - y - 2, 320, 2, rgba(0x0F, 0x2A, 0x2C, f * f * 0.8f * fade));
+    {
+        float top[8] = {ox, oy, ox + 320 * k, oy, ox + 320 * k, oy + 90 * k, ox, oy + 90 * k};
+        SDL_Color tc[4] = {rgba(0x2A, 0x21, 0x12, 0.9f * fade), rgba(0x2A, 0x21, 0x12, 0.9f * fade), rgba(0x2A, 0x21, 0x12, 0), rgba(0x2A, 0x21, 0x12, 0)};
+        gfx_quad(top, tc);
+        float bot[8] = {ox, oy + 170 * k, ox + 320 * k, oy + 170 * k, ox + 320 * k, oy + 240 * k, ox, oy + 240 * k};
+        SDL_Color bc[4] = {rgba(0x0F, 0x2A, 0x2C, 0), rgba(0x0F, 0x2A, 0x2C, 0), rgba(0x0F, 0x2A, 0x2C, 0.8f * fade), rgba(0x0F, 0x2A, 0x2C, 0.8f * fade)};
+        gfx_quad(bot, bc);
     }
     for (int i = 0; i <= 20; i++) {
         float d = fabsf(i * 16 - 160) / 160.0f, a = 0.05f * (1 - d * d) * fade;
@@ -203,13 +208,32 @@ void welcome_draw(float k, float ox, float oy)
     if (out >= 1) { active = 0; fx_screen_changed(); return; }
     int ready = hk.ready();
     backdrop(k, ox, oy, t, fade_in);
+    {   /* Samus on the left, Zelda on the right, split by a slanted seam */
+        float lit = 0.5f + 0.5f * sinf(t * 2.2f), s0 = 187, s1 = 133;
+        float L[8] = {ox, oy, ox + s0 * k, oy, ox + s1 * k, oy + 240 * k, ox, oy + 240 * k};
+        SDL_Color lc[4] = {rgba(0x4A, 0x1C, 0x10, 0.28f * fade_in), rgba(0x4A, 0x1C, 0x10, 0.28f * fade_in), rgba(0x4A, 0x1C, 0x10, 0.8f * fade_in), rgba(0x4A, 0x1C, 0x10, 0.8f * fade_in)};
+        gfx_quad(L, lc);
+        float R_[8] = {ox + s0 * k, oy, ox + 320 * k, oy, ox + 320 * k, oy + 240 * k, ox + s1 * k, oy + 240 * k};
+        SDL_Color rc[4] = {rgba(0x0F, 0x3A, 0x24, 0.28f * fade_in), rgba(0x0F, 0x3A, 0x24, 0.28f * fade_in), rgba(0x0F, 0x3A, 0x24, 0.8f * fade_in), rgba(0x0F, 0x3A, 0x24, 0.8f * fade_in)};
+        gfx_quad(R_, rc);
+        float gl[8] = {ox + (s0 - 5) * k, oy, ox + (s0 + 5) * k, oy, ox + (s1 + 5) * k, oy + 240 * k, ox + (s1 - 5) * k, oy + 240 * k};
+        SDL_Color gc = rgba(0xF2, 0xA3, 0x3A, 0.14f * fade_in * lit);
+        SDL_Color gcs[4] = {gc, gc, gc, gc};
+        gfx_quad(gl, gcs);
+        float sm[8] = {ox + (s0 - 0.5f) * k, oy, ox + (s0 + 0.5f) * k, oy, ox + (s1 + 0.5f) * k, oy + 240 * k, ox + (s1 - 0.5f) * k, oy + 240 * k};
+        SDL_Color sc = rgba(0xFF, 0xE7, 0xA8, 0.55f * fade_in + 0.3f * lit);
+        SDL_Color scs[4] = {sc, sc, sc, sc};
+        gfx_quad(sm, scs);
+    }
     float glow = ready ? 0.5f + 0.5f * sinf(since(ready_since) * 3.2f) : 0;
     float slide = (1 - fade_in) * 14;
-    text(k, ox, oy, 160, 7 - slide, 7, ready ? rgba(0x3F, 0xD0, 0x8B, fade_in) : rgba(0x6F, 0x7D, 0x93, fade_in), 1, ready ? "BOTH ROMS ARE READY" : "FIRST, YOUR TWO ROM FILES");
-    text(k, ox, oy, 160, 19 - slide + 1.5f, 28, rgba(0x8A, 0x5A, 0x14, fade_in), 1, "SMZ3");
-    text(k, ox, oy, 160, 19 - slide, 28, rgba(0xF2, 0xA3, 0x3A, fade_in), 1, "SMZ3");
-    text(k, ox, oy, 160, 52 - slide, 8, rgba(0x87, 0x93, 0xA6, fade_in), 1,
-         ready ? "Checksums match. The ROMs live in your data folder now." : "Drop them on the window, or browse. They are kept for good.");
+    float lx = 92, ly = 8 - slide;
+    float breathe = 0.5f + 0.5f * sinf(t * 1.6f);
+    for (int q = 4; q >= 1; q--) disc(k, ox, oy, lx + 27, ly + 27, 27 + q * 3, rgba(0x3F, 0xD0, 0x8B, (0.03f + 0.03f * breathe) * fade_in / q));
+    gfx_logo(ox + lx * k, oy + ly * k, 54 * k, fade_in);
+    text(k, ox, oy, lx + 64 + 1.5f, ly + 6 + 1.5f, 24, rgba(0x8A, 0x5A, 0x14, fade_in), 0, "SMZ3");
+    text(k, ox, oy, lx + 64, ly + 6, 24, rgba(0xF2, 0xA3, 0x3A, fade_in), 0, "SMZ3");
+    text(k, ox, oy, lx + 65, ly + 42, 8, ready ? rgba(0x3F, 0xD0, 0x8B, fade_in) : rgba(0x87, 0x93, 0xA6, fade_in), 0, ready ? "Both ROMs ready" : "Add your two ROMs");
 
     static const SDL_Color HEAD_A[2] = {{0xF2, 0xA3, 0x3A, 255}, {0x3F, 0xD0, 0x8B, 255}};
     static const SDL_Color HEAD_B[2] = {{0xD4, 0x56, 0x2A, 255}, {0xC9, 0xB2, 0x3A, 255}};
@@ -249,11 +273,10 @@ void welcome_draw(float k, float ox, float oy)
         snprintf(pg, sizeof pg, "%d / 2", i + 1);
         text(k, ox, oy, x + w - 8, yy + 5, 6, htx, 2, pg);
         char line_[64], m[24];
-        text(k, ox, oy, x + 8, yy + 20, 6, rgba(0x6F, 0x7D, 0x93, appear), 0, "NEEDS");
-        text(k, ox, oy, x + 8, yy + 27, 8, rgba(0xE8, 0xEC, 0xF2, appear), 0, NEEDS[i]);
+        text(k, ox, oy, x + 8, yy + 22, 8, rgba(0xE8, 0xEC, 0xF2, appear), 0, NEEDS[i]);
         short_md5(WANT_MD5[i], m);
         snprintf(line_, sizeof line_, "md5 %s", m);
-        text(k, ox, oy, x + 8, yy + 38, 7, rgba(0x6F, 0x7D, 0x93, appear), 0, line_);
+        text(k, ox, oy, x + 8, yy + 33, 7, rgba(0x6F, 0x7D, 0x93, appear), 0, line_);
         float cx = x + w / 2, cy = yy + 64;
         if (s_ == EMPTY) {
             float pulse = 0.6f + 0.4f * sinf(t * 2.6f + i);
@@ -292,7 +315,7 @@ void welcome_draw(float k, float ox, float oy)
         float sheen = fmodf(since(ready_since) * 0.7f, 1.8f) - 0.3f;   /* a light sweeps across */
         if (sheen > 0 && sheen < 1) rect(k, ox, oy, x + sheen * w - 7, by, 14, bh, rgba(0xFF, 0xF3, 0xD0, 0.5f));
         if (focus == 1) border(k, ox, oy, x - 1.5f, by - 1.5f, w + 3, bh + 3, 1.4f, rgba(0xFF, 0xF3, 0xD0, 0.8f + 0.2f * glow));
-        text(k, ox, oy, 198.5f, by + 5, 15, rgba(0x2A, 0x1A, 0x08, 1), 1, "> PLAY!");
+        text(k, ox, oy, 198.5f, by + 4, 15, rgba(0x2A, 0x1A, 0x08, 1), 1, "> PLAY!");
         for (int i = 0; i < 5; i++) {   /* sparks rising from the panel */
             float ph = fmodf(since(ready_since) * 0.45f + i * 0.21f, 1);
             rect(k, ox, oy, 115 + i * 44 + sinf(i * 3.1f) * 6, by - 2 - ph * 34, 1.8f, 1.8f,
@@ -300,11 +323,14 @@ void welcome_draw(float k, float ox, float oy)
         }
     } else {
         chamfer_box(k, ox, oy, 93, by, 211, bh, 0, 1, rgba(0x25, 0x32, 0x4A, fade_in), rgba(0x10, 0x16, 0x1F, fade_in));
-        text(k, ox, oy, 198.5f, by + 8, 9, rgba(0x5A, 0x66, 0x78, fade_in), 1, "ADD BOTH ROMS TO PLAY");
+        text(k, ox, oy, 198.5f, by + 8, 9, rgba(0x5A, 0x66, 0x78, fade_in), 1, "ADD BOTH ROMS");
     }
     chamfer_box(k, ox, oy, 16, by, 70, bh, 4, focus == 0 ? 2 : 1, rgba(0x4F, 0xC3, 0xF7, fade_in * (focus == 0 ? 1 : 0.55f)), rgba(0x1D, 0x2A, 0x3F, fade_in));
     text(k, ox, oy, 51, by + 7, 10, rgba(0xE8, 0xEC, 0xF2, fade_in), 1, "Browse");
-    text(k, ox, oy, 160, 226, 6.5f, rgba(0x6F, 0x7D, 0x93, fade_in), 1, ready ? "A OR B: PLAY   DROP NEW FILES TO REPLACE A ROM" : "A BROWSE   DROP FILES, A ZIP OR A FOLDER");
+    {
+        static const HelpItem NOT_READY[] = {{"A", "Enter", "Browse"}}, READY[] = {{"A", "Enter", "Choose"}, {"LR", "<", "Switch"}};
+        if (ready) help_bar(ox, oy + 224 * k, 320 * k, 16 * k, READY, 2); else help_bar(ox, oy + 224 * k, 320 * k, 16 * k, NOT_READY, 1);
+    }
 
     /* sparkles */
     static Uint32 last;
@@ -325,6 +351,17 @@ void fx_screen_changed(void) { fade_start = SDL_GetTicks(); }
 
 void fx_draw(int win_w, int win_h)
 {
-    float a = 1 - clamp01(since(fade_start) / 0.22f);
-    if (a > 0.01f) gfx_rect(0, 0, (float)win_w, (float)win_h, rgba(0x10, 0x14, 0x1C, a * 0.8f));
+    float t = since(fade_start) / 0.5f;
+    if (t >= 1) return;
+    float p = ease(t), w = (float)win_w, h = (float)win_h, band = h / 4, slope = 0.22f;
+    for (float y = 0; y < h; y += 2) {
+        int b = (int)(y / band);   /* the four bands lock in one after another */
+        float edge = p * (w + h * slope + 0.18f * w * 3) - 0.18f * w * b - y * slope;
+        float cover = edge < 0 ? 0 : edge;
+        if (cover < w) gfx_rect(cover, y, w - cover, 2, rgba(0x0A, 0x0E, 0x15, 0.96f));
+        if (edge > -8 && edge < w) {
+            gfx_rect(edge - 5, y, 14, 2, rgba(0xF2, 0xA3, 0x3A, 0.22f * (1 - t)));
+            gfx_rect(edge, y, 3, 2, rgba(0xFF, 0xE7, 0xA8, 1 - t * 0.6f));
+        }
+    }
 }

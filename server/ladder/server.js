@@ -4,6 +4,7 @@
 //   GET  /api/ladder  ?kind=original | ?kind=monthly&month=YYYY-MM | ?kind=weekly&week=YYYY-Www
 //   GET  /api/monthly                              -> {month, seed, months:[...]}
 //   GET  /api/weekly                               -> {week, seed, weeks:[...], endsAt}
+//   /api/daily..., /api/tokens: the daily timed challenge, see daily.js
 // A finished run is only accepted with a token the server signed when the run began, and its time
 // cannot be longer than the wall clock time since then or shorter than MIN_MS. It must also carry a proof of run, the
 // checks it cleared with their play times; smz3check replays them against the known seed. A proof that cannot have
@@ -87,6 +88,7 @@ function ladder(kind, month) {
 
 // The rules a ladder fixes, as the settings the checker rebuilds the seed from.
 function proofSettings(kind, period, seed) {
+  if (kind === 'daily') return dailyRoutes.settingsOf(period);
   if (kind === 'original' && !/^\d{1,9}$/.test(String(seed || ''))) return '{"nologic":1}';
   const s = { seed: kind === 'original' ? String(seed) : seedOf(period) };
   if (kind === 'weekly') Object.assign(s, { ganonCrystals: 2, ganonsTowerCrystals: 2, tourianBosses: 1 });
@@ -120,6 +122,9 @@ function readJson(req, res, then) {
   });
 }
 
+const CLOCK_SHIFT = Number(process.env.DAILY_CLOCK_SHIFT_MS || 0);   // local tests only: moves the daily challenge's clock
+const dailyRoutes = require('./daily')({ DIR, hmac, send, readJson, onlyKeys, limited, clean, verifyProof, now: CLOCK_SHIFT ? () => Date.now() + CLOCK_SHIFT : undefined });
+
 const page = fs.readFileSync(path.join(__dirname, 'index.html'), 'utf8');
 const periods = kind => [...new Set(db.runs.filter(r => r.kind === kind).map(periodOfRun).concat(periodNow(kind, Date.now())))].sort().reverse();
 const months = () => periods('monthly');
@@ -130,6 +135,7 @@ http.createServer((req, res) => {
   if (url.pathname.startsWith('/api/')) console.log(new Date().toISOString(), req.method, url.pathname);
   if (req.method === 'OPTIONS') return send(res, 204, '');
   if (req.method === 'GET' && url.pathname === '/') return send(res, 200, page, 'text/html');
+  if (url.pathname.startsWith('/api/daily') || url.pathname === '/api/tokens') { if (dailyRoutes(req, res, url, ip)) return; }
   if (req.method === 'GET' && url.pathname === '/api/monthly') {
     const month = monthOf(Date.now());
     return send(res, 200, { month, seed: seedOf(month), months: months() });

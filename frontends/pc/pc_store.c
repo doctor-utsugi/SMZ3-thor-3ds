@@ -21,6 +21,27 @@ static void mkdirs(const char *path)
         if (*p == '/') { *p = 0; mkdir(tmp, 0755); *p = '/'; }
 }
 
+/* The folder of the running program ("" when unknown). */
+const char *store_exe_dir(void)
+{
+    static char exe[512];
+    if (exe[0]) return exe;
+#ifdef _WIN32
+    DWORD n = GetModuleFileNameA(NULL, exe, sizeof exe - 1);
+    for (DWORD i = 0; i < n; i++) if (exe[i] == '\\') exe[i] = '/';
+#elif defined(__APPLE__)
+    uint32_t sz = sizeof exe - 1;
+    ssize_t n = _NSGetExecutablePath(exe, &sz) == 0 ? (ssize_t)strlen(exe) : -1;
+#else
+    ssize_t n = readlink("/proc/self/exe", exe, sizeof exe - 1);
+#endif
+    if (n <= 0) { exe[0] = 0; return exe; }
+    exe[n] = 0;
+    char *slash = strrchr(exe, '/');
+    if (slash) *slash = 0;
+    return exe;
+}
+
 const char *store_dir(void)
 {
     static char dir[768];
@@ -64,7 +85,7 @@ const char *store_dir(void)
 
 const char *store_path(const char *fmt, ...)
 {
-    static char path[1024];
+    static _Thread_local char path[1024];   /* one per thread: the online requests run beside the menu */
     char rel[512];
     va_list ap;
     va_start(ap, fmt);

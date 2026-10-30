@@ -43,6 +43,18 @@ int main(void)
     SmzRect box;
     assert(smz_disc_area_box(&d, 2, &box) && box.w > 100);
 
+    /* Tourian (area 5) is placed too: its rooms count and Samus has a position there */
+    const SmzSmRoom *tr = NULL;
+    for (int i = 0; i < PC_MAP_DATA.n_rooms; i++) if (PC_MAP_DATA.rooms[i].area == 5) { tr = &PC_MAP_DATA.rooms[i]; break; }
+    assert(tr);
+    w[0x79B] = tr->ptr & 255; w[0x79C] = tr->ptr >> 8; w[0x7A1] = (uint8_t)tr->mx; w[0x7A3] = (uint8_t)tr->my;   /* Samus in the room's top-left tile */
+    before = d.n_rooms;
+    smz_disc_update(&d, w, sizeof w, 2);
+    smz_disc_update(&d, w, sizeof w, 2);
+    assert(d.n_rooms == before + 1 && d.area == 5 && d.has_position);
+    assert(d.x > 600 && d.x < 800 && d.y > 150 && d.y < 420);   /* under Crateria on the half-size map */
+    assert(smz_disc_area_box(&d, 2, &box) && box.w > 100);
+
     /* save and load keep the sets */
     char text[4096];
     assert(smz_disc_save(&d, text, sizeof text) > 0);

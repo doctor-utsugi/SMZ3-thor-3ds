@@ -5,6 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "smz3_state.h"
+#include "smz3_goal.h"
 
 #define SMZ_TRK_RECENT 8
 #define SMZ_TRK_MAX_LOCS 512
@@ -26,6 +27,8 @@ typedef struct {
     int64_t elapsed_ms;                      /* run play time including this session */
     int64_t save_ms; int save_zelda, save_metroid;   /* the game's own save: valid when save_ms > 0 */
     int save_changed;                        /* set when the save RAM changed during the last tick */
+    SmzGoal goal;                            /* a daily challenge's goal (set by the host after reset); GOAL_NONE otherwise */
+    int goal_met;                            /* stays set once the goal was seen: the run is over */
     /* internals */
     int64_t base_ms, pending_ms, live_at_ms, now_ms;
     int have_live, last_frame, have_frame, running;
@@ -53,6 +56,9 @@ int smz_tracker_logic_items(const SmzTracker *t, const uint8_t *wram, size_t wra
 
 /* Which Super Metroid bosses (bit 0 Kraid, 1 Phantoon, 2 Draygon, 3 Ridley) and ALttP crystals are done. */
 int smz_boss_mask(const uint8_t *wram, size_t wram_len, const uint8_t *sram, size_t sram_len, int game);
+/* A mid-game daily start: keeps the Super Metroid bosses in dead_mask (smz_boss_mask bits) dead, in work RAM while Super
+ * Metroid is played and in its save copy otherwise. Called while the run is played; 1 when it changed memory. */
+int smz_prepared_apply(int dead_mask, uint8_t *wram, size_t wram_len, uint8_t *sram, size_t sram_len);
 int smz_crystal_mask(const uint8_t *wram, size_t wram_len, const uint8_t *sram, size_t sram_len, int game);
 
 #endif

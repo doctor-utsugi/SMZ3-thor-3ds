@@ -115,6 +115,7 @@ int main(int argc, char **argv)
         smz_plando_parse(&pl, (const char *)yaml, yl, err, sizeof err);
         smz_plando_settings(&pl, &s);
         smz_patch_cfg_defaults(&cfg, &s);
+        cfg.sm_default_controls = 1;   /* the menu path sets it for plando runs too */
         if (smz_generate_plando(b, &seed, sm, z3, &pl, &cfg, ips, NULL, NULL, NULL)) return 6;
         int pbad = memcmp(a, b, sizeof a) != 0;
         printf(pbad ? "plando DIFFERENT\n" : "plando host path identical\n");

@@ -70,6 +70,36 @@ int main(void)
 
     smz_tracker_commit(&t);
     assert(t.pending_ms == 0 && t.base_ms > 5000);
+
+    /* the end of the run: Link reaches the Triforce room once Super Metroid is done */
+    smz_tracker_reset(&t, 0, 0, 0, 0);
+    wram[0x10] = 0x19;                      /* Triforce room module, Super Metroid not done yet */
+    frame(); smz_tracker_tick(&t, wram, sizeof wram, sram, sizeof sram, 100, 1);
+    frame(); smz_tracker_tick(&t, wram, sizeof wram, sram, sizeof sram, 100, 1);
+    assert(t.game == SMZ3_GAME_ZELDA);
+    sram[0x3402] = 1;                       /* Mother Brain is dead */
+    frame(); smz_tracker_tick(&t, wram, sizeof wram, sram, sizeof sram, 100, 1);
+    assert(t.game == SMZ3_GAME_CREDITS && t.pending_ms == 200);   /* the read that sees the end still counts */
+    frame(); smz_tracker_tick(&t, wram, sizeof wram, sram, sizeof sram, 100, 1);
+    assert(t.pending_ms == 200);            /* the ending scene is not counted */
+
+    /* or Samus enters her ship once both bosses are down */
+    smz_tracker_reset(&t, 0, 0, 0, 0);
+    memset(wram, 0, sizeof wram); memset(sram, 0, sizeof sram);
+    sram[0x33FE] = 0xFF; wram[0x998] = 8;   /* Super Metroid, in game */
+    sram[0x3402] = 1;
+    wram[0xFB2] = 0x4F; wram[0xFB3] = 0xAA;
+    frame(); smz_tracker_tick(&t, wram, sizeof wram, sram, sizeof sram, 100, 1);
+    assert(t.game == SMZ3_GAME_METROID);    /* Ganon is still alive */
+    sram[0x3506] = 1;
+    wram[0xFB2] = 0;
+    frame(); smz_tracker_tick(&t, wram, sizeof wram, sram, sizeof sram, 100, 1);
+    assert(t.game == SMZ3_GAME_METROID);    /* both done, still running to the ship */
+    wram[0xFB2] = 0x4F;
+    frame(); smz_tracker_tick(&t, wram, sizeof wram, sram, sizeof sram, 100, 1);
+    assert(t.game == SMZ3_GAME_CREDITS);
+    sram[0x33FE] = 0x11;                    /* the credits still read as the end */
+    assert(smz3_run_finished(wram, sizeof wram, sram, sizeof sram));
     printf("tracker ok\n");
     return 0;
 }

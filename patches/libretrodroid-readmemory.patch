@@ -12,10 +12,10 @@ index 536c8ed..a03865b 100644
      }
  }
 diff --git a/libretrodroid/src/main/cpp/libretrodroid.cpp b/libretrodroid/src/main/cpp/libretrodroid.cpp
-index 60640c4..90a36ad 100644
+index 60640c4..839e5c2 100644
 --- a/libretrodroid/src/main/cpp/libretrodroid.cpp
 +++ b/libretrodroid/src/main/cpp/libretrodroid.cpp
-@@ -181,6 +181,20 @@ std::pair<int8_t*, size_t> LibretroDroid::serializeSRAM() {
+@@ -181,6 +181,34 @@ std::pair<int8_t*, size_t> LibretroDroid::serializeSRAM() {
      return std::pair(data, size);
  }
  
@@ -33,10 +33,24 @@ index 60640c4..90a36ad 100644
 +    return std::vector<int8_t>(data + offset, data + offset + length);
 +}
 +
++bool LibretroDroid::writeMemory(unsigned id, size_t offset, const int8_t* bytes, size_t length) {
++    std::lock_guard<std::mutex> lock(coreLock);
++
++    size_t size = core->retro_get_memory_size(id);
++    auto* data = (int8_t*) core->retro_get_memory_data(id);
++
++    if (data == nullptr || offset >= size || length > size - offset) {
++        return false;
++    }
++
++    std::copy(bytes, bytes + length, data + offset);
++    return true;
++}
++
  void LibretroDroid::onSurfaceChanged(unsigned int width, unsigned int height) {
      LOGD("Performing libretrodroid onSurfaceChanged");
      video->updateScreenSize(width, height);
-@@ -491,6 +505,7 @@ void LibretroDroid::step() {
+@@ -491,6 +519,7 @@ void LibretroDroid::step() {
  }
  
  float LibretroDroid::getAspectRatio() {
@@ -44,7 +58,7 @@ index 60640c4..90a36ad 100644
      float gameAspectRatio = Environment::getInstance().retrieveGameSpecificAspectRatio();
      return gameAspectRatio > 0 ? gameAspectRatio : defaultAspectRatio;
  }
-@@ -643,6 +658,13 @@ void LibretroDroid::setViewport(Rect viewportRect) {
+@@ -643,6 +672,13 @@ void LibretroDroid::setViewport(Rect viewportRect) {
      }
  }
  
@@ -59,18 +73,19 @@ index 60640c4..90a36ad 100644
      this-> viewportAlignment = viewportAlignment;
  
 diff --git a/libretrodroid/src/main/cpp/libretrodroid.h b/libretrodroid/src/main/cpp/libretrodroid.h
-index b507aee..029ed38 100644
+index b507aee..1bcc16b 100644
 --- a/libretrodroid/src/main/cpp/libretrodroid.h
 +++ b/libretrodroid/src/main/cpp/libretrodroid.h
-@@ -71,6 +71,7 @@ public:
+@@ -71,6 +71,8 @@ public:
      bool unserializeState(int8_t *data, size_t size);
  
      std::pair<int8_t *, size_t> serializeSRAM();
 +    std::vector<int8_t> readMemory(unsigned id, size_t offset, size_t length);
++    bool writeMemory(unsigned id, size_t offset, const int8_t* bytes, size_t length);
      jboolean unserializeSRAM(int8_t *data, size_t size);
  
      void onSurfaceCreated();
-@@ -134,6 +135,9 @@ public:
+@@ -134,6 +136,9 @@ public:
  
      void setViewportAlignment(unsigned int viewportAlignment);
  
@@ -80,7 +95,7 @@ index b507aee..029ed38 100644
      void resetGlobalVariables();
  
      // Handle callbacks
-@@ -167,6 +171,7 @@ private:
+@@ -167,6 +172,7 @@ private:
  
      Rect viewportRect = Rect(0.0F, 0.0F, 1.0F, 1.0F);
      unsigned int viewportAlignment = V_ALIGN_CENTER;
@@ -89,13 +104,35 @@ index b507aee..029ed38 100644
      int openglESVersion = 2;
      bool skipDuplicateFrames = false;
 diff --git a/libretrodroid/src/main/cpp/libretrodroidjni.cpp b/libretrodroid/src/main/cpp/libretrodroidjni.cpp
-index 2ec15cf..7233b3f 100644
+index 2ec15cf..d6ae422 100644
 --- a/libretrodroid/src/main/cpp/libretrodroidjni.cpp
 +++ b/libretrodroid/src/main/cpp/libretrodroidjni.cpp
-@@ -282,6 +282,29 @@ JNIEXPORT jbyteArray JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_seri
+@@ -282,6 +282,51 @@ JNIEXPORT jbyteArray JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_seri
      return nullptr;
  }
  
++JNIEXPORT jboolean JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_writeMemory(
++    JNIEnv* env,
++    jclass obj,
++    jint id,
++    jint offset,
++    jbyteArray bytes
++) {
++    try {
++        jsize length = env->GetArrayLength(bytes);
++        jbyte* data = env->GetByteArrayElements(bytes, nullptr);
++        bool ok = LibretroDroid::getInstance().writeMemory(id, offset, (const int8_t*) data, length);
++        env->ReleaseByteArrayElements(bytes, data, JNI_ABORT);
++        return ok;
++
++    } catch (std::exception &exception) {
++        LOGE("Error in writeMemory: %s", exception.what());
++        JavaUtils::throwRetroException(env, ERROR_SERIALIZATION);
++    }
++
++    return false;
++}
++
 +JNIEXPORT jbyteArray JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_readMemory(
 +    JNIEnv* env,
 +    jclass obj,
@@ -122,7 +159,7 @@ index 2ec15cf..7233b3f 100644
  JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_reset(
      JNIEnv* env,
      jclass obj
-@@ -591,6 +614,14 @@ JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_setViewpor
+@@ -591,6 +636,14 @@ JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_setViewpor
      LibretroDroid::getInstance().setViewport(Rect(x, y, width, height));
  }
  
@@ -138,14 +175,15 @@ index 2ec15cf..7233b3f 100644
          JNIEnv* env,
          jclass obj,
 diff --git a/libretrodroid/src/main/cpp/libretrodroidjni.h b/libretrodroid/src/main/cpp/libretrodroidjni.h
-index 02ab0fc..999f6ef 100644
+index 02ab0fc..b1c148d 100644
 --- a/libretrodroid/src/main/cpp/libretrodroidjni.h
 +++ b/libretrodroid/src/main/cpp/libretrodroidjni.h
-@@ -27,6 +27,7 @@ JNIEXPORT jbyteArray JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_seri
+@@ -27,6 +27,8 @@ JNIEXPORT jbyteArray JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_seri
  JNIEXPORT jboolean JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_unserializeState(JNIEnv* env, jclass obj, jbyteArray data);
  JNIEXPORT jbyteArray JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_serializeSRAM(JNIEnv* env, jclass obj);
  JNIEXPORT jboolean JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_unserializeSRAM(JNIEnv* env, jclass obj, jbyteArray data);
 +JNIEXPORT jbyteArray JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_readMemory(JNIEnv* env, jclass obj, jint id, jint offset, jint length);
++JNIEXPORT jboolean JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_writeMemory(JNIEnv* env, jclass obj, jint id, jint offset, jbyteArray bytes);
  JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_onSurfaceCreated(JNIEnv* env, jclass obj);
  JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_onSurfaceChanged(JNIEnv* env, jclass obj, jint width, jint height);
  JNIEXPORT void JNICALL Java_com_swordfish_libretrodroid_LibretroDroid_pause(JNIEnv* env, jclass obj);
@@ -174,7 +212,7 @@ index 3ff492a..91b0bb9 100644
  #include "string"
  
 diff --git a/libretrodroid/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt b/libretrodroid/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt
-index 7eb8602..f7f198f 100644
+index 7eb8602..5e8fe14 100644
 --- a/libretrodroid/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt
 +++ b/libretrodroid/src/main/java/com/swordfish/libretrodroid/GLRetroView.kt
 @@ -67,6 +67,11 @@ class GLRetroView(
@@ -189,7 +227,7 @@ index 7eb8602..f7f198f 100644
      var viewportAlignment: ViewportAlignment by Delegates.observable(ViewportAlignment.CENTER) { _, _, value ->
          LibretroDroid.setViewportAlignment(value.value)
      }
-@@ -192,6 +197,13 @@ class GLRetroView(
+@@ -192,6 +197,20 @@ class GLRetroView(
          }
      }
  
@@ -200,10 +238,17 @@ index 7eb8602..f7f198f 100644
 +        }
 +    }
 +
++    /** Writes [bytes] into a libretro memory region at [offset]; false when they do not fit. */
++    fun writeMemory(id: Int, offset: Int, bytes: ByteArray, useEmulationThread: Boolean = true): Boolean {
++        return runOnEmulationThread(useEmulationThread) {
++            LibretroDroid.writeMemory(id, offset, bytes)
++        }
++    }
++
      fun reset(useEmulationThread: Boolean = true) = runOnEmulationThread(useEmulationThread) {
          LibretroDroid.reset()
      }
-@@ -504,6 +516,10 @@ class GLRetroView(
+@@ -504,6 +523,10 @@ class GLRetroView(
      }
  
      companion object {
@@ -215,7 +260,7 @@ index 7eb8602..f7f198f 100644
  
          const val MOTION_SOURCE_DPAD = LibretroDroid.MOTION_SOURCE_DPAD
 diff --git a/libretrodroid/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java b/libretrodroid/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
-index 50eafa1..c8cbdd8 100644
+index 50eafa1..0203e3b 100644
 --- a/libretrodroid/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
 +++ b/libretrodroid/src/main/java/com/swordfish/libretrodroid/LibretroDroid.java
 @@ -116,6 +116,8 @@ public class LibretroDroid {
@@ -227,11 +272,13 @@ index 50eafa1..c8cbdd8 100644
      public static native byte[] serializeState();
      public static native boolean unserializeState(byte[] state);
  
-@@ -124,6 +126,7 @@ public class LibretroDroid {
+@@ -124,6 +126,9 @@ public class LibretroDroid {
  
      public static native byte[] serializeSRAM();
      public static native boolean unserializeSRAM(byte[] sram);
 +    public static native byte[] readMemory(int id, int offset, int length);
++
++    public static native boolean writeMemory(int id, int offset, byte[] bytes);
  
      public static native void updateVariable(Variable variable);
      public static native Variable[] getVariables();

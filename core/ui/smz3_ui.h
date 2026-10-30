@@ -5,6 +5,7 @@
 
 #include <stdint.h>
 #include <stddef.h>
+#include "smz3_daily.h"
 
 #define UI_LADDER_ROWS 30
 #define UI_LADDER_SHOWN 8
@@ -20,11 +21,11 @@
 #define UI_SPEC_LEN 512
 
 typedef enum { BTN_UP, BTN_DOWN, BTN_LEFT, BTN_RIGHT, BTN_A, BTN_B, BTN_L, BTN_R } UiButton;
-typedef enum { UI_SLOTS_SCREEN, UI_SLOT_MENU, UI_CREATE, UI_SPRITES, UI_BUSY, UI_CONFIRM, UI_MODE, UI_SAVED, UI_NAME, UI_START, UI_COUNTRY, UI_ONLINE, UI_LOADCHOICE, UI_LADDER } UiScreen;
+typedef enum { UI_SLOTS_SCREEN, UI_SLOT_MENU, UI_CREATE, UI_SPRITES, UI_BUSY, UI_CONFIRM, UI_MODE, UI_SAVED, UI_NAME, UI_START, UI_COUNTRY, UI_ONLINE, UI_LOADCHOICE, UI_LADDER, UI_RULES, UI_DAILY } UiScreen;
 typedef enum { OPT_ENUM, OPT_INT, OPT_BOOL, OPT_SEED, OPT_SPRITE } OptKind;
 /* Tabs of the Create run screen. Only LEVEL_ITEMS is read from UiOptDef.level; the other tabs list their keys in UI_TABS. */
 typedef enum { LEVEL_RUN, LEVEL_ZELDA, LEVEL_METROID, LEVEL_PLAY, LEVEL_ITEMS, LEVEL_COUNT } OptLevel;
-typedef enum { ACT_NONE, ACT_CONTINUE, ACT_DELETE, ACT_GENERATE, ACT_LOAD_SAVE, ACT_LOAD_STATE, ACT_LADDER } UiAction;
+typedef enum { ACT_NONE, ACT_CONTINUE, ACT_DELETE, ACT_GENERATE, ACT_LOAD_SAVE, ACT_LOAD_STATE, ACT_LADDER, ACT_DAILY } UiAction;
 
 typedef struct {
     const char *key;             /* C# property name for logic options */
@@ -45,13 +46,14 @@ typedef struct {
 /* A saved custom: a name and its options that differ from the defaults as "Key=value,Key=value" (option keys, so the list survives new options). */
 typedef struct { char name[24]; char spec[UI_SPEC_LEN]; } UiSaved;
 
-/* kind 0 rectangle, 1 text, 2 sprite preview: draw the picture of text ("link/<name>" or "samus/<name>", file <name>.pv beside the
+/* kind 0 rectangle, 1 text, 3 gradient to the colour in align, 4 progress ring (align: percent; only hosts that set rings get it),
+ * 2 sprite preview: draw the picture of text ("link/<name>" or "samus/<name>", file <name>.pv beside the
  * .rdc: u8 width, u8 height, then width*height RGBA bytes) centred and scaled to fit the x, y, w, h box. */
 typedef struct { uint8_t kind; int16_t x, y, w, h; uint8_t color; uint8_t align; char text[64]; } UiCmd;
 enum { C_BG, C_PANEL, C_SEL, C_TEXT, C_DIM, C_ACCENT, C_WARN, C_GREEN, C_CYAN, C_TEAL, C_NAVY, C_VIOLET, C_GOLD };
 
 typedef struct { int16_t x, y, w, h; uint8_t kind; int16_t idx; } UiHit;
-enum { H_SLOT, H_MENU, H_TAB, H_ROW, H_SPRITE, H_SCROLL, H_CREATE, H_BACK, H_CHEVRON, H_CONFIRM, H_MODE, H_SAVED, H_SAVED_DEL, H_KEY, H_START, H_COUNTRY, H_ONLINE, H_LOADCHOICE, H_LADDER, H_LTAB };
+enum { H_SLOT, H_MENU, H_TAB, H_ROW, H_SPRITE, H_SCROLL, H_CREATE, H_BACK, H_CHEVRON, H_CONFIRM, H_MODE, H_SAVED, H_SAVED_DEL, H_KEY, H_START, H_COUNTRY, H_ONLINE, H_LOADCHOICE, H_LADDER, H_LTAB, H_DAILY, H_DAILY_BTN };
 
 typedef struct {
     UiScreen screen, back;
@@ -76,9 +78,14 @@ typedef struct {
     char weekly_label[16]; int weekly_seed, weekly_days;   /* the week's fixed seed, its label (e.g. 2026-W44) and the days left */
     struct { int64_t save_ms, state_ms; int save_z, save_m, state_z, state_m, zt, mt, cursor; } lc;   /* the load choice shown by UI_LOADCHOICE */
     int online_mode, online_cursor, online_gen; /* 0 ask before each run, 1 upload, 2 never; the prompt's row; 1 when the prompt came from Start */
+    int rings;                   /* the host draws progress rings (kind 4): the run list shows its percent inside one */
+    int flags;                   /* the host draws "flag/<CC>" pictures; without them countries show as their code */
     int ladder_on, ladder_tab, ladder_scroll;   /* the host can show the online tables / the tab shown (0 original, 1 monthly, 2 weekly) / first row shown */
     struct { int loaded; char label[16]; int n; struct { char name[24]; char cc[3]; int64_t ms; } row[UI_LADDER_ROWS]; } ladder[3];   /* loaded: 0 not yet, 1 ok, -1 failed */
+    int daily_on, daily_sel, daily_cursor, daily_has_run, daily_info;   /* the run list's Daily row: shown / has the cursor; its screen's button (0 Start, 1 Info, 2 Back); the host keeps an attempt; the Info page is open */
+    SmzDailyInfo daily;
     char start_label[24], notice[32];
+    int rules_scroll;            /* first row shown on the rules screen */
     int start_cursor, start_col;  /* sprite screen: row (Link, Samus, Start) and column (sprite, Random) */
     UiScreen start_from;
     uint32_t rng;
@@ -131,6 +138,13 @@ int ui_player_text(const SmzUi *u, char *out, size_t cap);
 int ui_player_dirty(SmzUi *u);
 /* 1 when the run being started uploads to the online ladder (read when the host starts generating). */
 int ui_online_now(const SmzUi *u);
+/* The daily challenge: once enabled, the run list has a Daily row on top and a token counter by the Ladder button. The host
+ * hands in each /api/daily answer (ui_daily_set) and says whether it keeps an attempt of the open window (Continue instead
+ * of Start); Start or Continue comes back as ACT_DAILY. */
+void ui_daily_enable(SmzUi *u, int on);
+void ui_daily_set(SmzUi *u, const SmzDailyInfo *d, int has_run);
+/* Sets the options from a run's settings JSON (seed, rules, logic, start items), to build the run the server made. */
+void ui_apply_run_settings(SmzUi *u, const char *settings_json);
 /* The month's fixed seed; once set, the run mode list offers "Monthly seed" (Original rules with that seed). */
 void ui_set_monthly(SmzUi *u, const char *label, int seed, int days_left);
 /* Asks which to load for a slot whose save state is ahead of its game save (times in play-time ms, counts of checks done);
