@@ -7,11 +7,14 @@ root="$(cd "$(dirname "$0")" && pwd)"
 variant="${1:-debug}"
 python3 "$root/tools/gen_app_icon.py"
 cd "$root/vendor/Lemuroid"
-git submodule update --init --depth 1
+# the CI fetches only the snes9x core of lemuroid-cores (the whole submodule is 6 GB)
+[ -e lemuroid-cores/.git ] || git submodule update --init --depth 1
 git -C ../LibretroDroid submodule update --init --depth 1
-echo "sdk.dir=$HOME/Android/Sdk" > local.properties
-echo "sdk.dir=$HOME/Android/Sdk" > ../LibretroDroid/local.properties
-export JAVA_HOME="$HOME/.gradle/jdks/eclipse_adoptium-21-amd64-linux.2"
+sdk="${ANDROID_HOME:-$HOME/Android/Sdk}"
+echo "sdk.dir=$sdk" > local.properties
+echo "sdk.dir=$sdk" > ../LibretroDroid/local.properties
+jdk="$HOME/.gradle/jdks/eclipse_adoptium-21-amd64-linux.2"
+[ -d "$jdk" ] && export JAVA_HOME="$jdk"   # elsewhere (the CI) JAVA_HOME already points at a JDK 21
 mkdir -p ../../build
 if [ "$variant" = "release" ]; then
     # Local signing key (kept out of git); packaging the 190 MB APK needs more heap than the default 2.5 GB.

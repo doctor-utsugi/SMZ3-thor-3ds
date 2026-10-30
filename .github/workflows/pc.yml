@@ -1,4 +1,4 @@
-# Builds the PC app for Linux, Windows and macOS. vendor/ is not in git: the IPS patches and map icons are copied from their source
+# Builds the PC app for Linux, Windows and macOS, the Android app and the 3DS homebrew. vendor/ is not in git: the IPS patches and map icons are copied from their source
 # repositories by tools/prepare_assets.py. The Super Metroid room table is derived from a ROM and cannot be committed, so these CI
 # builds ship an empty one (the map still works, without the discovered-room overlay of Super Metroid).
 name: pc
@@ -94,9 +94,70 @@ jobs:
         with:
           name: smz3-macos
           path: SMZ3-macos-intel.tar.gz
+  android:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Free disk space
+        run: sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/share/boost /opt/hostedtoolcache/CodeQL
+      - name: Fetch sources and assets
+        shell: bash
+        run: |
+          git clone -q https://github.com/Swordfish90/Lemuroid.git vendor/Lemuroid
+          git -C vendor/Lemuroid checkout -q 3625bc121d5d79fd4b80ce930fb0f3236c9334e8
+          # only the snes9x core of lemuroid-cores: the app packages no other
+          git clone -q --filter=blob:none --no-checkout https://github.com/Swordfish90/LemuroidCores vendor/Lemuroid/lemuroid-cores
+          git -C vendor/Lemuroid/lemuroid-cores sparse-checkout set --no-cone '/*' '!*.so' '*snes9x*.so'
+          git -C vendor/Lemuroid/lemuroid-cores checkout -q fee2e824525daa22bcf318f96127fe43fa8a15ad
+          git clone -q https://github.com/Swordfish90/LibretroDroid.git vendor/LibretroDroid
+          git -C vendor/LibretroDroid checkout -q 8835c3098514390a271e36983957f7bb5f40abf1
+          git -C vendor/Lemuroid apply "$PWD/patches/lemuroid-tracker.patch"
+          git -C vendor/LibretroDroid apply "$PWD/patches/libretrodroid-readmemory.patch"
+          git clone -q https://github.com/TheTrackerCouncil/SMZ3Randomizer.git vendor/SMZ3Randomizer
+          git -C vendor/SMZ3Randomizer checkout -q cf4a4376de9506cb41826a252bb3afb66728e82c
+          git clone -q https://github.com/TheTrackerCouncil/SMZ3CasSprites.git vendor/SMZ3CasSprites
+          git -C vendor/SMZ3CasSprites checkout -q 07995af80f3f36833cb34a413afcc84bd2435386
+          [ -f data/sm_rooms.json ] || echo '[]' > data/sm_rooms.json
+          python3 -m pip install --break-system-packages pillow || python3 -m pip install pillow
+          python3 tools/prepare_assets.py
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: '21' }
+      - name: Signing key
+        env:
+          ANDROID_KEYSTORE: ${{ secrets.ANDROID_KEYSTORE }}
+        run: echo "$ANDROID_KEYSTORE" | base64 -d > vendor/Lemuroid/release.jks
+      - run: ./build-android.sh release
+      - run: cp build/smz3-release.apk SMZ3-android-arm64.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: smz3-android
+          path: SMZ3-android-arm64.apk
+  n3ds:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch sources and assets
+        shell: bash
+        run: |
+          git clone -q https://github.com/matbo87/snes9x_3ds.git vendor/snes9x_3ds
+          git -C vendor/snes9x_3ds checkout -q a295d0225d4eb7f4449755d38c85c29dfe62d4e2
+          mkdir -p vendor/Lemuroid/lemuroid-app/src/main/assets/smz3
+          git clone -q https://github.com/TheTrackerCouncil/SMZ3Randomizer.git vendor/SMZ3Randomizer
+          git -C vendor/SMZ3Randomizer checkout -q cf4a4376de9506cb41826a252bb3afb66728e82c
+          git clone -q https://github.com/TheTrackerCouncil/SMZ3CasSprites.git vendor/SMZ3CasSprites
+          git -C vendor/SMZ3CasSprites checkout -q 07995af80f3f36833cb34a413afcc84bd2435386
+          [ -f data/sm_rooms.json ] || echo '[]' > data/sm_rooms.json
+          python3 -m pip install --break-system-packages pillow || python3 -m pip install pillow
+          python3 tools/prepare_assets.py
+      - run: ./build-3ds.sh
+      - run: cp build/snes9x_3ds.3dsx SMZ3-3ds.3dsx
+      - uses: actions/upload-artifact@v4
+        with:
+          name: smz3-3ds
+          path: SMZ3-3ds.3dsx
   release:
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [linux, windows, macos]
+    needs: [linux, windows, macos, android, n3ds]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -113,5 +174,7 @@ jobs:
           - **Linux:** `SMZ3-x86_64.AppImage`, `chmod +x` it and run it. SDL2 is inside.
           - **Windows:** unzip `SMZ3-windows-x64.zip` and run `smz3.exe` (SmartScreen may warn: More info, Run anyway).
           - **macOS (Intel, also runs on Apple silicon through Rosetta):** `tar xzf SMZ3-macos-intel.tar.gz`, `xattr -d com.apple.quarantine smz3`, `brew install sdl2`, then `./smz3`. Not signed.
+          - **Android (arm64, made for the AYN Thor):** install `SMZ3-android-arm64.apk` and pick your two ROMs (or a zip) when the app asks for them.
+          - **3DS:** copy `SMZ3-3ds.3dsx` to `sdmc:/3ds/` and the ROMs to `sdmc:/SMZ3/base`, then open it from the Homebrew Launcher.
           NOTES
           gh release create "${GITHUB_REF_NAME}" dist/* --repo "${GITHUB_REPOSITORY}" --title "SMZ3 PC ${GITHUB_REF_NAME}" --notes-file notes.md

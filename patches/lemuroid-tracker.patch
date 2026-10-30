@@ -1,7 +1,3 @@
-diff --git a/java_pid507858.hprof b/java_pid507858.hprof
-new file mode 100644
-index 0000000..d6d7b29
-Binary files /dev/null and b/java_pid507858.hprof differ
 diff --git a/lemuroid-app/build.gradle.kts b/lemuroid-app/build.gradle.kts
 index 741cef4..c4b1685 100644
 --- a/lemuroid-app/build.gradle.kts
