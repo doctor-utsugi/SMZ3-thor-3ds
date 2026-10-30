@@ -409,7 +409,7 @@ static void ladder_open(SmzUi *u)
 static void ladder_input(SmzUi *u, UiButton b)
 {
     int n = u->ladder[u->ladder_tab].n;
-    if (b == BTN_B) u->screen = UI_SLOTS_SCREEN;
+    if (b == BTN_B || b == BTN_SELECT) u->screen = UI_SLOTS_SCREEN;
     else if (b == BTN_LEFT || b == BTN_L) { u->ladder_tab = (u->ladder_tab + 2) % 3; u->ladder_scroll = 0; }
     else if (b == BTN_RIGHT || b == BTN_R) { u->ladder_tab = (u->ladder_tab + 1) % 3; u->ladder_scroll = 0; }
     else if (b == BTN_DOWN && u->ladder_scroll + UI_LADDER_SHOWN < n) u->ladder_scroll++;
@@ -742,7 +742,7 @@ void ui_input(SmzUi *u, UiButton b)
             u->slot_cursor = c < 0 ? 0 : c >= u->slot_count ? u->slot_count - 1 : c;
             slot_view(u);
         }
-        else if ((b == BTN_LEFT || b == BTN_RIGHT) && u->ladder_on) ladder_open(u);
+        else if (b == BTN_SELECT && u->ladder_on) ladder_open(u);
         else if (b == BTN_A) {
             u->active_slot = u->slot_cursor;
             if (u->slots[u->slot_cursor].used) { u->screen = UI_SLOT_MENU; u->menu_cursor = 0; }
@@ -848,7 +848,7 @@ void ui_touch(SmzUi *u, int x, int y)
             if (u->slot_cursor < u->slot_scroll) u->slot_cursor = u->slot_scroll;
             if (u->slot_cursor >= u->slot_scroll + slots_shown(u)) u->slot_cursor = u->slot_scroll + slots_shown(u) - 1;
             break;
-        case H_LADDER: ladder_open(u); break;
+        case H_LADDER: if (t->idx) u->screen = UI_SLOTS_SCREEN; else ladder_open(u); break;
         case H_LTAB: u->ladder_tab = t->idx; u->ladder_scroll = 0; break;
         case H_CONFIRM: u->confirm_cursor = t->idx; ui_input(u, BTN_A); break;
         case H_MENU: u->menu_cursor = t->idx; ui_input(u, BTN_A); break;
@@ -1071,10 +1071,10 @@ static void daily_info_page(SmzUi *u)
     }
     /* NULL leaves a gap between the groups */
     static const char *const RULES[] = {
-        "Three windows a day, 4 hours each.", "Everyone plays the same seed.", NULL,
-        "One try. The clock starts at Start", "and keeps running if you quit.", NULL,
-        "No fast forward or save states.", "Hints show up as you go.", NULL,
-        "Finish in time to rank and get tokens.",
+        "Opens at 06:00, 14:00 and 22:00 UTC", "for four hours. Same seed for all.", NULL,
+        "One try. The clock starts in game", "and keeps running if you close it.", NULL,
+        "Fast forward and save states are off.", "The first hint arrives at 10 minutes.", NULL,
+        "Finish before it closes to earn gems.",
     };
     for (int i = 0; i < (int)(sizeof RULES / sizeof RULES[0]); i++) {
         if (!RULES[i]) { y += 6; continue; }
@@ -1131,11 +1131,12 @@ void ui_draw(SmzUi *u)
     case UI_SLOTS_SCREEN: {
         int more = u->slot_count > slots_shown(u);
         /* with the token counter beside Ladder the title is shorter, so it fits in the hosts' wider fonts too */
-        snprintf(buf, sizeof buf, more ? (u->daily_on ? "SMZ3  -  Runs  (%d/%d)" : "SMZ3  -  Select a run  (%d/%d)") : u->daily_on ? "SMZ3  -  Runs" : "SMZ3  -  Select a run", u->slot_cursor + 1, u->slot_count);
+        if (u->daily_sel) snprintf(buf, sizeof buf, "SMZ3  -  Special run");
+        else snprintf(buf, sizeof buf, more ? (u->daily_on ? "SMZ3  -  Runs  (%d/%d)" : "SMZ3  -  Select a run  (%d/%d)") : u->daily_on ? "SMZ3  -  Runs" : "SMZ3  -  Select a run", u->slot_cursor + 1, u->slot_count);
         title(u, buf);
         if (u->ladder_on) {
             rect(u, UI_W - 70, 4, 64, 20, C_SEL);
-            text(u, UI_W - 38, 8, C_TEXT, 1, "Ladder");
+            text(u, UI_W - 38, 8, C_TEXT, 1, "Ladder >");
             hit(u, H_LADDER, 0, UI_W - 70, 4, 64, 20);
         }
         if (u->daily_on && u->daily.loaded == 1) token_chip(u, UI_W - 70 - 52, 4);
@@ -1163,6 +1164,7 @@ void ui_draw(SmzUi *u)
             if (u->slot_scroll > 0) { rect(u, x, top, 20, 44, C_PANEL); text(u, x + 10, top + 14, C_ACCENT, 1, "^"); hit(u, H_CHEVRON, -1, x, top, 20, 44); }
             if (u->slot_scroll + shown < u->slot_count) { rect(u, x, 32 + 3 * 47, 20, 44, C_PANEL); text(u, x + 10, 32 + 3 * 47 + 14, C_ACCENT, 1, "v"); hit(u, H_CHEVRON, 1, x, 32 + 3 * 47, 20, 44); }
         }
+        text(u, 6, UI_H - 16, C_DIM, 0, u->ladder_on ? "A Open  Select Ladder" : "A Open");
         break;
     }
     case UI_CONFIRM:
@@ -1513,7 +1515,13 @@ void ui_draw(SmzUi *u)
     }
     case UI_LADDER: {
         static const char *const TABS[3] = {"Original", "Monthly", "Weekly"};
-        title(u, "Online ladder");
+        const typeof(u->ladder[0]) *l = &u->ladder[u->ladder_tab];
+        if (l->label[0] && u->ladder_tab) snprintf(buf, sizeof buf, "Online ladder  %s", l->label);
+        else snprintf(buf, sizeof buf, "Online ladder");
+        title(u, buf);
+        rect(u, UI_W - 84, 4, 78, 20, C_SEL);
+        text(u, UI_W - 45, 8, C_TEXT, 1, "< Save list");
+        hit(u, H_LADDER, 1, UI_W - 84, 4, 78, 20);
         for (int t = 0; t < 3; t++) {
             int x = 6 + t * 104;
             rect(u, x, 32, 102, 22, t == u->ladder_tab ? C_SEL : C_PANEL);
@@ -1521,8 +1529,6 @@ void ui_draw(SmzUi *u)
             snprintf(buf, sizeof buf, "%s", TABS[t]);
             text(u, x + 51, 38, t == u->ladder_tab ? C_TEXT : C_DIM, 1, buf);
         }
-        const typeof(u->ladder[0]) *l = &u->ladder[u->ladder_tab];
-        if (l->label[0] && u->ladder_tab) text(u, UI_W - 8, 8, C_DIM, 2, l->label);
         if (l->loaded == 0) text(u, UI_W / 2, 120, C_DIM, 1, "Loading ...");
         else if (l->loaded < 0) text(u, UI_W / 2, 120, C_WARN, 1, "No connection");
         else if (!l->n) text(u, UI_W / 2, 120, C_DIM, 1, "No finished runs yet");
@@ -1537,7 +1543,7 @@ void ui_draw(SmzUi *u)
             snprintf(buf, sizeof buf, "%d:%02d:%02d.%02d", (int)(s / 3600), (int)(s / 60 % 60), (int)(s % 60), (int)(l->row[i].ms % 1000 / 10));
             text(u, UI_W - 10, y + 4, C_TEXT, 2, buf);
         }
-        text(u, 6, UI_H - 16, C_DIM, 0, "Left Right tab  Up Down scroll  B back");
+        text(u, 6, UI_H - 16, C_DIM, 0, "Select Save list  Left Right Tab  Up Down Scroll");
         break;
     }
     case UI_DAILY: daily_screen(u); break;

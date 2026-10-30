@@ -217,7 +217,7 @@ void help_prompt(float cx, float y, float h, const HelpItem *all, int count)
 /* ---- the hint text of the shared menus ("A choose  Right: Random  B back") into buttons ---- */
 static const struct { const char *word, *pad, *kb; } KEYWORD[] = {
     {"A", "A", "Enter"}, {"B", "B", "Esc"}, {"X", "X", "X"}, {"Y", "Y", "Y"}, {"L", "L", "Q"}, {"R", "R", "W"}, {"L/R", "LR2", "Q W"},
-    {"Select", "SELECT", "F1"}, {"Start", "START", "F1"}, {"Up", "UP", "^"}, {"Down", "DOWN", "v"}, {"Left", "LEFT", "<"}, {"Right", "RIGHT", ">"},
+    {"Select", "SELECT", "Tab"}, {"Start", "START", "F1"}, {"Up", "UP", "^"}, {"Down", "DOWN", "v"}, {"Left", "LEFT", "<"}, {"Right", "RIGHT", ">"},
 };
 
 static int keyword(const char *w) { for (unsigned i = 0; i < sizeof KEYWORD / sizeof KEYWORD[0]; i++) if (!strcmp(KEYWORD[i].word, w)) return (int)i; return -1; }

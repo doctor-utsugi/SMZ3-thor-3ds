@@ -92,7 +92,10 @@ void smz3_summarize(const uint8_t *wram, size_t wram_len,
     out->game = smz3_current_game(sram, sram_len);
     out->started = smz3_started(wram, wram_len, sram, sram_len);
     out->finished = smz3_run_finished(wram, wram_len, sram, sram_len);
-    if (!out->started || out->game == SMZ3_GAME_NONE) {
+    /* the game save on its own (no WRAM): both games' checks are in the save RAM */
+    int save_only = !wram_len && sram_len;
+    smz3_game from = save_only ? SMZ3_GAME_NONE : out->game;
+    if ((!out->started || out->game == SMZ3_GAME_NONE) && !save_only) {
         for (unsigned i = 0; i < smz3_location_count; i++) {
             if (smz3_locations[i].game == SMZ3_GAME_ZELDA) out->zelda_total++;
             else out->metroid_total++;
@@ -102,7 +105,7 @@ void smz3_summarize(const uint8_t *wram, size_t wram_len,
 
     for (unsigned i = 0; i < smz3_location_count; i++) {
         const smz3_location *loc = &smz3_locations[i];
-        int cleared = smz3_location_cleared(loc, out->game, wram, wram_len, sram, sram_len);
+        int cleared = smz3_location_cleared(loc, from, wram, wram_len, sram, sram_len);
         if (loc->game == SMZ3_GAME_ZELDA) {
             out->zelda_total++;
             out->zelda_cleared += cleared > 0;

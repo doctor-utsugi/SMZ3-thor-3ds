@@ -29,6 +29,7 @@ typedef struct {
 typedef struct {
     char window[16], token[320], goal[96], check[32];   /* check: the goal as the hosts read it (smz3_goal.h) */
     int64_t started_at, closes_at, next_hint_at;   /* next_hint_at 0: every hint is out */
+    int64_t began_at;   /* when the game itself started (the file loaded), as the ladder times its runs; 0 until then */
     int n_hints;
     int64_t hint_at[SMZ_DAILY_HINTS];
     char hint[SMZ_DAILY_HINTS][SMZ_DAILY_HINT_LEN];
@@ -42,6 +43,11 @@ int smz_daily_parse_start(const char *json, int64_t local_now_ms, SmzDailyRun *r
 int smz_daily_parse_hints(const char *json, int64_t local_now_ms, SmzDailyRun *r);
 /* The attempt as text lines the host keeps beside the run, and back. */
 int smz_daily_run_text(const SmzDailyRun *r, char *out, size_t cap);
+/* Where the own clock counts from: the game's start, or Start on the menu while the game has not begun. */
+int64_t smz_daily_clock_from(const SmzDailyRun *r);
+/* The game has started (the tracker sees a file in play): sets began_at once. A start more than 10 minutes after Start (an
+ * attempt resumed on a new install) keeps Start, so losing the files never resets the clock. 1 when it changed. */
+int smz_daily_note_began(SmzDailyRun *r, int64_t now_ms);
 int smz_daily_run_load(const char *text, SmzDailyRun *r);
 /* "2h 05m", "12m 30s", "45s" for a span of ms (0 or less: "0s"). */
 void smz_daily_span(int64_t ms, char *out, size_t cap);

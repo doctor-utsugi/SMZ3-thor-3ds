@@ -20,7 +20,7 @@
 #define UI_MAX_SAVED 16
 #define UI_SPEC_LEN 512
 
-typedef enum { BTN_UP, BTN_DOWN, BTN_LEFT, BTN_RIGHT, BTN_A, BTN_B, BTN_L, BTN_R } UiButton;
+typedef enum { BTN_UP, BTN_DOWN, BTN_LEFT, BTN_RIGHT, BTN_A, BTN_B, BTN_L, BTN_R, BTN_SELECT } UiButton;
 typedef enum { UI_SLOTS_SCREEN, UI_SLOT_MENU, UI_CREATE, UI_SPRITES, UI_BUSY, UI_CONFIRM, UI_MODE, UI_SAVED, UI_NAME, UI_START, UI_COUNTRY, UI_ONLINE, UI_LOADCHOICE, UI_LADDER, UI_RULES, UI_DAILY } UiScreen;
 typedef enum { OPT_ENUM, OPT_INT, OPT_BOOL, OPT_SEED, OPT_SPRITE } OptKind;
 /* Tabs of the Create run screen. Only LEVEL_ITEMS is read from UiOptDef.level; the other tabs list their keys in UI_TABS. */
@@ -126,7 +126,7 @@ int ui_saved_text(const SmzUi *u, char *out, size_t cap);
 int ui_saved_dirty(SmzUi *u);
 /* Player profile: the Player row appears in the start screen once the host enables it. text is "name<TAB>CC<TAB>mode" (NULL: empty). */
 void ui_player_enable(SmzUi *u, int on);
-/* Online tables: the slot list gets a Ladder button (and Left/Right opens it) and the host answers ACT_LADDER by filling the three
+/* Online tables: the slot list gets a Ladder button (and Select opens it) and the host answers ACT_LADDER by filling the three
  * tables: ui_ladder_begin(tab, label, ok) starts one (ok 0 marks it as failed) and ui_ladder_add appends its rows, best first. */
 void ui_ladder_enable(SmzUi *u, int on);
 void ui_ladder_begin(SmzUi *u, int tab, const char *label, int ok);

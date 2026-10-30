@@ -826,7 +826,49 @@ static void minimap_at_bottom(const SmzTracker *t, const MiniMap *mm, float x, f
 }
 
 /* clock_ms: the time to show instead of the play time (a daily challenge's real clock), or -1 */
-static void panel_left(const SmzTracker *t, const SmzRun *r, float x, float w, float h, const MiniMap *mm, int64_t clock_ms)
+/* The daily challenge in the left panel, under the clock: the window, the goal (wrapped) and the next hint; each can be hidden
+ * in the video options. Returns the y below it. */
+static float daily_panel(const SmzDailyRun *r, int finished, float x, float w, float y, float u)
+{
+    int64_t now = online_now_ms(), left = r->closes_at - now;
+    float px = 18 * u, lh = 25 * u;
+    char t[32], s[160];
+    if (settings_challenge_show(0)) {
+        smz_daily_span(left, t, sizeof t);
+        snprintf(s, sizeof s, left > 0 ? "Closes in %s" : "Window closed", t);
+        gfx_text(x, y, px, left < 15 * 60000 ? C(0xE0, 0x5A, 0x4F) : C(0xE8, 0xEC, 0xF2), 0, s);
+        y += lh;
+    }
+    if (settings_challenge_show(2)) {   /* word wrap to the panel */
+        const char *p = r->goal;
+        while (*p) {
+            int fit = 0, i = 0;
+            while (p[i]) {
+                int j = i;
+                while (p[j] && p[j] != ' ') j++;
+                snprintf(s, sizeof s, "%.*s", j, p);
+                if (fit && gfx_text_width(px, s) > w) break;
+                fit = j;
+                i = p[j] ? j + 1 : j;
+            }
+            if (!fit) fit = (int)strlen(p);
+            snprintf(s, sizeof s, "%.*s", fit, p);
+            gfx_text(x, y, px, C(0xF2, 0xA3, 0x3A), 0, s);
+            y += lh;
+            p += fit;
+            while (*p == ' ') p++;
+        }
+    }
+    if (settings_challenge_show(3) && r->next_hint_at && !finished) {
+        smz_daily_span(r->next_hint_at - now, t, sizeof t);
+        snprintf(s, sizeof s, "Next hint in %s", t);
+        gfx_text(x, y, px, C(0x87, 0x93, 0xA6), 0, s);
+        y += lh;
+    }
+    return y;
+}
+
+static void panel_left(const SmzTracker *t, const SmzRun *r, float x, float w, float h, const MiniMap *mm, int64_t clock_ms, const SmzDailyRun *dr, int finished)
 {
     float u = fminf(h / 720.0f, w / 230.0f), pad = 18 * u, y = 40 * u;
     if (w < 90) return;
@@ -851,6 +893,7 @@ static void panel_left(const SmzTracker *t, const SmzRun *r, float x, float w, f
     gfx_text(x + pad, y, 34 * u, C(0xE8, 0xEC, 0xF2), 0, s);
     y += 50 * u;
     gfx_text(x + pad, y, 20 * u, C(0x87, 0x93, 0xA6), 0, r->name);
+    if (dr) y = daily_panel(dr, finished, x + pad, w - 2 * pad, y + 34 * u, u) - 30 * u;
     minimap_at_bottom(t, mm, x, w, h, y + 30 * u);
 }
 
@@ -911,7 +954,7 @@ static void daily_hud(const SmzDailyRun *r, int finished, float gx, float gw, in
         col[n++] = left < 15 * 60000 ? C(0xE0, 0x5A, 0x4F) : C(0xE8, 0xEC, 0xF2);
     }
     if (settings_challenge_show(1) && !finished) {
-        fmt_time(now - r->started_at, t, sizeof t);
+        fmt_time(now - smz_daily_clock_from(r), t, sizeof t);
         snprintf(line[n], sizeof line[n], "Time  %s", t);
         col[n++] = C(0xE8, 0xEC, 0xF2);
     }
@@ -966,7 +1009,7 @@ static void overlay(const SmzTracker *t, const SmzRun *r, int tab, int scroll, i
         char a[32], b[32], row[200];
         gfx_text(x0, y, 30 * u, C(0xF2, 0xA3, 0x3A), 0, dr->goal); y += 44 * u;
         smz_daily_span(left, a, sizeof a);
-        fmt_time(now - dr->started_at, b, sizeof b);
+        fmt_time(now - smz_daily_clock_from(dr), b, sizeof b);
         if (left > 0) snprintf(row, sizeof row, "Window closes in %s    Own time %s", a, b);
         else snprintf(row, sizeof row, "The window has closed: no prize    Own time %s", b);
         gfx_text(x0, y, 22 * u, left < 15 * 60000 ? C(0xE0, 0x5A, 0x4F) : C(0x87, 0x93, 0xA6), 0, row); y += 44 * u;
@@ -1132,6 +1175,7 @@ static void play(int slot, int game_save_only)
     int have_logic = 0, keysanity = strstr(run.settings, "\"keysanity\":\"Both\"") ? 3 : strstr(run.settings, "\"keysanity\":\"SuperMetroid\"") ? 2 : strstr(run.settings, "\"keysanity\":\"Zelda\"") ? 1 : 0;
     /* reachable checks are marked only when the run asks for it (runs made before the option: only the Cozy ones) */
     int reach = strstr(run.settings, "\"showReachable\"") ? json_flag(run.settings, "showReachable", 0) : !strcmp(run.name, "Cozy run");
+    if (strstr(run.settings, "\"challenge\":true")) reach = 0;   /* a daily challenge: collected or not, nothing more */
     if (reach && strstr(run.settings, "\"helpMode\":\"all\"")) {
         LogicJob lj = {&logic, run.settings, -1};
         run_big(logic_thread, &lj);
@@ -1350,12 +1394,13 @@ static void play(int slot, int game_save_only)
                 if (dead_bosses) smz_prepared_apply(dead_bosses, (uint8_t *)wram, wl, sram, sl);   /* the emulator's own RAM */
                 smz_tracker_tick(&trk, wram, wl, sram, sl, dt, fast ? 4 : 1);
                 if (trk.save_changed) store_write(store_path("runs/slot%d.srm", slot + 1), sram, sl);
+                if (daily && trk.started && smz_daily_note_began(&dr, online_now_ms())) online_daily_save(&dr);   /* the clock starts with the game, as in the ladder */
                 if (trk.game == 3 && !finished) {
                     finished = 1;
                     if (!finished_before) { done_popup = 1; final_ms = trk.base_ms + trk.pending_ms; }
-                    if (daily && !finished_before && !daily_queued) {   /* the challenge's time is the real clock from Start */
+                    if (daily && !finished_before && !daily_queued) {   /* the challenge's time is the real clock from the game's start */
                         daily_queued = 1;
-                        final_ms = online_now_ms() - dr.started_at;
+                        final_ms = online_now_ms() - smz_daily_clock_from(&dr);
                         save_proof(DAILY_SLOT, &proof);
                         online_daily_queue_finish(final_ms);
                         detach(flush_thread, NULL);
@@ -1389,7 +1434,9 @@ static void play(int slot, int game_save_only)
                     hint_until = SDL_GetTicks() + 15000;
                     sfx_play(SFX_OPEN);
                 }
+                int64_t began = dr.began_at;   /* set while the hints were on their way */
                 dr = g_hint_run;
+                if (began) dr.began_at = began;
                 online_daily_save(&dr);
                 g_hint_state = 0;
             }
@@ -1456,10 +1503,10 @@ static void play(int slot, int game_save_only)
             const uint8_t *mw = emu_wram(&mwl);
             MiniMap mm = {&disc, discovered_only, have_logic ? in_logic : NULL, mw, mwl, sram, sl, &minimv, &minidv, have_live ? &live : NULL};
             int on = trk.started || getenv("SMZ3_MINIMAP"), mside = settings_minimap_side();
-            panel_left(&trk, &run, 0, gx, (float)wh, on && mside == 1 ? &mm : NULL, !daily ? -1 : finished ? final_ms : online_now_ms() - dr.started_at);
+            panel_left(&trk, &run, 0, gx, (float)wh, on && mside == 1 ? &mm : NULL, !daily ? -1 : finished ? final_ms : online_now_ms() - smz_daily_clock_from(&dr), daily ? &dr : NULL, finished);
             panel_right(&trk, gx + gw, ww - (gx + gw), (float)wh, on && mside == 0 ? &mm : NULL);
         }
-        if (daily && !show) daily_hud(&dr, finished, gx, gw, wh);
+        if (daily && !show && gx < 90) daily_hud(&dr, finished, gx, gw, wh);   /* no side panels: the only room left is a corner of the game */
         {   /* a new hint, and the short notes (states, slots) while playing */
             const char *msg = SDL_GetTicks() < hint_until ? hint_note : SDL_GetTicks() < g_note_until ? g_note : NULL;
             if (msg && !show) {
@@ -1517,7 +1564,7 @@ static void play(int slot, int game_save_only)
                 static Uint32 next_look;
                 static char last[160];
                 if (SDL_GetTicks() >= next_look) { next_look = SDL_GetTicks() + 500; if (!online_daily_result(last, sizeof last)) snprintf(last, sizeof last, "Sending the time..."); }
-                snprintf(res, sizeof res, "%s", dr.started_at + final_ms > dr.closes_at && !strncmp(last, "Send", 4) ? "After the window closed: on the late list, no prize" : last);
+                snprintf(res, sizeof res, "%s", smz_daily_clock_from(&dr) + final_ms > dr.closes_at && !strncmp(last, "Send", 4) ? "After the window closed: on the late list, no prize" : last);
                 lad = res;
             }
             gfx_text(ww / 2.0f, cy + 204 * u, 20 * u, daily || (online_slot_kind(slot + 1) && is_default) ? C(0x4F, 0xC3, 0xF7) : C(0x87, 0x93, 0xA6), 1, lad);
@@ -1583,6 +1630,7 @@ static UiButton map_key(SDL_Keycode k, int *ok)
     case SDLK_ESCAPE: case SDLK_z: case SDLK_BACKSPACE: return BTN_B;
     case SDLK_q: case SDLK_PAGEUP: return BTN_L;
     case SDLK_w: case SDLK_PAGEDOWN: return BTN_R;
+    case SDLK_TAB: return BTN_SELECT;
     default: *ok = 0; return BTN_A;
     }
 }
@@ -1741,9 +1789,9 @@ static void window_main(int start_slot)
         else if (!strcmp(t, "video")) { settings_nav(BTN_DOWN); settings_nav(BTN_A); settings_nav(BTN_DOWN); settings_nav(BTN_DOWN); settings_nav(BTN_RIGHT); settings_nav(BTN_DOWN); settings_nav(BTN_RIGHT); }
         else if (!strcmp(t, "files")) settings_open_files();
     }
-    if (getenv("SMZ3_KEYS")) {   /* test hook: press menu buttons, e.g. "a,d,a" (u d l r a b L R) */
+    if (getenv("SMZ3_KEYS")) {   /* test hook: press menu buttons, e.g. "a,d,a" (u d l r a b L R s: Select) */
         for (const char *k = getenv("SMZ3_KEYS"); *k; k++) {
-            const char *names = "udlrabLR";
+            const char *names = "udlrabLRs";
             const char *p = strchr(names, *k);
             if (p && *k) ui_input(&ui, (UiButton)(p - names));
         }
@@ -1800,7 +1848,10 @@ static void window_main(int start_slot)
                 case SDL_CONTROLLER_BUTTON_B: b = BTN_B; break;
                 case SDL_CONTROLLER_BUTTON_LEFTSHOULDER: b = BTN_L; break;
                 case SDL_CONTROLLER_BUTTON_RIGHTSHOULDER: b = BTN_R; break;
-                case SDL_CONTROLLER_BUTTON_BACK: case SDL_CONTROLLER_BUTTON_START:
+                case SDL_CONTROLLER_BUTTON_BACK:
+                    if (base_ok() || settings_active() || welcome_active()) { b = BTN_SELECT; break; }
+                    /* fall through: without the ROMs Select opens the settings too */
+                case SDL_CONTROLLER_BUTTON_START:
                     ok = 0;
                     if (!settings_active() && !welcome_active() && ui.screen == UI_SLOTS_SCREEN) settings_open();
                     break;
@@ -1900,7 +1951,7 @@ static void window_main(int start_slot)
         if (ui.screen == UI_SLOTS_SCREEN && !settings_active() && !welcome_active()) {
             if (!base_ok()) gfx_text(ww / 2.0f, wh - 28 * k / 2 - 8, 11 * k, C(0xE9, 0xA2, 0x3B), 1, "Select: find your ROM files (or drop them here)");
             else {
-                static const HelpItem H[] = {{"A", "Enter", "Open"}, {"LR", "<", "Ladder"}, {"SELECT", "F1", "Settings"}};
+                static const HelpItem H[] = {{"A", "Enter", "Open"}, {"SELECT", "Tab", "Ladder"}, {"START", "F1", "Settings"}};
                 help_bar(ox, oy + 224 * k, 320 * k, 16 * k, H, 3);
             }
         }

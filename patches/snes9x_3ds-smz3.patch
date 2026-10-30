@@ -220,7 +220,7 @@ index 3692a54..3839f03 100644
          long actualTicksThisFrame = (long)(svcGetSystemTick() - startFrameTick);
 diff --git a/source/smz3online.cpp b/source/smz3online.cpp
 new file mode 100644
-index 0000000..73ac2db
+index 0000000..e9073dc
 --- /dev/null
 +++ b/source/smz3online.cpp
 @@ -0,0 +1,569 @@
@@ -626,8 +626,8 @@ index 0000000..73ac2db
 +        bool ranked = jsonNum(reply, "rank", &rank) && rank > 0;
 +        jsonNum(reply, "tokens", &tokens);
 +        jsonNum(reply, "balance", &balance);
-+        if (ranked) snprintf(line, sizeof line, "Rank %lld for now  -  +%lld tokens (%lld)", rank, tokens, balance);
-+        else snprintf(line, sizeof line, "Rank ? for now  -  +%lld tokens (%lld)", tokens, balance);
++        if (ranked) snprintf(line, sizeof line, "Rank %lld for now  -  +%lld gems (%lld)", rank, tokens, balance);
++        else snprintf(line, sizeof line, "Rank ? for now  -  +%lld gems (%lld)", tokens, balance);
 +    }
 +    writeText(DAILY_RESULT, line, strlen(line));
 +    remove(DAILY_FINISH);
@@ -859,10 +859,10 @@ index 0000000..322435e
 +#endif
 diff --git a/source/smz3run.cpp b/source/smz3run.cpp
 new file mode 100644
-index 0000000..df46c13
+index 0000000..86362d9
 --- /dev/null
 +++ b/source/smz3run.cpp
-@@ -0,0 +1,847 @@
+@@ -0,0 +1,850 @@
 +// SMZ3 runs: the shared C menu (core/ui) drawn on the second screen, and offline generation (core/gen).
 +#include <3ds.h>
 +#include <dirent.h>
@@ -1420,6 +1420,7 @@ index 0000000..df46c13
 +        }
 +        else if (down & KEY_L) b = BTN_L;
 +        else if (down & KEY_R) b = BTN_R;
++        else if (down & KEY_SELECT) b = BTN_SELECT;
 +        else have = false;
 +        if (have) ui_input(&ui, b);
 +        if (down & KEY_TOUCH) {
@@ -1564,6 +1565,7 @@ index 0000000..df46c13
 +    if (dt < 0 || dt > 3000) dt = 1000;   // a pause in between is not play time
 +    if (deadBosses) smz_prepared_apply(deadBosses, Memory.RAM, 0x20000, Memory.SRAM, 0x20000);   // a mid-game daily start
 +    smz_tracker_tick(&trk, Memory.RAM, 0x20000, Memory.SRAM, 0x20000, dt, 1);
++    if (daily && trk.started && smz_daily_note_began(&dr, smzDailyNowMs())) smzDailySave(&dr);   // the clock starts with the game, as in the ladder
 +    int online = curSlot >= 0 ? smzOnlineSlotKind(curSlot) : 0;
 +    if ((online || daily) && trk.started && smz_proof_note(&proof, trk.cleared, SMZ_TRK_MAX_LOCS, trk.base_ms + trk.pending_ms)) proofDirty = 1;
 +    // debug aid: sdmc:/SMZ3/debug_token.txt asks for the run's token even before the game has started
@@ -1587,9 +1589,9 @@ index 0000000..df46c13
 +                FILE *pf = fopen(smzOnlineProofPath(curSlot), "wb");
 +                if (pf) { fwrite(ptxt, 1, pl, pf); fclose(pf); proofDirty = 0; }
 +            }
-+            if (daily && trk.game == 3 && !queued && !dailyDoneMs) {   // the goal: the real time since Start goes to the server
++            if (daily && trk.game == 3 && !queued && !dailyDoneMs) {   // the goal: the real time since the game's start goes to the server
 +                queued = 1;
-+                dailyDoneMs = smzDailyNowMs() - dr.started_at;
++                dailyDoneMs = smzDailyNowMs() - smz_daily_clock_from(&dr);
 +                smzDailyQueueFinish(dailyDoneMs);
 +            }
 +            if (online && trk.game == 3 && !queued && strstr(r1.settings, "\"defaultRules\":true")) {
@@ -1612,6 +1614,7 @@ index 0000000..df46c13
 +        SmzDailyRun fresh;
 +        if (smzDailyTakeHints(&fresh)) {
 +            if (fresh.n_hints > dr.n_hints) newHintUntil = now + 15000;
++            if (dr.began_at && !fresh.began_at) { fresh.began_at = dr.began_at; smzDailySave(&fresh); }   // set while the hints were on their way
 +            dr = fresh;
 +        }
 +        bool finished = trk.game == 3;
@@ -1626,7 +1629,7 @@ index 0000000..df46c13
 +            char res[160];
 +            trackerWrap(y + 20, PALETTE[3], 2, smzDailyResult(res, sizeof res) ? res : "Sending the time ...");
 +        } else {
-+            int64_t own = (now - dr.started_at) / 1000;
++            int64_t own = (now - smz_daily_clock_from(&dr)) / 1000;
 +            spanText(left, a, sizeof a);
 +            if (left > 0) trackerLine(y + 2, left < 15 * 60000 ? PALETTE[6] : PALETTE[3], "Window closes in %s", a);
 +            else trackerLine(y + 2, PALETTE[6], "TIME IS UP: a finish goes on the late list");

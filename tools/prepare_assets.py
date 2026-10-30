@@ -82,3 +82,6 @@ print("flags copied")
 import subprocess, sys
 subprocess.run([sys.executable, str(root / "tools/gen_pc_logo.py"), str(root / "assets/logo.png"), str(assets / "logo.png"), "96"], check=True)
 print("logo written")
+
+# The menu font the PC build uses too (Chakra Petch, OFL)
+shutil.copyfile(root / "tools/fonts/ChakraPetch-Bold.ttf", assets / "menu_font.ttf")

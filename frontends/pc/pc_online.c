@@ -408,7 +408,7 @@ static void daily_flush(void)
     else {
         const char *rk = strstr(reply, "\"rank\":"), *tk = strstr(reply, "\"tokens\":"), *bl = strstr(reply, "\"balance\":");
         snprintf(num, sizeof num, "%d", rk ? atoi(rk + 7) : 0);
-        snprintf(line, sizeof line, "Rank %s for now  -  +%d tokens (%d)", rk ? num : "?", tk ? atoi(tk + 9) : 0, bl ? atoi(bl + 10) : 0);
+        snprintf(line, sizeof line, "Rank %s for now  -  +%d gems (%d)", rk ? num : "?", tk ? atoi(tk + 9) : 0, bl ? atoi(bl + 10) : 0);
     }
     store_write(store_path("runs/daily.result"), line, strlen(line));
     remove(store_path("runs/daily.finish"));

@@ -305,7 +305,7 @@ static int pick_goal(Challenge *c)
         snprintf(g->text, sizeof g->text, "Collect %d crystals", g->count);
     } else if (roll < 85) {
         g->kind = G_SMBOSSES; g->count = 2;
-        snprintf(g->text, sizeof g->text, "Defeat %d of Kraid, Phantoon, Draygon and Ridley", g->count);
+        snprintf(g->text, sizeof g->text, "Defeat %s Super Metroid bosses", g->count == 2 ? "two" : g->count == 3 ? "three" : "four");
     } else {
         /* only places the game memory tells apart: a dungeon ($040C) or a Super Metroid area ($079F) */
         static const int R[] = {REG_GanonsTower, REG_TurtleRock, REG_MiseryMire, REG_IcePalace, REG_WreckedShip, REG_OuterMaridia, REG_UpperNorfairWest};

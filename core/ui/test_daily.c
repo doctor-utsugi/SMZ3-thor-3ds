@@ -122,7 +122,14 @@ int main(int argc, char **argv)
         SmzDailyRun r, r2;
         assert(smz_daily_parse_start(reply, 1000, &r, back, sizeof back) == 0);
         assert(back[0] == '{' && strstr(back, "\"challenge\":true") && r.n_hints == 1 && r.next_hint_at == 1201000 && r.closes_at == 14401000 && r.goal[0]);
+        assert(smz_daily_clock_from(&r) == 1000);   /* before the game starts the clock counts from Start */
+        {
+            SmzDailyRun late = r;
+            assert(smz_daily_note_began(&late, 1000 + 11 * 60000) == 1 && late.began_at == 1000);   /* resumed long after Start */
+            assert(smz_daily_note_began(&r, 61000) == 1 && smz_daily_note_began(&r, 99000) == 0);
+        }
         assert(smz_daily_run_text(&r, text, sizeof text) > 0 && smz_daily_run_load(text, &r2) == 0);
+        assert(r2.began_at == 61000 && smz_daily_clock_from(&r2) == 61000);
         assert(!strcmp(r2.token, r.token) && r2.started_at == 1000 && r2.n_hints == 1 && !strcmp(r2.hint[0], r.hint[0]) && !strcmp(r2.goal, r.goal) && r2.check[0] && !strcmp(r2.check, r.check));
         assert(smz_daily_parse_hints("{\"hints\":[{\"at\":601000,\"text\":\"a\"},{\"at\":1201000,\"text\":\"b\"}],\"nextHintAt\":null,\"closesAt\":1}", 0, &r) == 0);
         assert(r.n_hints == 2 && r.next_hint_at == 0 && !strcmp(r.hint[1], "b"));
@@ -144,7 +151,12 @@ int main(int argc, char **argv)
         assert(ui_settings_json(&u, 12345, js, sizeof js) > 0);
         const char *g = strstr(goal, "\"check\":\"") + 9;
         snprintf(check, sizeof check, "%.*s", (int)(strchr(g, '"') - g), g);
+        {   /* a player who turned on the reachable checks still gets a plain map in the challenge */
+            char *r = strstr(js, "\"showReachable\":false");
+            if (r) { memmove(r + 20, r + 21, strlen(r + 21) + 1); memcpy(r + 16, "true", 4); }
+        }
         assert(smz_daily_mark_settings(js, sizeof js, check, back) == 0 && strstr(js, "\"challenge\":true") && strstr(js, check));
+        assert(strstr(js, "\"showReachable\":false,") && !strstr(js, "\"showReachable\":true"));
         assert(smz_daily_mark_settings(js, sizeof js, check, back) < 0);   /* only once */
         assert(smz_daily_prepared_bosses(js) == smz_daily_prepared_bosses(back));   /* a mid-game start carries its dead bosses */
         if (smz_daily_prepared_bosses(back)) mid++;

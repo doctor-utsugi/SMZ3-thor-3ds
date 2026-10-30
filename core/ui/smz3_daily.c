@@ -189,8 +189,18 @@ int smz_daily_run_text(const SmzDailyRun *r, char *out, size_t cap)
 {
     int n = snprintf(out, cap, "window\t%s\ntoken\t%s\ngoal\t%s\ncheck\t%s\nstarted\t%lld\ncloses\t%lld\nnext\t%lld\n", r->window, r->token, r->goal, r->check,
                      (long long)r->started_at, (long long)r->closes_at, (long long)r->next_hint_at);
+    if (r->began_at && n < (int)cap) n += snprintf(out + n, cap - n, "began\t%lld\n", (long long)r->began_at);
     for (int i = 0; i < r->n_hints && n < (int)cap; i++) n += snprintf(out + n, cap - n, "hint\t%lld\t%s\n", (long long)r->hint_at[i], r->hint[i]);
     return n < (int)cap ? n : -1;
+}
+
+int64_t smz_daily_clock_from(const SmzDailyRun *r) { return r->began_at > r->started_at ? r->began_at : r->started_at; }
+
+int smz_daily_note_began(SmzDailyRun *r, int64_t now_ms)
+{
+    if (r->began_at || !r->started_at) return 0;
+    r->began_at = now_ms - r->started_at <= 10 * 60000 && now_ms > r->started_at ? now_ms : r->started_at;
+    return 1;
 }
 
 int smz_daily_run_load(const char *text, SmzDailyRun *r)
@@ -210,6 +220,7 @@ int smz_daily_run_load(const char *text, SmzDailyRun *r)
             else if (!strcmp(key, "started")) r->started_at = strtoll(val, NULL, 10);
             else if (!strcmp(key, "closes")) r->closes_at = strtoll(val, NULL, 10);
             else if (!strcmp(key, "next")) r->next_hint_at = strtoll(val, NULL, 10);
+            else if (!strcmp(key, "began")) r->began_at = strtoll(val, NULL, 10);
             else if (!strcmp(key, "hint") && r->n_hints < SMZ_DAILY_HINTS) {
                 char *t2 = strchr(val, '\t');
                 if (t2) {
@@ -248,5 +259,8 @@ int smz_daily_mark_settings(char *json, size_t cap, const char *goal_check, cons
     if (json[0] != '{' || n + (size_t)an + 1 > cap || strstr(json, "\"challenge\":")) return -1;
     memmove(json + 1 + an, json + 1, n);   /* the terminator moves too */
     memcpy(json + 1, add, (size_t)an);
+    /* the map shows only what is collected: which checks are open now would be a free hint */
+    char *r = strstr(json, "\"showReachable\":true");
+    if (r && strlen(json) + 2 <= cap) { memmove(r + 21, r + 20, strlen(r + 20) + 1); memcpy(r + 16, "false", 5); }
     return 0;
 }

@@ -325,12 +325,14 @@ int main(void)
         ui_draw(&v);
         (void)zero;
     }
-    {   /* online tables: Right opens them, the host answers ACT_LADDER, tabs and scrolling work */
+    {   /* online tables: Select opens them, the host answers ACT_LADDER, tabs and scrolling work */
         SmzUi v; ui_init(&v);
-        ui_input(&v, BTN_RIGHT);
+        ui_input(&v, BTN_SELECT);
         assert(v.screen == UI_SLOTS_SCREEN && v.action == ACT_NONE);   /* the host has no ladder */
         ui_ladder_enable(&v, 1);
         ui_input(&v, BTN_RIGHT);
+        assert(v.screen == UI_SLOTS_SCREEN);                          /* Right is no longer a shortcut */
+        ui_input(&v, BTN_SELECT);
         assert(v.screen == UI_LADDER && v.action == ACT_LADDER);
         ui_draw(&v);                                                  /* "Loading ..." while nothing arrived */
         ui_ladder_begin(&v, 0, "", 1);
@@ -345,7 +347,10 @@ int main(void)
         assert(v.ladder_tab == 1 && v.ladder_scroll == 0);
         ui_draw(&v);                                                  /* "No connection" */
         assert(v.cmd_count < UI_MAX_CMDS - 40);
-        ui_input(&v, BTN_B);
+        ui_input(&v, BTN_SELECT);                                     /* Select goes back to the runs too, and so does the top button */
+        assert(v.screen == UI_SLOTS_SCREEN);
+        ui_input(&v, BTN_SELECT); ui_draw(&v);
+        ui_touch(&v, UI_W - 40, 12);
         assert(v.screen == UI_SLOTS_SCREEN);
         ui_ladder_load_json(&v, 2, "{\"kind\":\"weekly\",\"week\":\"2026-W44\",\"runs\":[{\"kind\":\"weekly\",\"period\":\"2026-W44\",\"player\":\"Ana\",\"country\":\"ES\",\"timeMs\":3723000,\"finishedAt\":1},{\"player\":\"Bo\",\"country\":\"\",\"timeMs\":4000000}]}");
         assert(v.ladder[2].loaded == 1 && v.ladder[2].n == 2 && !strcmp(v.ladder[2].label, "2026-W44"));
