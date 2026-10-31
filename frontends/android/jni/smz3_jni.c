@@ -5,6 +5,8 @@
 #include <string.h>
 #include "smz3_tracker.h"
 #include "smz3_daily.h"
+#include "smz3_shortcuts.h"
+#include "smz3_rom.h"
 
 #define NATIVE(name) Java_com_swordfish_lemuroid_app_shared_game_viewmodel_Smz3Native_##name
 
@@ -42,6 +44,63 @@ JNIEXPORT jintArray JNICALL NATIVE(preparedPokes)(JNIEnv *env, jclass cls, jbyte
     }
     jintArray r = (*env)->NewIntArray(env, n);
     (*env)->SetIntArrayRegion(env, r, 0, n, out);
+    return r;
+}
+
+/* Adds the shortcut hooks to a run's ROM made before them; null when it already has them or is not an SMZ3 ROM. */
+JNIEXPORT jbyteArray JNICALL NATIVE(addShortcutHooks)(JNIEnv *env, jclass cls, jbyteArray rom)
+{
+    jsize n = (*env)->GetArrayLength(env, rom);
+    if (n < 0x410000) return NULL;
+    jbyte *b = (*env)->GetByteArrayElements(env, rom, NULL);
+    int ok = smz_rom_shortcut_hooks((uint8_t *)b) == 0;
+    if (ok) smz_rom_checksum((uint8_t *)b);
+    (*env)->ReleaseByteArrayElements(env, rom, b, ok ? 0 : JNI_ABORT);
+    return ok ? rom : NULL;
+}
+
+/* The item shortcuts (core/ui/smz3_shortcuts.h): "name|icon" of each id, ALttP items first, then the beams. */
+JNIEXPORT jobjectArray JNICALL NATIVE(shortcutList)(JNIEnv *env, jclass cls)
+{
+    jobjectArray r = (*env)->NewObjectArray(env, SC_COUNT, (*env)->FindClass(env, "java/lang/String"), NULL);
+    char buf[96];
+    for (int i = 0; i < SC_COUNT; i++) {
+        snprintf(buf, sizeof buf, "%s|%s", smz_shortcuts[i].name, smz_shortcuts[i].icon);
+        (*env)->SetObjectArrayElement(env, r, i, (*env)->NewStringUTF(env, buf));
+    }
+    return r;
+}
+
+/* {ready, owned bits, active bits}: bit i is shortcut id i. */
+JNIEXPORT jintArray JNICALL NATIVE(shortcutState)(JNIEnv *env, jclass cls, jbyteArray wram, jbyteArray sram)
+{
+    jsize wl = (*env)->GetArrayLength(env, wram), sl = (*env)->GetArrayLength(env, sram);
+    jbyte *w = (*env)->GetByteArrayElements(env, wram, NULL), *s = (*env)->GetByteArrayElements(env, sram, NULL);
+    jint out[3] = {smz_shortcut_ready((const uint8_t *)w, (size_t)wl, (const uint8_t *)s, (size_t)sl), 0, 0};
+    for (int i = 0; i < SC_COUNT; i++) {
+        if (smz_shortcut_owned(i, (const uint8_t *)w, (size_t)wl, (const uint8_t *)s, (size_t)sl)) out[1] |= 1 << i;
+        if (smz_shortcut_active(i, (const uint8_t *)w, (size_t)wl, (const uint8_t *)s, (size_t)sl)) out[2] |= 1 << i;
+    }
+    (*env)->ReleaseByteArrayElements(env, wram, w, JNI_ABORT);
+    (*env)->ReleaseByteArrayElements(env, sram, s, JNI_ABORT);
+    jintArray r = (*env)->NewIntArray(env, 3);
+    (*env)->SetIntArrayRegion(env, r, 0, 3, out);
+    return r;
+}
+
+/* {offset, value} pairs to write in the work RAM for shortcut id, empty when it cannot act now. */
+JNIEXPORT jintArray JNICALL NATIVE(shortcutPokes)(JNIEnv *env, jclass cls, jint id, jbyteArray wram, jbyteArray sram)
+{
+    jsize wl = (*env)->GetArrayLength(env, wram), sl = (*env)->GetArrayLength(env, sram);
+    jbyte *w = (*env)->GetByteArrayElements(env, wram, NULL), *s = (*env)->GetByteArrayElements(env, sram, NULL);
+    SmzPoke p[4];
+    int n = smz_shortcut_pokes(id, (const uint8_t *)w, (size_t)wl, (const uint8_t *)s, (size_t)sl, p, 4);
+    (*env)->ReleaseByteArrayElements(env, wram, w, JNI_ABORT);
+    (*env)->ReleaseByteArrayElements(env, sram, s, JNI_ABORT);
+    jint out[8];
+    for (int i = 0; i < n; i++) { out[2 * i] = (jint)p[i].offset; out[2 * i + 1] = p[i].value; }
+    jintArray r = (*env)->NewIntArray(env, 2 * n);
+    (*env)->SetIntArrayRegion(env, r, 0, 2 * n, out);
     return r;
 }
 

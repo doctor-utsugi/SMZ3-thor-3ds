@@ -1278,10 +1278,10 @@ index 0000000..a93a4b6
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/RunGenerator.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/RunGenerator.kt
 new file mode 100644
-index 0000000..9af5943
+index 0000000..49e29ad
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/RunGenerator.kt
-@@ -0,0 +1,260 @@
+@@ -0,0 +1,262 @@
 +package com.swordfish.lemuroid.app.mobile.feature.runs
 +
 +import android.content.Context
@@ -1533,6 +1533,8 @@ index 0000000..9af5943
 +    suspend fun registerGame(context: Context, db: RetrogradeDatabase, slot: Int, name: String): Game = withContext(Dispatchers.IO) {
 +        val file = RunStore.romFile(context, slot)
 +        RunStore.load(context, slot)?.let { Smz3Music.prepare(file, it.settings, it.seed) }
++        // a run made before the item shortcuts gets their ROM hooks too
++        runCatching { com.swordfish.lemuroid.app.shared.game.viewmodel.Smz3Native.addShortcutHooks(file.readBytes())?.let { file.writeBytes(it) } }
 +        val uri = Uri.fromFile(file).toString()
 +        val dao = db.gameDao()
 +        val game = Game(
@@ -1926,7 +1928,7 @@ index 7985ccc..df2281c 100644
  
      suspend fun hdMode() = booleanPreference(R.string.pref_key_hd_mode, false)
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/BaseGameActivity.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/BaseGameActivity.kt
-index 6d06420..4b8c6af 100644
+index 6d06420..954898e 100644
 --- a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/BaseGameActivity.kt
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/BaseGameActivity.kt
 @@ -21,6 +21,7 @@ import com.swordfish.lemuroid.app.shared.ImmersiveActivity
@@ -1983,7 +1985,7 @@ index 6d06420..4b8c6af 100644
                      is GameViewModelSideEffects.UiEffect.SuccessfulFinish -> performSuccessfulActivityFinish()
                      is GameViewModelSideEffects.UiEffect.FailureFinish -> performErrorFinish(it.message)
                      is GameViewModelSideEffects.UiEffect.SaveQuickSave -> performSaveQuickSave()
-@@ -262,6 +270,61 @@ abstract class BaseGameActivity : ImmersiveActivity() {
+@@ -262,6 +270,62 @@ abstract class BaseGameActivity : ImmersiveActivity() {
          baseGameScreenViewModel.loadQuickSave()
      }
  
@@ -2013,7 +2015,8 @@ index 6d06420..4b8c6af 100644
 +        completeLine = box.getChildAt(box.childCount - 1) as android.widget.TextView   // the server's answer to a daily finish replaces it
 +        android.app.AlertDialog.Builder(this)
 +            .setView(box)
-+            .setPositiveButton("Continue", null)
++            .setPositiveButton("Main menu") { _, _ -> baseGameScreenViewModel.requestFinish() }
++            .setNegativeButton("Watch the credits", null)
 +            .show()
 +    }
 +
@@ -2045,7 +2048,7 @@ index 6d06420..4b8c6af 100644
      private fun performToggleFastForward() {
          baseGameScreenViewModel.toggleFastForward()
      }
-@@ -351,6 +414,9 @@ abstract class BaseGameActivity : ImmersiveActivity() {
+@@ -351,6 +415,9 @@ abstract class BaseGameActivity : ImmersiveActivity() {
      }
  
      override fun onDestroy() {
@@ -2056,20 +2059,21 @@ index 6d06420..4b8c6af 100644
              GameService.requestTermination()
          }
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/BaseGameScreenViewModel.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/BaseGameScreenViewModel.kt
-index 8f91e6c..06340fb 100644
+index 8f91e6c..9701792 100644
 --- a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/BaseGameScreenViewModel.kt
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/BaseGameScreenViewModel.kt
-@@ -16,6 +16,9 @@ import com.swordfish.lemuroid.app.mobile.feature.settings.SettingsManager
+@@ -16,6 +16,10 @@ import com.swordfish.lemuroid.app.mobile.feature.settings.SettingsManager
  import com.swordfish.lemuroid.app.shared.game.viewmodel.GameViewModelInput
  import com.swordfish.lemuroid.app.shared.game.viewmodel.GameViewModelRetroGameView
  import com.swordfish.lemuroid.app.shared.game.viewmodel.GameViewModelSaves
 +import com.swordfish.lemuroid.app.shared.game.viewmodel.Smz3HotkeyHost
 +import com.swordfish.lemuroid.app.shared.game.viewmodel.Smz3Hotkeys
++import com.swordfish.lemuroid.app.shared.game.viewmodel.Smz3Shortcuts
 +import com.swordfish.lemuroid.app.shared.game.viewmodel.Smz3Tracker
  import com.swordfish.lemuroid.app.shared.game.viewmodel.GameViewModelSideEffects
  import com.swordfish.lemuroid.app.shared.game.viewmodel.GameViewModelTilt
  import com.swordfish.lemuroid.app.shared.game.viewmodel.GameViewModelTouchControls
-@@ -238,14 +241,14 @@ class BaseGameScreenViewModel(
+@@ -238,14 +242,14 @@ class BaseGameScreenViewModel(
      }
  
      suspend fun saveSlot(index: Int) {
@@ -2086,7 +2090,7 @@ index 8f91e6c..06340fb 100644
          withLoading {
              saves.loadSlot(index)
          }
-@@ -253,7 +256,7 @@ class BaseGameScreenViewModel(
+@@ -253,7 +257,7 @@ class BaseGameScreenViewModel(
  
      fun saveQuickSave() {
          Timber.d("Saving quick save")
@@ -2095,7 +2099,7 @@ index 8f91e6c..06340fb 100644
          withLoading {
              saves.saveQuickSave()
          }
-@@ -261,16 +264,39 @@ class BaseGameScreenViewModel(
+@@ -261,16 +265,39 @@ class BaseGameScreenViewModel(
  
      fun loadQuickSave() {
          Timber.d("Loading quick save")
@@ -2139,7 +2143,7 @@ index 8f91e6c..06340fb 100644
          }
      }
  
-@@ -309,21 +335,37 @@ class BaseGameScreenViewModel(
+@@ -309,21 +336,38 @@ class BaseGameScreenViewModel(
  
      override fun onCreate(owner: LifecycleOwner) {
          super.onCreate(owner)
@@ -2165,6 +2169,7 @@ index 8f91e6c..06340fb 100644
          event: KeyEvent,
      ): Boolean {
 +        Smz3Hotkeys.host = hotkeyHost
++        if (Smz3Shortcuts.onKey(appContext, event)) return true
 +        if (Smz3Hotkeys.onKey(appContext, event)) return true
          return inputs.sendKeyEvent(keyCode, event)
      }
@@ -2178,10 +2183,26 @@ index 8f91e6c..06340fb 100644
 +    }
  }
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/GameViewModelInput.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/GameViewModelInput.kt
-index 998ae22..bff4b3f 100644
+index 998ae22..70b25d3 100644
 --- a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/GameViewModelInput.kt
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/GameViewModelInput.kt
-@@ -330,6 +330,7 @@ class GameViewModelInput(
+@@ -239,6 +239,15 @@ class GameViewModelInput(
+             initializeGamePadKeysFlow()
+         }
+ 
++        owner.launchOnState(Lifecycle.State.CREATED) {
++            // the item shortcuts' bind panel tells a free button by these
++            combine(inputDeviceManager.getInputBindingsObservable(), inputDeviceManager.getGameShortcutsObservable(), ::NTuple2)
++                .safeCollect { (bindings, shortcuts) ->
++                    Smz3Shortcuts.padBindings = bindings
++                    Smz3Shortcuts.padShortcuts = shortcuts
++                }
++        }
++
+         owner.launchOnState(Lifecycle.State.CREATED) {
+             initializeVirtualGamePadMotionsFlow()
+         }
+@@ -330,6 +339,7 @@ class GameViewModelInput(
                      }
                  }
  
@@ -2202,7 +2223,7 @@ index 02e981f..c1bfab7 100644
  
          return currentState.gameData to result
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/GameViewModelSaves.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/GameViewModelSaves.kt
-index 1eea23b..d9459a5 100644
+index 1eea23b..ef34a6a 100644
 --- a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/GameViewModelSaves.kt
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/GameViewModelSaves.kt
 @@ -119,7 +119,7 @@ class GameViewModelSaves(
@@ -2214,6 +2235,16 @@ index 1eea23b..d9459a5 100644
      }
  
      private suspend fun takeScreenshotPreview(index: Int) {
+@@ -155,7 +155,8 @@ class GameViewModelSaves(
+             retroGameView.changeDisk(saveState.metadata.diskIndex)
+         }
+ 
+-        return retroGameView.unserializeState(saveState.state)
++        // the tracker's recent lists drop what the state undid
++        return retroGameView.unserializeState(saveState.state).also { if (it) Smz3Tracker.stateLoaded = 3 }
+     }
+ 
+     fun saveQuickSave() {
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Bosses.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Bosses.kt
 new file mode 100644
 index 0000000..d973310
@@ -3043,10 +3074,10 @@ index 0000000..9595fe8
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Hotkeys.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Hotkeys.kt
 new file mode 100644
-index 0000000..f6aec10
+index 0000000..c2d75a2
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Hotkeys.kt
-@@ -0,0 +1,170 @@
+@@ -0,0 +1,174 @@
 +package com.swordfish.lemuroid.app.shared.game.viewmodel
 +
 +import android.content.Context
@@ -3154,12 +3185,16 @@ index 0000000..f6aec10
 +        else -> "Original 4:3"
 +    }
 +
-+    /** Save states are a per-run option ("Save states" in the QoL tab), off unless the run was created with it on, and never on an online ladder run. */
++    /** Save states are a per-run option ("Save states" in the QoL tab), off unless the run was created with it on, never on an online ladder run and never once the run is finished. */
 +    fun saveStatesAllowed(context: Context): Boolean {
 +        if (noAutosave(context)) return false
 +        val run = RunStore.activeSlot(context)?.let { RunStore.load(context, it) } ?: return true
++        if (runFinished(context)) return false   // a finished run is not played again
 +        return runCatching { org.json.JSONObject(run.settings).optBoolean("saveStates", false) }.getOrDefault(false)
 +    }
++
++    fun runFinished(context: Context): Boolean =
++        RunStore.activeSlot(context)?.let { RunStore.load(context, it) }?.let { it.completedAt != 0L || it.game == 3 } ?: false
 +
 +    /** A daily challenge run (its settings have "challenge":true): no fast forward. */
 +    fun challengeRun(context: Context): Boolean {
@@ -3179,7 +3214,7 @@ index 0000000..f6aec10
 +        timber.log.Timber.i("SMZ3 hotkey ${action.name} slot=${slot(context)}")
 +        val h = host ?: return
 +        if ((action == Smz3HotkeyAction.SAVE_STATE || action == Smz3HotkeyAction.LOAD_STATE) && !saveStatesAllowed(context)) {
-+            h.hotkeyToast("Save states are off in this run")
++            h.hotkeyToast(if (runFinished(context)) "The run is finished" else "Save states are off in this run")
 +            return
 +        }
 +        when (action) {
@@ -4157,10 +4192,10 @@ index 0000000..dc5944a
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Native.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Native.kt
 new file mode 100644
-index 0000000..80e52de
+index 0000000..fb351ef
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Native.kt
-@@ -0,0 +1,92 @@
+@@ -0,0 +1,97 @@
 +package com.swordfish.lemuroid.app.shared.game.viewmodel
 +
 +/** JNI bridge to the shared C core (core/smz3_state.c). */
@@ -4174,6 +4209,11 @@ index 0000000..80e52de
 +    /** The daily challenge goal of the run being played, from its settings JSON (none clears it). */
 +    @JvmStatic external fun setGoal(settings: String?)
 +    @JvmStatic external fun preparedPokes(wram: ByteArray, sram: ByteArray): IntArray
++    @JvmStatic external fun addShortcutHooks(rom: ByteArray): ByteArray?
++
++    @JvmStatic external fun shortcutList(): Array<String>
++    @JvmStatic external fun shortcutState(wram: ByteArray, sram: ByteArray): IntArray
++    @JvmStatic external fun shortcutPokes(id: Int, wram: ByteArray, sram: ByteArray): IntArray
 +
 +    @JvmStatic external fun clearedLocations(wram: ByteArray, sram: ByteArray): IntArray
 +
@@ -4255,10 +4295,10 @@ index 0000000..80e52de
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Presentation.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Presentation.kt
 new file mode 100644
-index 0000000..5f3d3c9
+index 0000000..4cdf95c
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Presentation.kt
-@@ -0,0 +1,791 @@
+@@ -0,0 +1,921 @@
 +package com.swordfish.lemuroid.app.shared.game.viewmodel
 +
 +import android.app.Presentation
@@ -4444,10 +4484,136 @@ index 0000000..5f3d3c9
 +
 +        val page = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL }
 +        page.addView(ScrollView(context).apply { addView(column) }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 0.46f))
++        val right = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
++        shortcutRow = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL; visibility = View.GONE; setPadding(0, dp(2), 0, dp(2)) }
++        right.addView(shortcutRow, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)))
 +        miniMap = Smz3MapView(context, follow = true).also {
-+            page.addView(it, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 0.54f))
++            right.addView(it, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
 +        }
-+        return page
++        page.addView(right, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 0.54f))
++        shortcutOverlay = buildMarkOverlay()
++        return FrameLayout(context).apply {
++            addView(page, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
++            addView(shortcutOverlay, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
++        }
++    }
++
++    private lateinit var shortcutRow: LinearLayout
++    private lateinit var shortcutOverlay: LinearLayout
++    private var shortcutShown = ""
++
++    private fun shortcutIcon(item: Smz3Shortcuts.Item): View {
++        val box = FrameLayout(context)
++        if (item.icon.isEmpty()) {
++            box.addView(TextView(context).apply { textSize = 11f; setTextColor(Color.WHITE); gravity = Gravity.CENTER; text = item.name }, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
++        } else {
++            box.addView(markIcon(item.icon, 40).apply { layoutParams = FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT) })
++        }
++        item.name.lastOrNull()?.takeIf { it.isDigit() }?.let { n ->   // the four bottles share one icon
++            box.addView(
++                TextView(context).apply { textSize = 12f; setTextColor(Color.WHITE); setShadowLayer(3f, 0f, 0f, Color.BLACK); text = n.toString() },
++                FrameLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.END or Gravity.BOTTOM),
++            )
++        }
++        return box
++    }
++
++    /** The row over the mini map: five ALttP slots or the beams owned, after the game being played. */
++    private fun renderShortcuts(game: Int) {
++        val on = (game == 1 || game == 2) && Smz3Shortcuts.rowShown(context)
++        val slots = List(Smz3Shortcuts.SLOTS) { Smz3Shortcuts.slot(context, it) }
++        val key = "$on $game $slots ${Smz3Shortcuts.owned} ${Smz3Shortcuts.active} ${theme.accent}"
++        if (key == shortcutShown) return
++        shortcutShown = key
++        shortcutRow.visibility = if (on) View.VISIBLE else View.GONE
++        shortcutRow.removeAllViews()
++        if (!on) return
++        fun cell(content: View?, active: Boolean, owned: Boolean, tap: () -> Unit, hold: () -> Unit) {
++            val box = FrameLayout(context).apply {
++                setPadding(dp(4), dp(3), dp(4), dp(3))
++                setBackgroundColor(if (active) Color.argb(110, Color.red(theme.accent), Color.green(theme.accent), Color.blue(theme.accent)) else Color.argb(150, 0, 0, 0))
++                setOnClickListener { tap() }
++                setOnLongClickListener { hold(); true }
++            }
++            if (content != null) {
++                content.alpha = if (owned) 1f else 0.25f
++                box.addView(content, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
++            } else {
++                box.addView(TextView(context).apply { textSize = 18f; setTextColor(theme.dim); gravity = Gravity.CENTER; text = "+" })
++            }
++            shortcutRow.addView(box, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply { setMargins(dp(2), 0, dp(2), 0) })
++        }
++        if (game == 1) {
++            slots.forEachIndexed { i, id ->
++                val item = Smz3Shortcuts.items.getOrNull(id)
++                cell(item?.let { shortcutIcon(it) }, item != null && Smz3Shortcuts.isActive(id), item != null && Smz3Shortcuts.isOwned(id),
++                    { if (item == null) showShortcutPanel(i, null) else Smz3Shortcuts.request(id) }, { showShortcutPanel(i, null) })
++            }
++        } else {
++            Smz3Shortcuts.items.filter { !it.zelda && Smz3Shortcuts.isOwned(it.id) }.forEach { beam ->
++                cell(shortcutIcon(beam), Smz3Shortcuts.isActive(beam.id), true, { Smz3Shortcuts.request(beam.id) }, { showShortcutPanel(null, beam.id) })
++            }
++        }
++    }
++
++    /** For an ALttP [slot]: the items owned to put in it; for a [beam]: its button only. Both bind a free pad button. */
++    private fun showShortcutPanel(slot: Int?, beam: Int?) {
++        val box = shortcutOverlay
++        box.removeAllViews()
++        fun current(): Smz3Shortcuts.Item? = (if (slot != null) Smz3Shortcuts.slot(context, slot) else beam!!).let { Smz3Shortcuts.items.getOrNull(it) }
++        val title = TextView(context).apply { textSize = 15f; setTextColor(Color.parseColor("#FFD54A")) }
++        val bindBtn = Button(context)
++        val unbindBtn = Button(context)
++        fun refresh(note: String? = null) {
++            val item = current()
++            title.text = note ?: when {
++                item == null -> "Slot ${slot!! + 1}: tap an item to put in it"
++                slot != null -> "Slot ${slot + 1}: ${item.name}"
++                else -> item.name
++            }
++            val key = item?.let { Smz3Shortcuts.key(context, it.id) }
++            bindBtn.isEnabled = item != null
++            bindBtn.text = if (key != null) "BUTTON: ${Smz3Shortcuts.keyName(key)}" else "BIND BUTTON"
++            unbindBtn.visibility = if (key != null) View.VISIBLE else View.GONE
++        }
++        box.addView(title)
++        if (slot != null) {
++            val grid = GridLayout(context).apply { columnCount = 11 }
++            box.addView(ScrollView(context).apply { addView(grid) }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
++            fun fill() {
++                grid.removeAllViews()
++                val owned = Smz3Shortcuts.items.filter { it.zelda && Smz3Shortcuts.isOwned(it.id) }
++                if (owned.isEmpty()) grid.addView(TextView(context).apply { textSize = 14f; setTextColor(Color.parseColor("#C8D0D8")); text = "No items yet" })
++                for (item in owned) {
++                    val cell = shortcutIcon(item).apply {
++                        setPadding(dp(2), dp(2), dp(2), dp(2))
++                        if (current()?.id == item.id) setBackgroundColor(Color.argb(160, 255, 213, 74))
++                        setOnClickListener { Smz3Shortcuts.setSlot(context, slot, item.id); shortcutShown = ""; fill(); refresh() }
++                    }
++                    grid.addView(cell, GridLayout.LayoutParams().apply { width = dp(44); height = dp(44); setMargins(dp(1), dp(1), dp(1), dp(1)) })
++                }
++            }
++            fill()
++        } else {
++            box.addView(View(context), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
++        }
++        bindBtn.setOnClickListener {
++            val item = current() ?: return@setOnClickListener
++            refresh("Press the button for ${item.name}")
++            Smz3Shortcuts.capture = { event ->
++                box.post { refresh(Smz3Shortcuts.bind(context, item.id, event) ?: "${item.name} is on ${Smz3Shortcuts.keyName(event.keyCode)}") }
++            }
++        }
++        unbindBtn.text = "UNBIND"
++        unbindBtn.setOnClickListener { current()?.let { Smz3Shortcuts.unbind(context, it.id) }; Smz3Shortcuts.capture = null; refresh() }
++        val buttons = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL }
++        buttons.addView(bindBtn, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1.4f))
++        buttons.addView(unbindBtn, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
++        if (slot != null) buttons.addView(overlayButton("CLEAR") { Smz3Shortcuts.setSlot(context, slot, -1); shortcutShown = ""; showShortcutPanel(slot, null) }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
++        buttons.addView(overlayButton("CLOSE") { Smz3Shortcuts.capture = null; shortcutOverlay.apply { visibility = View.GONE; removeAllViews() } }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
++        box.addView(buttons)
++        refresh()
++        box.visibility = View.VISIBLE
 +    }
 +
 +    private fun renderRecentItems(list: List<Int>) {
@@ -4771,6 +4937,9 @@ index 0000000..5f3d3c9
 +            LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(18) },
 +        )
 +        column.addView(label(12f, Role.DIM).apply { text = "The hotkeys work in game on the main screen. The state is saved in the active slot."; setPadding(0, dp(12), 0, 0) })
++        column.addView(label(13f, Role.DIM).apply { text = "ITEM SHORTCUTS  (the row over the RUN tab's map)"; setPadding(0, dp(18), 0, 0) })
++        spinRow("Shortcut row", { if (Smz3Shortcuts.rowShown(context)) "Shown" else "Hidden" }) { Smz3Shortcuts.setRowShown(context, !Smz3Shortcuts.rowShown(context)); shortcutShown = "" }
++        column.addView(label(12f, Role.DIM).apply { text = "Tap a slot to equip its item on Y, or a beam to turn it on or off. Hold one to change it or bind a pad button to it."; setPadding(0, dp(6), 0, 0) })
 +        column.addView(label(13f, Role.DIM).apply { text = "DAILY CHALLENGE  (the strip over the tabs)"; setPadding(0, dp(18), 0, 0) })
 +        val daily = com.swordfish.lemuroid.app.mobile.feature.runs.DailyChallenge
 +        daily.SHOW_TITLES.forEachIndexed { i, title ->
@@ -5012,6 +5181,7 @@ index 0000000..5f3d3c9
 +            }
 +        }
 +
++        renderShortcuts(if (s.started) s.game else 0)
 +        renderDaily(s.game == 3)
 +        renderHelp(s.help)
 +        map?.setVisibleChecks(s.help.visibleChecks)
@@ -5240,10 +5410,10 @@ index 0000000..378f91a
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Tracker.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Tracker.kt
 new file mode 100644
-index 0000000..50bf9a7
+index 0000000..da1d115
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Tracker.kt
-@@ -0,0 +1,384 @@
+@@ -0,0 +1,411 @@
 +package com.swordfish.lemuroid.app.shared.game.viewmodel
 +
 +import android.app.Presentation
@@ -5319,6 +5489,9 @@ index 0000000..50bf9a7
 +
 +    /** 0 until the game is known, then 1 for A Link to the Past, 2 for Super Metroid and 3 for the credits. */
 +    @Volatile var currentGame = 0
++
++    /** Set after a save state is loaded: the next reads drop the recent checks and items the state undid. */
++    @Volatile var stateLoaded = 0
 +    private var baseMs = 0L
 +    private var baseSlot: Int? = null
 +    private var finishedSaved = false
@@ -5386,6 +5559,7 @@ index 0000000..50bf9a7
 +                while (waited < 500) {
 +                    delay(100)
 +                    waited += 100
++                    if (Smz3Shortcuts.pending()) { applyShortcuts(view); break }   // a full read right after, to show it
 +                    if (lastGame == 0 || lastGame == 3) continue
 +                    val w = view.readMemory(GLRetroView.MEMORY_SYSTEM_RAM, 0, WRAM_SIZE)
 +                    val sr = view.readMemory(GLRetroView.MEMORY_SAVE_RAM, 0, SRAM_SIZE)
@@ -5399,6 +5573,11 @@ index 0000000..50bf9a7
 +                    if (pad != lastPad) { lastPad = pad; Timber.i("SMZ3 SM pad word \$8B = %04x".format(pad)) }
 +                }
 +                val sram = view.readMemory(GLRetroView.MEMORY_SAVE_RAM, 0, SRAM_SIZE)
++                Smz3Native.shortcutState(wram, sram).let { st ->
++                    Smz3Shortcuts.ready = st[0] != 0
++                    Smz3Shortcuts.owned = st[1].toLong() and 0xFFFFFFFFL
++                    Smz3Shortcuts.active = st[2].toLong() and 0xFFFFFFFFL
++                }
 +                // a mid-game daily start keeps its dead bosses dead (nothing to write for any other run)
 +                val pokes = Smz3Native.preparedPokes(wram, sram)
 +                for (i in pokes.indices step 3) {
@@ -5451,6 +5630,12 @@ index 0000000..50bf9a7
 +                    inventoryCache[i] = inv[i]
 +                }
 +                inventoryBaseline = started
++                if (stateLoaded > 0 && started) {   // a few reads, in case the first one lands on a transition frame
++                    stateLoaded--
++                    val names = cleared.map { Smz3Native.locationName(it) }.toSet()
++                    recent.retainAll { it in names }
++                    recentItems.retainAll { inventoryCache.getOrElse(it) { 0 } > 0 }
++                }
 +
 +                if (started && Smz3Help.current().mode == "all" && Smz3Help.current().reachable && --logicCountdown <= 0) {
 +                    logicCountdown = 6
@@ -5611,6 +5796,18 @@ index 0000000..50bf9a7
 +                Timber.i("SMZ3 mem sram340=" + hex(sram, 0x340, 0x50) + " sram3b40=" + hex(sram, 0x3B40, 0x50) + " sram3f50=" + hex(sram, 0x3F50, 0x10) + " sram3970=" + hex(sram, 0x3970, 2) + " wramF340=" + hex(wram, 0xF340, 0x50) + " wramF4E0=" + hex(wram, 0xF4E0, 0x10) + " wramD830=" + hex(wram, 0xD830, 2))
 +                Timber.i("SMZ3 game=${s[0]} started=$started zelda=${s[2]}/${s[3]} metroid=${s[4]}/${s[5]} nmi=%d room=%04x x=%d y=%d zmod=%02x zroom=%04x zx=%d zy=%d pose=%04x mv=%04x shots=%d".format((wram[0x5B6].toInt() and 0xFF) or ((wram[0x5B7].toInt() and 0xFF) shl 8), (wram[0x79B].toInt() and 0xFF) or ((wram[0x79C].toInt() and 0xFF) shl 8), (wram[0xAF6].toInt() and 0xFF) or ((wram[0xAF7].toInt() and 0xFF) shl 8), (wram[0xAFA].toInt() and 0xFF) or ((wram[0xAFB].toInt() and 0xFF) shl 8), wram[0x10], (wram[0xA0].toInt() and 0xFF) or ((wram[0xA1].toInt() and 0xFF) shl 8), (wram[0x22].toInt() and 0xFF) or ((wram[0x23].toInt() and 0xFF) shl 8), (wram[0x20].toInt() and 0xFF) or ((wram[0x21].toInt() and 0xFF) shl 8), (wram[0xA1C].toInt() and 0xFF) or ((wram[0xA1D].toInt() and 0xFF) shl 8), (wram[0xA1E].toInt() and 0xFF) or ((wram[0xA1F].toInt() and 0xFF) shl 8), (wram[0xCCE].toInt() and 0xFF) or ((wram[0xCCF].toInt() and 0xFF) shl 8)))
 +            }
++        }
++    }
++
++    /** The shortcuts asked for since the last read; one that cannot act now (not owned, not in normal play) is dropped. */
++    private fun applyShortcuts(view: GLRetroView) {
++        while (true) {
++            val id = Smz3Shortcuts.poll() ?: return
++            val wram = view.readMemory(GLRetroView.MEMORY_SYSTEM_RAM, 0, WRAM_SIZE)
++            val sram = view.readMemory(GLRetroView.MEMORY_SAVE_RAM, 0, SRAM_SIZE)
++            val pokes = Smz3Native.shortcutPokes(id, wram, sram)
++            for (i in pokes.indices step 2) view.writeMemory(GLRetroView.MEMORY_SYSTEM_RAM, pokes[i], byteArrayOf(pokes[i + 1].toByte()))
++            Timber.i("SMZ3 shortcut $id: ${pokes.size / 2} writes")
 +        }
 +    }
 +
@@ -8472,5 +8669,140 @@ index 0000000..8b05461
 +                .setNegativeButton("Leave the run") { _, _ -> onLeave() }
 +                .show()
 +        }
++    }
++}
+diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Shortcuts.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Shortcuts.kt
+new file mode 100644
+index 0000000..e561eda
+--- /dev/null
++++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Shortcuts.kt
+@@ -0,0 +1,129 @@
++package com.swordfish.lemuroid.app.shared.game.viewmodel
++
++import android.content.Context
++import android.view.InputDevice
++import android.view.KeyEvent
++import com.swordfish.lemuroid.app.shared.input.InputKey
++import com.swordfish.lemuroid.app.shared.input.RetroKey
++import com.swordfish.lemuroid.app.shared.settings.GameShortcut
++import java.util.concurrent.ConcurrentLinkedQueue
++
++/**
++ * Item shortcuts: five ALttP slots that equip an item on Y and the Super Metroid beams, from the tracker's RUN tab or from
++ * a pad button bound to one. The ids and the memory writes come from the core (smz3_shortcuts.c); the tracker loop makes
++ * the writes, only in normal play.
++ */
++object Smz3Shortcuts {
++    const val SLOTS = 5
++    private const val FILE = "smz3_shortcuts"
++
++    class Item(val id: Int, val name: String, val icon: String, val zelda: Boolean)
++
++    val items: List<Item> by lazy {
++        Smz3Native.shortcutList().mapIndexed { id, s ->
++            val (name, icon) = s.split("|", limit = 2)
++            Item(id, name, icon, name !in BEAMS)
++        }
++    }
++    private val BEAMS = setOf("Wave", "Ice", "Spazer", "Plasma")
++
++    /** The pad mapping and Lemuroid's own shortcuts, kept current by the game's input, to tell a free button. */
++    @Volatile var padBindings: ((InputDevice?) -> Map<InputKey, RetroKey>)? = null
++    @Volatile var padShortcuts: Map<InputDevice, List<GameShortcut>> = emptyMap()
++
++    /** Set while the bind panel waits for a button: the next press goes here instead of the game. */
++    @Volatile var capture: ((KeyEvent) -> Unit)? = null
++
++    /** From the last read of the game: in normal play, the ids owned and the ids on (one bit per id). */
++    @Volatile var ready = false
++    @Volatile var owned = 0L
++    @Volatile var active = 0L
++
++    private val queue = ConcurrentLinkedQueue<Int>()
++    private val consumed = HashSet<Int>()
++
++    private fun prefs(context: Context) = context.getSharedPreferences(FILE, Context.MODE_PRIVATE)
++
++    fun slot(context: Context, i: Int): Int = prefs(context).getInt("slot$i", -1).takeIf { it in items.indices } ?: -1
++
++    fun setSlot(context: Context, i: Int, id: Int) = prefs(context).edit().putInt("slot$i", id).apply()
++
++    fun rowShown(context: Context): Boolean = prefs(context).getBoolean("row", true)
++
++    fun setRowShown(context: Context, on: Boolean) = prefs(context).edit().putBoolean("row", on).apply()
++
++    /** The button bound to [id], or null. */
++    fun key(context: Context, id: Int): Int? = prefs(context).all.entries
++        .firstOrNull { it.key.startsWith("key") && it.value == id }?.key?.removePrefix("key")?.toIntOrNull()
++
++    private fun boundTo(context: Context, keyCode: Int): Int? = prefs(context).getInt("key$keyCode", -1).takeIf { it in items.indices }
++
++    fun unbind(context: Context, id: Int) {
++        key(context, id)?.let { prefs(context).edit().remove("key$it").apply() }
++    }
++
++    fun keyName(keyCode: Int): String = InputKey(keyCode).displayName()
++
++    /** Binds [event]'s button to [id], or returns what already uses it. */
++    fun bind(context: Context, id: Int, event: KeyEvent): String? {
++        val code = event.keyCode
++        usedBy(context, id, event)?.let { return "${keyName(code)} is used by $it" }
++        unbind(context, id)
++        prefs(context).edit().putInt("key$code", id).apply()
++        return null
++    }
++
++    private val SNES_KEYS = mapOf(
++        KeyEvent.KEYCODE_BUTTON_A to "A", KeyEvent.KEYCODE_BUTTON_B to "B", KeyEvent.KEYCODE_BUTTON_X to "X",
++        KeyEvent.KEYCODE_BUTTON_Y to "Y", KeyEvent.KEYCODE_BUTTON_L1 to "L", KeyEvent.KEYCODE_BUTTON_R1 to "R",
++        KeyEvent.KEYCODE_BUTTON_START to "Start", KeyEvent.KEYCODE_BUTTON_SELECT to "Select",
++        KeyEvent.KEYCODE_DPAD_UP to "Up", KeyEvent.KEYCODE_DPAD_DOWN to "Down", KeyEvent.KEYCODE_DPAD_LEFT to "Left",
++        KeyEvent.KEYCODE_DPAD_RIGHT to "Right",
++    )
++
++    private fun usedBy(context: Context, id: Int, event: KeyEvent): String? {
++        val code = event.keyCode
++        when (code) {
++            KeyEvent.KEYCODE_BACK, KeyEvent.KEYCODE_HOME, KeyEvent.KEYCODE_VOLUME_UP, KeyEvent.KEYCODE_VOLUME_DOWN,
++            KeyEvent.KEYCODE_POWER, KeyEvent.KEYCODE_APP_SWITCH -> return "Android"
++            KeyEvent.KEYCODE_BUTTON_MODE -> return "the emulator's menu"
++        }
++        val mapped = padBindings?.invoke(event.device)?.get(InputKey(code))?.keyCode ?: code
++        SNES_KEYS[mapped]?.let { return "the SNES $it button" }
++        Smz3HotkeyAction.entries.firstOrNull { code in Smz3Hotkeys.keys(context, it) }?.let { action ->
++            return "the ${action.title} hotkey (" + Smz3Hotkeys.keys(context, action).joinToString(" + ") { Smz3Hotkeys.name(it) } + ")"
++        }
++        padShortcuts.values.flatten().firstOrNull { code in it.keys }?.let { return "the emulator's ${it.type.displayName()} shortcut (${it.name})" }
++        boundTo(context, code)?.takeIf { it != id }?.let { return "the ${items[it].name} shortcut" }
++        return null
++    }
++
++    /** A tap on the row or a bound button: the tracker loop makes the writes at its next read. */
++    fun request(id: Int) {
++        if (id in items.indices) queue.add(id)
++    }
++
++    fun poll(): Int? = queue.poll()
++
++    fun pending(): Boolean = queue.isNotEmpty()
++
++    fun isOwned(id: Int) = owned and (1L shl id) != 0L
++
++    fun isActive(id: Int) = active and (1L shl id) != 0L
++
++    /** Returns true when the key was taken by the bind panel or a bound shortcut and must not reach the game. */
++    fun onKey(context: Context, event: KeyEvent): Boolean {
++        val code = event.keyCode
++        if (event.action == KeyEvent.ACTION_UP) return consumed.remove(code)
++        if (event.action != KeyEvent.ACTION_DOWN) return code in consumed
++        capture?.let { take ->
++            consumed.add(code)
++            if (event.repeatCount == 0) { capture = null; take(event) }
++            return true
++        }
++        val id = boundTo(context, code) ?: return false
++        consumed.add(code)
++        if (event.repeatCount == 0) request(id)
++        return true
 +    }
 +}

@@ -103,6 +103,7 @@ static int build_rom(uint8_t *rom, SmzSeed *seed, const uint8_t *sm, const uint8
             }
         }
     }
+    smz_rom_shortcut_hooks(rom);   /* an unexpected ROM keeps working, its shortcuts just refresh at the next pause */
     smz_rom_checksum(rom);
     return 0;
 }

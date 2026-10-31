@@ -8,10 +8,12 @@
 #include "pc_help.h"
 #include "pc_pad.h"
 #include "pc_settings.h"
+#include "pc_shortcuts.h"
 #include "pc_store.h"
+#include "smz3_shortcuts.h"
 
-enum { S_OFF, S_MAIN, S_PAD, S_REBIND, S_FILES, S_VIDEO };
-#define MAIN_COUNT 3
+enum { S_OFF, S_MAIN, S_PAD, S_REBIND, S_FILES, S_VIDEO, S_SC, S_SCBIND };
+#define MAIN_COUNT 4
 #define VIDEO_ROWS 10
 #define VIDEO_COUNT (VIDEO_ROWS + 1)
 static const char *const ASPECTS[] = {"Run default", "4:3", "8:7 (square pixels)", "Stretch", "Pixel perfect"};
@@ -26,6 +28,7 @@ static int vid_size = 1, vid_aspect, vid_filter, mm_side, mm_size = 2, ch_hide; 
 static SettingsHooks hk;
 static int screen, cursor, scroll, rebind_action;
 static Uint32 rebind_until;
+static char sc_msg[96];   /* the last bind's result on the item shortcuts screen */
 
 typedef struct { char name[200]; int dir; } Entry;
 static Entry *entries;
@@ -217,21 +220,23 @@ static void clamp_scroll(int rows)
 
 void settings_nav(UiButton b)
 {
-    int rows = screen == S_MAIN ? MAIN_COUNT : screen == S_VIDEO ? VIDEO_COUNT : screen == S_PAD ? PA_COUNT + 2 : screen == S_FILES ? file_rows() : 0;
-    if (screen == S_REBIND) return;
+    int rows = screen == S_MAIN ? MAIN_COUNT : screen == S_VIDEO ? VIDEO_COUNT : screen == S_PAD ? PA_COUNT + 2 : screen == S_SC ? SC_COUNT + 1 : screen == S_FILES ? file_rows() : 0;
+    if (screen == S_REBIND || screen == S_SCBIND) return;
     if (b == BTN_DOWN && cursor < rows - 1) cursor++;
     else if (b == BTN_UP && cursor > 0) cursor--;
     else if ((b == BTN_LEFT || b == BTN_RIGHT) && screen == S_VIDEO && cursor < VIDEO_ROWS) video_change(cursor, b == BTN_RIGHT ? 1 : -1);
+    else if ((b == BTN_R || b == BTN_L) && screen == S_SC) cursor = b == BTN_R ? (cursor + SHOWN < rows ? cursor + SHOWN : rows - 1) : (cursor > SHOWN ? cursor - SHOWN : 0);
     else if (b == BTN_R && screen == S_FILES) cursor = cursor + SHOWN < rows ? cursor + SHOWN : rows - 1;
     else if (b == BTN_L && screen == S_FILES) cursor = cursor > SHOWN ? cursor - SHOWN : 0;
     else if (b == BTN_B) {
         if (screen == S_MAIN) screen = S_OFF;
         else if (screen == S_FILES) leave_files();
-        else { screen = S_MAIN; cursor = 0; scroll = 0; }
+        else { cursor = screen == S_SC ? 2 : screen == S_VIDEO ? 1 : 0; screen = S_MAIN; scroll = 0; }
     } else if (b == BTN_A) {
         if (screen == S_MAIN) {
             if (cursor == 0) { screen = S_PAD; cursor = 0; scroll = 0; }
             else if (cursor == 1) { screen = S_VIDEO; cursor = 0; scroll = 0; }
+            else if (cursor == 2) { screen = S_SC; cursor = 0; scroll = 0; sc_msg[0] = 0; }
             else hk.quit();
         } else if (screen == S_VIDEO) {
             if (cursor == VIDEO_ROWS) { screen = S_MAIN; cursor = 1; scroll = 0; }
@@ -240,6 +245,9 @@ void settings_nav(UiButton b)
             if (cursor < PA_COUNT) { rebind_action = cursor; rebind_until = SDL_GetTicks() + 6000; screen = S_REBIND; }
             else if (cursor == PA_COUNT) { pad_cfg_reset(); pad_cfg_save(); }
             else { screen = S_MAIN; cursor = 0; scroll = 0; }
+        } else if (screen == S_SC) {
+            if (cursor < SC_COUNT) { rebind_action = cursor; rebind_until = SDL_GetTicks() + 6000; screen = S_SCBIND; }
+            else { screen = S_MAIN; cursor = 2; scroll = 0; }
         } else if (screen == S_FILES) file_pick(cursor);
     }
     clamp_scroll(rows);
@@ -247,6 +255,20 @@ void settings_nav(UiButton b)
 
 int settings_raw(const SDL_Event *e, int code)
 {
+    if (screen == S_SCBIND) {
+        const char *err = NULL;
+        const char *name = smz_shortcuts[rebind_action].name;
+        if (e->type == SDL_KEYDOWN && e->key.repeat) return 1;
+        if (e->type == SDL_KEYDOWN && e->key.keysym.sym == SDLK_ESCAPE) { screen = S_SC; return 1; }
+        if (e->type == SDL_KEYDOWN && e->key.keysym.sym == SDLK_DELETE) { sc_clear(rebind_action); snprintf(sc_msg, sizeof sc_msg, "%s has no key or button now", name); screen = S_SC; return 1; }
+        if (e->type == SDL_KEYDOWN) err = sc_bind_key(rebind_action, e->key.keysym.sym);
+        else if (code >= 0) err = sc_bind_pad(rebind_action, code);
+        else return 0;
+        if (err) snprintf(sc_msg, sizeof sc_msg, "%s", err);
+        else snprintf(sc_msg, sizeof sc_msg, "%s is on %s", name, e->type == SDL_KEYDOWN ? SDL_GetKeyName(e->key.keysym.sym) : pad_code_name(code));
+        screen = S_SC;
+        return 1;
+    }
     if (screen != S_REBIND) return 0;
     if (e->type == SDL_KEYDOWN && e->key.keysym.sym == SDLK_ESCAPE) { screen = S_PAD; return 1; }
     if (code >= 0) {
@@ -278,13 +300,13 @@ void settings_draw(float k, float ox, float oy)
     if (screen == S_OFF) return;
     gfx_backdrop_ui(k, ox, oy);
     rect(k, ox, oy, 0, 0, 320, 28, 1);
-    const char *title = screen == S_MAIN ? "Settings" : screen == S_FILES ? "Find the ROM files" : screen == S_VIDEO ? "Video" : "Controller buttons";
+    const char *title = screen == S_MAIN ? "Settings" : screen == S_FILES ? "Find the ROM files" : screen == S_VIDEO ? "Video" : screen == S_SC || screen == S_SCBIND ? "Item shortcuts" : "Controller buttons";
     gfx_logo(ox + 8 * k, oy + 2 * k, 24 * k, 1);
     text(k, ox, oy, 38, 6, 5, 0, title);
     const char *hint = "A choose   B back";
     (void)hint;
     if (screen == S_MAIN) {
-        static const char *const L[] = {"Controller buttons", "Video", "Quit"};
+        static const char *const L[] = {"Controller buttons", "Video", "Item shortcuts", "Quit"};
         for (int i = 0; i < MAIN_COUNT; i++) row(k, ox, oy, i, L[i], NULL, i == cursor);
         hint = "A choose   B back";
     } else if (screen == S_VIDEO) {
@@ -298,7 +320,29 @@ void settings_draw(float k, float ox, float oy)
         }
         float ny = 32 + SHOWN * ROW_H + 6;
         text(k, ox, oy, 12, ny, 4, 0, "In game, V (X in the tracker) opens these over the game");
-        hint = "Left Right change   B back";    } else if (screen == S_PAD || screen == S_REBIND) {
+        hint = "Left Right change   B back";    } else if (screen == S_SC || screen == S_SCBIND) {
+        for (int i = 0; i < SHOWN && scroll + i < SC_COUNT + 1; i++) {
+            int r = scroll + i;
+            if (r == SC_COUNT) { row(k, ox, oy, i, "Back", NULL, r == cursor); continue; }
+            char lab[48], val[64];
+            snprintf(lab, sizeof lab, "%s%s", r >= SC_ZELDA_COUNT ? "Beam: " : "", smz_shortcuts[r].name);
+            snprintf(val, sizeof val, "%s  /  %s", sc_key(r) != SDLK_UNKNOWN ? SDL_GetKeyName(sc_key(r)) : "-", sc_pad(r) >= 0 ? pad_code_name(sc_pad(r)) : "-");
+            row(k, ox, oy, i, lab, val, r == cursor);
+        }
+        text(k, ox, oy, 12, 32 + SHOWN * ROW_H - 1, sc_msg[0] ? 5 : 4, 0, sc_msg[0] ? sc_msg : "Equips the item on Y, or turns the beam on or off");
+        hint = "A bind   B back   L R page";
+        if (screen == S_SCBIND) {
+            rect(k, ox, oy, 20, 80, 280, 80, 2);
+            rect(k, ox, oy, 20, 80, 280, 3, 5);
+            char msg[96];
+            snprintf(msg, sizeof msg, "Press a key or a button for %s", smz_shortcuts[rebind_action].name);
+            text(k, ox, oy, 160, 98, 3, 1, msg);
+            text(k, ox, oy, 160, 122, 4, 1, "Delete clears it   Esc or wait to cancel");
+            int left = (int)(rebind_until - SDL_GetTicks());
+            if (left <= 0) screen = S_SC;
+            else rect(k, ox, oy, 20, 154, 280.0f * left / 6000.0f, 6, 5);
+        }
+    } else if (screen == S_PAD || screen == S_REBIND) {
         for (int i = 0; i < SHOWN && scroll + i < PA_COUNT + 2; i++) {
             int r = scroll + i;
             if (r < PA_COUNT) row(k, ox, oy, i, pad_action_name(r), pad_code_name(pad_code(r)), r == cursor);

@@ -20,6 +20,12 @@ the bottom-screen tracker added in `vendor/` through `patches/*.patch`. Lemuroid
 The app has its own data: runs made in the old `com.swordfish.lemuroid.debug` build are not carried over (saves under
 `/sdcard/SMZ3/saves` are shared). After installing, allow notifications once (the game will not start without it).
 
+**Item shortcuts.** The RUN tab has a row over the map. In A Link to the Past it has five slots, the same for every run:
+tap an empty one to pick one of the items you own, then tap it to put that item on Y. In Super Metroid it shows the beams you
+have (Wave, Ice, Spazer, Plasma) and a tap turns one on or off; Spazer and Plasma never stay on together. Hold a slot or a
+beam to change it or to bind a pad button to it; a button the SNES mapping, a hotkey or an emulator shortcut already uses is
+refused with what uses it. Shortcuts act only in normal play. The CONFIG tab hides the row.
+
 ### Run editor
 
 | Options (QoL tab) | Run screen |
@@ -44,6 +50,7 @@ The PC app works completely with a game controller. In the run list, **Select** 
 - **Map tab:** the triggers or the right stick zoom, **A** (or F) follows the player, **Y** (or D) switches to the dungeon pictures, where the D-pad picks the dungeon and floor (each one shows the checks still to get) and **A** returns to Link's floor.
 - **Video while playing:** V, or X in the tracker, opens the video options over the game so each change shows at once.
 - **Save states** (runs made with Save states on, never ladder runs): F5 save, F7 load, F6/F8 slot; on a pad, Select + R1 / L1 / Left / Right.
+- **Item shortcuts:** Settings > Item shortcuts binds a key and a controller button to each ALttP item (puts it on Y) and to each Super Metroid beam (turns it on or off). Keys and buttons the game screen uses are refused. A shortcut does nothing for an item you don't have, or outside normal play.
 - **Fast forward** (Space or the right trigger) keeps the music playing at its pitch.
 - **Reachable checks** on the map are a run option (Play tab), off by default and on in the Cozy run.
 - The run ends when control is lost: Link entering the Triforce room, or Samus entering her ship, once both final bosses are beaten. A card shows the final time with hundredths; ladder times keep the hundredths too.

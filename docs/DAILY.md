@@ -116,6 +116,7 @@ Short online runs with one goal. Three windows a day, the same challenge for eve
   - 15, 10 and 5 for the top three of a window, paid once after it closes.
   - 5, 15 and 50 when a streak reaches 3, 7 and 30 days, then 50 every 30 days. A streak counts days with at least one window finished in time, and is paid once a day.
   - The streak shown stays alive through today, until the day ends without a run.
+- **Deploying a new `smz3daily`.** The server makes each window an hour before it opens and keeps it in `data/daily/<id>.json` and in memory. A new binary only reaches windows made after the deploy, so a text change also needs the files of the open and the next window edited and the server restarted (`pm2 restart smz3-ladder`). Change only texts there: the settings and the goal check are what the players already generated.
 - **Local tests.** `DAILY_CLOCK_SHIFT_MS` moves the challenge clock of a local server; do not set it on Salamando.
 - **Checked.**
   - `node server/ladder/test_daily.js` (with `SMZ3DAILY=` the built tool) runs on a moving clock with a stub proof checker. It covers the time between windows, opening, a start for the wrong window, resume, hints at 9:59 and at 10:00, a forged token, too short and too long times, the duplicate finish, no attempt after finishing, the rank order and a held proof. It also covers a late finish with no gems, the table, rank prizes paid once, a streak over three days (paid once per day), a streak broken by a missed day, the window past midnight, and a second instance reading the same data.

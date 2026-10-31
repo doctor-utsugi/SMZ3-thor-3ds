@@ -21,12 +21,14 @@
 #include "pc_music.h"
 #include "pc_pad.h"
 #include "pc_settings.h"
+#include "pc_shortcuts.h"
 #include "pc_welcome.h"
 #include "smz3_dungeonmaps.h"
 #include "smz3_romderived.h"
 #include "pc_online.h"
 #include "pc_store.h"
 #include "smz3_host.h"
+#include "smz3_rom.h"
 #include "smz3_md5.h"
 #include "smz3_discovery.h"
 #include "smz3_proof.h"
@@ -243,6 +245,12 @@ static int cmd_selftest(int argc, char **argv)
     uint8_t *rom = store_read(argv[0], &n);
     if (!rom || emu_open(rom, n, argv[0])) { fprintf(stderr, "cannot load %s\n", argv[0]); return 1; }
     int frames = argc > 1 ? atoi(argv[1]) : 600;
+    if (getenv("SMZ3_SELFTEST_SRAM")) {   /* test hook: start from a game save */
+        size_t sn, sl;
+        uint8_t *save = store_read(getenv("SMZ3_SELFTEST_SRAM"), &sn), *sram = emu_sram(&sl);
+        if (save && sram) memcpy(sram, save, sn < sl ? sn : sl);
+        free(save);
+    }
     static SmzTracker t;
     smz_tracker_reset(&t, 0, 0, 0, 0);
     if (getenv("SMZ3_SELFTEST_GOAL")) smz_goal_parse(getenv("SMZ3_SELFTEST_GOAL"), &t.goal);   /* test hook: say when a daily goal reads as met */
@@ -257,6 +265,12 @@ static int cmd_selftest(int argc, char **argv)
             if (sscanf(p, "%d-%d:%d", &a0, &a1, &m) == 3 && f >= a0 && f <= a1) pad |= m;
         }
         emu_set_pad(pad);
+        for (const char *p = getenv("SMZ3_SELFTEST_POKE"); p && *p; p = strchr(p, ',') ? strchr(p, ',') + 1 : NULL) {   /* test hook: "frame:addr=value,..." writes the work RAM */
+            int at; unsigned addr, v;
+            size_t wl;
+            uint8_t *w = (uint8_t *)emu_wram(&wl);
+            if (sscanf(p, "%d:%x=%x", &at, &addr, &v) == 3 && at == f && addr < wl) w[addr] = (uint8_t)v;
+        }
         emu_run_frame();
         size_t a;
         emu_take_audio(&a);
@@ -279,6 +293,10 @@ static int cmd_selftest(int argc, char **argv)
     size_t wl, sl;
     const uint8_t *wram = emu_wram(&wl);
     uint8_t *sram = emu_sram(&sl);
+    if (getenv("SMZ3_SELFTEST_SHOT") && pic) {   /* test hook: the last frame as a BMP */
+        SDL_Surface *sf = SDL_CreateRGBSurfaceWithFormatFrom((void *)pic, w, h, 32, pitch * 4, SDL_PIXELFORMAT_ARGB8888);
+        if (sf) { SDL_SaveBMP(sf, getenv("SMZ3_SELFTEST_SHOT")); SDL_FreeSurface(sf); }
+    }
     if (getenv("SMZ3_SELFTEST_DUMP")) {   /* test hook: write the work RAM and the save RAM to <prefix>.wram and <prefix>.sram */
         char path[600];
         snprintf(path, sizeof path, "%s.wram", getenv("SMZ3_SELFTEST_DUMP"));
@@ -716,7 +734,8 @@ static void note(const char *msg) { snprintf(g_note, sizeof g_note, "%s", msg); 
 
 #define QSLOTS 4
 /* Quick states of a run, kept as runs/slotN.qK.state. */
-static void quick_state(int slot, int q, int save)
+/* Returns 1 when it saved or loaded. */
+static int quick_state(int slot, int q, int save)
 {
     char m[64];
     const char *path = store_path("runs/slot%d.q%d.state", slot + 1, q + 1);
@@ -732,8 +751,11 @@ static void quick_state(int slot, int q, int save)
         int ok = st && emu_state_load(st, n) == 0;
         free(st);
         snprintf(m, sizeof m, ok ? "Loaded state %d" : "State %d is empty", q + 1);
+        note(m);
+        return ok;
     }
     note(m);
+    return 1;
 }
 
 /* ---------- playing ---------- */
@@ -1130,11 +1152,12 @@ static void play(int slot, int game_save_only)
     uint8_t *rom = store_read(romp, &rl);
     if (!rom || rl != SMZ_HOST_ROM_SIZE) { free(rom); note("the ROM of this run is missing; make a new run"); return; }
     music_prepare(romp, run.settings, run.seed);
+    if (!smz_rom_shortcut_hooks(rom)) smz_rom_checksum(rom);   /* a run made before the item shortcuts */
     int ok = emu_open(rom, rl, romp) == 0;
     free(rom);
     if (!ok) { note("the emulator could not load the ROM"); return; }
 
-    int states = json_flag(run.settings, "saveStates", 0) && !online_slot_kind(slot + 1);   /* ladder runs never allow states */
+    int states = json_flag(run.settings, "saveStates", 0) && !online_slot_kind(slot + 1) && run.game != 3;   /* ladder runs and finished runs never allow states */
     int qslot = 0;
     size_t sl;
     uint8_t *sram = emu_sram(&sl);
@@ -1239,7 +1262,7 @@ static void play(int slot, int game_save_only)
             else if (e.type == SDL_KEYDOWN && !e.key.repeat) {
                 SDL_Keycode k = e.key.keysym.sym;
                 if (exit_at) continue;
-                if (done_popup) { if (k == SDLK_RETURN || k == SDLK_ESCAPE || k == SDLK_SPACE) done_popup = 0; continue; }
+                if (done_popup) { if (k == SDLK_RETURN || k == SDLK_SPACE) { done_popup = 0; exit_at = SDL_GetTicks(); } else if (k == SDLK_ESCAPE) done_popup = 0; continue; }   /* main menu, or stay for the credits */
                 if (fail_popup) { if (k == SDLK_RETURN || k == SDLK_SPACE) fail_popup = 0; else if (k == SDLK_ESCAPE) { fail_popup = 0; exit_at = SDL_GetTicks(); } continue; }
                 if (vpanel) {
                     if (k == SDLK_ESCAPE || k == SDLK_v || k == SDLK_BACKSPACE) vpanel = 0;
@@ -1248,11 +1271,12 @@ static void play(int slot, int game_save_only)
                     else if (k == SDLK_LEFT || k == SDLK_RIGHT || k == SDLK_RETURN) { settings_video_change(vrow, k == SDLK_LEFT ? -1 : 1); vchanges++; }
                     continue;
                 }
+                if (!show && !leaving && sc_key_press(k)) continue;   /* an item shortcut; it acts only in normal play */
                 if (k == SDLK_v && !leaving) { vpanel = 1; show = 0; continue; }
                 if (leaving) { if (k == SDLK_RETURN) exit_at = SDL_GetTicks(); leaving = 0; continue; }
                 if (k == SDLK_TAB) show = !show;
                 else if (states && !show && k == SDLK_F5) quick_state(slot, qslot, 1);
-                else if (states && !show && k == SDLK_F7) quick_state(slot, qslot, 0);
+                else if (states && !show && k == SDLK_F7) { if (quick_state(slot, qslot, 0)) trk.state_loaded = 3; }
                 else if (states && !show && (k == SDLK_F6 || k == SDLK_F8)) { qslot = (qslot + (k == SDLK_F8 ? 1 : QSLOTS - 1)) % QSLOTS; char m[32]; snprintf(m, sizeof m, "State slot %d", qslot + 1); note(m); }
                 else if (k == SDLK_ESCAPE) { if (show) show = 0; else leaving = 1; }
                 else if (k == SDLK_F11) SDL_SetWindowFullscreen(win, SDL_GetWindowFlags(win) & SDL_WINDOW_FULLSCREEN_DESKTOP ? 0 : SDL_WINDOW_FULLSCREEN_DESKTOP);
@@ -1277,7 +1301,7 @@ static void play(int slot, int game_save_only)
             } else if (pcode >= 0) {
                 int b = pcode;
                 if (exit_at) continue;
-                if (done_popup) { if (b == SDL_CONTROLLER_BUTTON_A || b == SDL_CONTROLLER_BUTTON_B) done_popup = 0; continue; }
+                if (done_popup) { if (b == SDL_CONTROLLER_BUTTON_A) { done_popup = 0; exit_at = SDL_GetTicks(); } else if (b == SDL_CONTROLLER_BUTTON_B) done_popup = 0; continue; }
                 if (fail_popup) { if (b == SDL_CONTROLLER_BUTTON_A) fail_popup = 0; else if (b == SDL_CONTROLLER_BUTTON_B) { fail_popup = 0; exit_at = SDL_GetTicks(); } continue; }
                 if (vpanel) {
                     if (b == SDL_CONTROLLER_BUTTON_B || b == SDL_CONTROLLER_BUTTON_X || b == pad_code(PA_TRACKER)) vpanel = 0;
@@ -1286,6 +1310,7 @@ static void play(int slot, int game_save_only)
                     else if (b == SDL_CONTROLLER_BUTTON_DPAD_LEFT || b == SDL_CONTROLLER_BUTTON_DPAD_RIGHT || b == SDL_CONTROLLER_BUTTON_A) { settings_video_change(vrow, b == SDL_CONTROLLER_BUTTON_DPAD_LEFT ? -1 : 1); vchanges++; }
                     continue;
                 }
+                if (!show && !leaving && sc_pad_press(b)) continue;
                 if (show && b == SDL_CONTROLLER_BUTTON_X) { vpanel = 1; show = 0; continue; }
                 if (leaving) { if (b == SDL_CONTROLLER_BUTTON_A) exit_at = SDL_GetTicks(); leaving = 0; continue; }
                 int combo = SDL_GameControllerGetButton(pad, SDL_CONTROLLER_BUTTON_BACK);
@@ -1295,7 +1320,7 @@ static void play(int slot, int game_save_only)
                 int qn = b == pad_code(PA_QNEXT) || (combo && b == SDL_CONTROLLER_BUTTON_DPAD_RIGHT);
                 if (states && !show && (qs || ql || qp || qn)) {
                     if (qs) quick_state(slot, qslot, 1);
-                    else if (ql) quick_state(slot, qslot, 0);
+                    else if (ql) { if (quick_state(slot, qslot, 0)) trk.state_loaded = 3; }
                     else { qslot = (qslot + (qn ? 1 : QSLOTS - 1)) % QSLOTS; char m[32]; snprintf(m, sizeof m, "State slot %d", qslot + 1); note(m); }
                 }
                 else if (b == pad_code(PA_TRACKER)) show = !show;
@@ -1397,6 +1422,7 @@ static void play(int slot, int game_save_only)
                 if (daily && trk.started && smz_daily_note_began(&dr, online_now_ms())) online_daily_save(&dr);   /* the clock starts with the game, as in the ladder */
                 if (trk.game == 3 && !finished) {
                     finished = 1;
+                    states = 0;   /* no state can take a finished run back */
                     if (!finished_before) { done_popup = 1; final_ms = trk.base_ms + trk.pending_ms; }
                     if (daily && !finished_before && !daily_queued) {   /* the challenge's time is the real clock from the game's start */
                         daily_queued = 1;
@@ -1408,7 +1434,7 @@ static void play(int slot, int game_save_only)
                 }
                 if (trk.started && smz_proof_note(&proof, trk.cleared, SMZ_TRK_MAX_LOCS, trk.base_ms + trk.pending_ms)) proof_dirty = 1;
                 if (trk.started && trk.running && SDL_GetTicks() >= next_token && online_slot_kind(slot + 1)) { next_token = SDL_GetTicks() + 60000; detach(token_thread, (void *)(intptr_t)(slot + 1)); }
-                if (finished && !queued && is_default && online_slot_kind(slot + 1)) {
+                if (finished && !finished_before && !queued && is_default && online_slot_kind(slot + 1)) {   /* a run is sent once, in the session it ends */
                     queued = 1;
                     save_proof(slot + 1, &proof);
                     online_queue_finish(slot + 1, trk.base_ms + trk.pending_ms, atoi(run.seed));
@@ -1568,8 +1594,8 @@ static void play(int slot, int game_save_only)
                 lad = res;
             }
             gfx_text(ww / 2.0f, cy + 204 * u, 20 * u, daily || (online_slot_kind(slot + 1) && is_default) ? C(0x4F, 0xC3, 0xF7) : C(0x87, 0x93, 0xA6), 1, lad);
-            static const HelpItem OK[] = {{"A", "Enter", "Continue"}};
-            help_prompt(ww / 2.0f, cy + ch - 70 * u, 36 * u, OK, 1);
+            static const HelpItem OK[] = {{"A", "Enter", "Main menu"}, {"B", "Esc", "Watch the credits"}};
+            help_prompt(ww / 2.0f, cy + ch - 70 * u, 36 * u, OK, 2);
         }
         if (fail_popup) {
             float u = wh / 720.0f;
@@ -1768,6 +1794,7 @@ static void window_main(int start_slot)
     SDL_Window *w = win; (void)w;
     ui_init(&ui);
     pad_cfg_load();
+    sc_cfg_load();
     settings_init(&(SettingsHooks){welcome_setup, note, toggle_fullscreen, quit_menu, is_fullscreen, set_window_size});
     settings_video_load();
     welcome_init(&(WelcomeHooks){welcome_setup, welcome_ready, settings_open_files, welcome_existing});

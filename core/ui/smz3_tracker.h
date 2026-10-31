@@ -29,6 +29,7 @@ typedef struct {
     int save_changed;                        /* set when the save RAM changed during the last tick */
     SmzGoal goal;                            /* a daily challenge's goal (set by the host after reset); GOAL_NONE otherwise */
     int goal_met;                            /* stays set once the goal was seen: the run is over */
+    int state_loaded;                        /* set by the host after loading a save state: the next reads drop the recent checks and items it undid */
     /* internals */
     int64_t base_ms, pending_ms, live_at_ms, now_ms;
     int have_live, last_frame, have_frame, running;

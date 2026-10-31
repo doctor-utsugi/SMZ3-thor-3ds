@@ -18,6 +18,10 @@ int smz_ips_apply(uint8_t *rom, const uint8_t *ips, size_t len);
 int smz_ips_apply_sm(uint8_t *rom, const uint8_t *ips, size_t len);
 
 void smz_rom_checksum(uint8_t *rom);
+/* Hooks the item shortcuts use (core/ui/smz3_shortcuts.h): once a frame each game checks a request bit the host sets and
+ * calls its own refresh routine (SM beam tiles and palette, ALttP Y item icon). 0 when written, -1 when the ROM is not the
+ * expected one (then it is left as it was). */
+int smz_rom_shortcut_hooks(uint8_t *rom);
 
 /* File names of the IPS patches to apply after the seed's patches with the tracker's default options, in order. */
 extern const char *const SMZ_DEFAULT_CAS_IPS[];

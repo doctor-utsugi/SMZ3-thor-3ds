@@ -754,7 +754,7 @@ void ui_input(SmzUi *u, UiButton b)
         else if (b == BTN_B) u->screen = UI_SLOTS_SCREEN;
         else if (b == BTN_A) {
             if (u->menu_cursor) { u->screen = UI_CONFIRM; u->confirm_cursor = 0; }   /* Cancel is the default */
-            else { u->action = ACT_CONTINUE; u->action_slot = u->active_slot; u->screen = UI_SLOTS_SCREEN; }
+            else if (u->slots[u->active_slot].game != 3) { u->action = ACT_CONTINUE; u->action_slot = u->active_slot; u->screen = UI_SLOTS_SCREEN; }   /* a finished run is not played again */
         }
         break;
     case UI_CONFIRM:
@@ -1188,7 +1188,7 @@ void ui_draw(SmzUi *u)
         hit(u, H_MENU, 0, 8, 70, UI_W - 16, 30);
         hit(u, H_MENU, 1, 8, 106, UI_W - 16, 30);
         rect(u, 8, 70, UI_W - 16, 30, u->menu_cursor == 0 ? C_SEL : C_PANEL);
-        text(u, 16, 78, C_TEXT, 0, "Continue");
+        text(u, 16, 78, u->slots[u->active_slot].game == 3 ? C_DIM : C_TEXT, 0, u->slots[u->active_slot].game == 3 ? "Finished: it can't be played again" : "Continue");
         rect(u, 8, 106, UI_W - 16, 30, u->menu_cursor == 1 ? C_SEL : C_PANEL);
         text(u, 16, 114, C_WARN, 0, "Delete");
         text(u, 8, UI_H - 16, C_DIM, 0, "B: back");

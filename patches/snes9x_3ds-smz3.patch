@@ -47,7 +47,7 @@ index 970484a..b92dad2 100644
          snprintf(output, bufferSize, "%s/%s/%s%s", settings3DS.RootDir, targetDir, basename, extension);
      } 
 diff --git a/source/3dsimpl.cpp b/source/3dsimpl.cpp
-index d4fca8e..06116eb 100644
+index d4fca8e..9c6b517 100644
 --- a/source/3dsimpl.cpp
 +++ b/source/3dsimpl.cpp
 @@ -8,6 +8,7 @@
@@ -83,8 +83,16 @@ index d4fca8e..06116eb 100644
      char path[PATH_MAX], ext[16];
      snprintf(ext, sizeof(ext), ".%d.frz", slotNumber);
      file3dsGetRelatedPath(Memory.ROMFilename, path, sizeof(path), ext, "savestates");
+@@ -1071,6 +1074,7 @@ bool impl3dsLoadState(const char* filename)
+ 	if (success)
+ 	{
+ 		gpu3dsInitializeMode7Vertexes();
++		smz3StateLoaded();
+ 	}
+ 	return success;
+ }
 diff --git a/source/3dsinput.cpp b/source/3dsinput.cpp
-index c8b5241..a2d56d6 100644
+index c8b5241..4b6972d 100644
 --- a/source/3dsinput.cpp
 +++ b/source/3dsinput.cpp
 @@ -9,6 +9,7 @@
@@ -111,7 +119,26 @@ index c8b5241..a2d56d6 100644
      input3dsSetTurboMode(turboModeToggle || fastForwardHeld, isInGame);
  }
  
-@@ -134,7 +137,7 @@ u32 input3dsScanInputForEmulation()
+@@ -78,6 +81,18 @@ u32 input3dsScanInputForEmulation()
+     u32 keysDown = (~lastKeysHeld) & currKeysHeld;
+     bool isInGame = GPU3DS.emulatorState == EMUSTATE_EMULATE;
+ 
++    if (isInGame && smz3TrackerTouch(keysDown, currKeysHeld)) keysDown &= ~KEY_TOUCH;   // an SMZ3 run's tracker takes the touch screen
++    if (isInGame) {   // the SMZ3 run-complete card takes A and B; its A opens the menu, which goes on to the run list
++        static u32 cardKeys = 0;
++        bool openMenu;
++        u32 took = smz3TrackerKeys(keysDown, &openMenu);
++        if (took) cardKeys = took;
++        if (openMenu) keysDown |= KEY_TOUCH;
++        if (cardKeys && !(currKeysHeld & cardKeys)) cardKeys = 0;
++        currKeysHeld &= ~cardKeys;
++        keysDown &= ~cardKeys;
++    }
++
+     if (keysDown & KEY_TOUCH || 
+         (!settings3DS.UseGlobalEmuControlKeys && settings3DS.ButtonHotkeys[HOTKEY_OPEN_MENU].IsHeld(keysDown)) ||
+         (settings3DS.UseGlobalEmuControlKeys && settings3DS.GlobalButtonHotkeys[HOTKEY_OPEN_MENU].IsHeld(keysDown))
+@@ -134,7 +149,7 @@ u32 input3dsScanInputForEmulation()
              (!settings3DS.UseGlobalEmuControlKeys && settings3DS.ButtonHotkeys[HOTKEY_FAST_FORWARD_TOGGLE].IsHeld(keysDown)) ||
              (settings3DS.UseGlobalEmuControlKeys && settings3DS.GlobalButtonHotkeys[HOTKEY_FAST_FORWARD_TOGGLE].IsHeld(keysDown));
  
@@ -121,7 +148,7 @@ index c8b5241..a2d56d6 100644
          }
      }
 diff --git a/source/3dsmain.cpp b/source/3dsmain.cpp
-index 3692a54..3839f03 100644
+index 3692a54..62f20fd 100644
 --- a/source/3dsmain.cpp
 +++ b/source/3dsmain.cpp
 @@ -32,6 +32,7 @@
@@ -210,11 +237,24 @@ index 3692a54..3839f03 100644
                  snd3dsDrainMixing();
                  impl3dsLoadStateAuto();
                  snd3dsResumeMixing();
-@@ -2508,6 +2543,7 @@ void emulatorLoop()
+@@ -2161,6 +2196,12 @@ void showMenu() {
+     // Avoid flashing the untouched pre-pause buffer on resume.
+     GPU3DS.gameScreenBufferDesync = true;
+ 
++    if (smz3TakeRunListRequest()) {   // Main menu on an SMZ3 run-complete card: straight to the run list
++        DirectoryEntry runs(SMZ3_ENTRY, FileEntryType::File);
++        const DirectoryEntry *entry = &runs;
++        onDirectoryEntrySelected(dialogTab, isDialog, currentMenuTab, runNextGame, cheatMenu, entry);
++    }
++
+     while (aptMainLoop() && GPU3DS.emulatorState == EMUSTATE_PAUSEMENU) {
+         int result = menu3dsMenuSelectItem(dialogTab, isDialog, currentMenuTab, menuTabs);
+ 
+@@ -2508,6 +2549,7 @@ void emulatorLoop()
          t3dsStartTimer(TIMER_RUN_ONE_FRAME);
          impl3dsRunOneFrame(firstFrame, skipDrawing);
          t3dsStopTimer(TIMER_RUN_ONE_FRAME);
-+        if (totalFrames % 60 == 0) smz3TrackerFrame();
++        smz3TrackerFrame(totalFrames % 60 == 0);
  
  
          long actualTicksThisFrame = (long)(svcGetSystemTick() - startFrameTick);
@@ -859,10 +899,10 @@ index 0000000..322435e
 +#endif
 diff --git a/source/smz3run.cpp b/source/smz3run.cpp
 new file mode 100644
-index 0000000..86362d9
+index 0000000..4513bd4
 --- /dev/null
 +++ b/source/smz3run.cpp
-@@ -0,0 +1,850 @@
+@@ -0,0 +1,1918 @@
 +// SMZ3 runs: the shared C menu (core/ui) drawn on the second screen, and offline generation (core/gen).
 +#include <3ds.h>
 +#include <dirent.h>
@@ -883,6 +923,9 @@ index 0000000..86362d9
 +#include "smz3_run.h"
 +#include "smz3_ui.h"
 +#include "smz3_preview.h"
++// from smz3_rom.h, whose generator headers stay out of C++
++int smz_rom_shortcut_hooks(uint8_t *rom);
++void smz_rom_checksum(uint8_t *rom);
 +}
 +
 +extern "C" {
@@ -902,6 +945,7 @@ index 0000000..86362d9
 +#define SPRITE_DIR SMZ_DIR "/sprites"
 +
 +static bool gChallenge = false;   // the run being played is a daily challenge: no fast forward
++static bool gFinished = false;   // the run being played has ended (now or before): no save states, nothing sent again
 +static int gPlaySlot = -1;   // slot of the run being played
 +
 +static const int PALETTE[] = {0x10141C, 0x1D2430, 0x2E4A6B, 0xE8ECF2, 0x8793A6, 0xE9A23B, 0xE05A4F, 0x4CC38A, 0x4FC3F7};
@@ -1305,6 +1349,18 @@ index 0000000..86362d9
 +    return ok;
 +}
 +
++// Runs made before the item shortcuts get the ROM hooks that redraw the beam and the Y item (written once, into the file).
++static void addShortcutHooks(const char *romPath)
++{
++    size_t len = 0;
++    unsigned char *rom = readFile(romPath, &len);
++    if (rom && len == SMZ_HOST_ROM_SIZE && smz_rom_shortcut_hooks(rom) == 0) {
++        smz_rom_checksum(rom);
++        if (FILE *f = fopen(romPath, "r+b")) { fwrite(rom, 1, len, f); fclose(f); }
++    }
++    free(rom);
++}
++
 +static void deleteRun(int slot)
 +{
 +    char path[96];
@@ -1457,13 +1513,16 @@ index 0000000..86362d9
 +                char path[96];
 +                SmzRun r;
 +                snprintf(path, sizeof path, RUN_DIR "/slot%d.run", slot);
-+                if (smz_run_load(path, &r) == 0) {
++                if (smz_run_load(path, &r) == 0 && r.game == 3) {   // a finished run is not played again
++                    ui_busy(&ui, "Finished: it can't be played again"); drawUi(&ui); svcSleepThread(2500000000LL); ui_idle(&ui);
++                } else if (smz_run_load(path, &r) == 0) {
++                    gFinished = false;
 +                    // The run's screen shape picks the scaling: wide fills the 400x240 screen, pixel is 8:7, original is 4:3.
 +                    settings3DS.ScreenStretch = strstr(r.settings, "\"screenShape\":\"wide\"") ? Setting::ScreenStretch::Full
 +                        : strstr(r.settings, "\"screenShape\":\"pixel\"") ? Setting::ScreenStretch::CrtAspect
 +                        : Setting::ScreenStretch::Aspect_4_3;
 +                    settings3dsApplyScreenStretch();
-+                    mkdir(SMZ_DIR "/saves", 0777); mkdir(SMZ_DIR "/savestates", 0777); snprintf(romPathOut, cap, "%s", r.rom_path); gPlaySlot = slot; chosen = true; break; }
++                    mkdir(SMZ_DIR "/saves", 0777); mkdir(SMZ_DIR "/savestates", 0777); addShortcutHooks(r.rom_path); snprintf(romPathOut, cap, "%s", r.rom_path); gPlaySlot = slot; chosen = true; break; }
 +            } else if (act == ACT_GENERATE && slot < UI_SLOTS) {
 +                ui_busy(&ui, "Generating the seed ...");
 +                drawUi(&ui);
@@ -1477,49 +1536,1086 @@ index 0000000..86362d9
 +    return chosen;
 +}
 +
-+// ---- tracker panel on the second screen while a run is played (software drawn once per second, like the menu)
++// ---- tracker on the second screen while a run is played: the tabs of the Thor's second screen (Smz3Presentation.kt),
++// drawn in software. The run is read once a second; touches redraw at once.
 +
-+static void trackerLine(int y, int color, const char *fmt, ...) __attribute__((format(printf, 3, 4)));
-+static int trackerWrap(int y, int color, int maxLines, const char *text);
-+static void trackerLine(int y, int color, const char *fmt, ...)
-+{
-+    char text[96];
-+    va_list ap;
-+    va_start(ap, fmt);
-+    vsnprintf(text, sizeof text, fmt, ap);
-+    va_end(ap);
-+    ui3dsDrawStringWithNoWrapping(settings3DS.SecondScreen, 12, y, 308, y + 14, color, HALIGN_LEFT, text);
++extern "C" {
++#include "smz3_discovery.h"
++#include "smz3_shortcuts.h"
++extern const SmzMapData SMZ3_MAP_DATA;
 +}
 +
-+// Draws text from y in lines of up to 50 characters, broken at spaces; returns the y after it.
-+static int trackerWrap(int y, int color, int maxLines, const char *text)
++struct TrkTheme { int bg, panel, accent, text, dim, bar, tab, pending, done; };
++static const TrkTheme THEME_ZELDA = {0x14231A, 0x1F3A24, 0xE8C14A, 0xF3EBC8, 0xA8A27A, 0x5BBF6A, 0x2B4A30, 0xFFD54A, 0x7BE08A};
++static const TrkTheme THEME_METROID = {0x05080C, 0x0C1A24, 0xFF9A1F, 0xD8F6FF, 0x5E8DA0, 0x19D3C5, 0x13303F, 0xFF9A1F, 0x19D3C5};
++
++enum { TAB_RUN, TAB_ITEMS, TAB_CHECKS, TAB_MAP, TAB_HELP, TAB_DAILY, TAB_COUNT };
++static const char *const TAB_NAMES[TAB_COUNT] = {"RUN", "ITEMS", "CHECKS", "MAP", "HELP", "DAILY"};
++
++#define TAB_H 20
++#define STRIP_H 30
++#define PAUSE_W 24
++
++static u16 *trkFb;
++static int clipX0, clipY0, clipX1 = 320, clipY1 = 240;
++
++static inline u16 to565(int rgb) { return (u16)(((rgb >> 8) & 0xF800) | ((rgb >> 5) & 0x07E0) | ((rgb >> 3) & 0x1F)); }
++
++static inline u16 blend565(u16 back, u16 fore, int a)   // a: 0..256
 +{
-+    const char *p = text;
-+    for (int line = 0; *p && line < maxLines; line++) {
++    int rb = (back & 0xF81F) + ((((fore & 0xF81F) - (back & 0xF81F)) * (a >> 3)) >> 5);
++    int g = (back & 0x07E0) + ((((fore & 0x07E0) - (back & 0x07E0)) * (a >> 3)) >> 5);
++    return (u16)((rb & 0xF81F) | (g & 0x07E0));
++}
++
++static void setClip(int x0, int y0, int x1, int y1)
++{
++    clipX0 = x0 < 0 ? 0 : x0; clipY0 = y0 < 0 ? 0 : y0; clipX1 = x1 > 320 ? 320 : x1; clipY1 = y1 > 240 ? 240 : y1;
++    ui3dsSetViewport(clipX0, clipY0, clipX1, clipY1);
++}
++
++static void fill(int x0, int y0, int x1, int y1, int rgb)
++{
++    if (x0 < clipX0) x0 = clipX0;
++    if (y0 < clipY0) y0 = clipY0;
++    if (x1 > clipX1) x1 = clipX1;
++    if (y1 > clipY1) y1 = clipY1;
++    u16 c = to565(rgb);
++    for (int x = x0; x < x1; x++) {
++        u16 *p = trkFb + x * 240 + 239 - y0;
++        for (int y = y0; y < y1; y++) *p-- = c;
++    }
++}
++
++static void fillAlpha(int x0, int y0, int x1, int y1, int rgb, int a)
++{
++    if (x0 < clipX0) x0 = clipX0;
++    if (y0 < clipY0) y0 = clipY0;
++    if (x1 > clipX1) x1 = clipX1;
++    if (y1 > clipY1) y1 = clipY1;
++    u16 c = to565(rgb);
++    for (int x = x0; x < x1; x++) {
++        u16 *p = trkFb + x * 240 + 239 - y0;
++        for (int y = y0; y < y1; y++, p--) *p = blend565(*p, c, a);
++    }
++}
++
++static void dot(float cx, float cy, float r, int rgb)
++{
++    for (int dy = (int)floorf(-r); dy <= (int)ceilf(r); dy++) {
++        float yy = dy + 0.5f;
++        if (yy * yy > r * r) continue;
++        float half = sqrtf(r * r - yy * yy);
++        fill((int)lroundf(cx - half), (int)cy + dy, (int)lroundf(cx + half), (int)cy + dy + 1, rgb);
++    }
++}
++
++static int textW(const char *s) { return ui3dsGetStringWidth(s); }
++
++// align HALIGN_CENTER centres in x..x1, HALIGN_RIGHT ends at x
++static void text(int x, int y, int rgb, const char *s, int align = HALIGN_LEFT, int x1 = 320)
++{
++    if (y + 14 <= clipY0 || y >= clipY1) return;
++    int x0 = x;
++    if (align == HALIGN_RIGHT) { x0 = 0; x1 = x; }
++    ui3dsDrawStringWithNoWrapping(settings3DS.SecondScreen, x0, y, x1, y + 14, rgb, align, s);
++}
++
++static void textf(int x, int y, int rgb, const char *fmt, ...) __attribute__((format(printf, 4, 5)));
++static void textf(int x, int y, int rgb, const char *fmt, ...)
++{
++    char s[160];
++    va_list ap;
++    va_start(ap, fmt);
++    vsnprintf(s, sizeof s, fmt, ap);
++    va_end(ap);
++    text(x, y, rgb, s);
++}
++
++// Text cut with an ellipsis to fit in w pixels.
++static void textFit(int x, int y, int w, int rgb, const char *s)
++{
++    char cut[160];
++    ui3dsEllipsize(s, cut, sizeof cut, w);
++    text(x, y, rgb, cut);
++}
++
++// Word-wrapped text in w pixels from (x, y), at most maxLines lines; returns the y below it. draw = false only measures.
++static int textWrap(int x, int y, int w, int rgb, const char *s, int maxLines = 99, bool draw = true)
++{
++    char line[160];
++    const char *p = s;
++    for (int n = 0; *p && n < maxLines; n++) {
 +        while (*p == ' ') p++;
-+        int n = (int)strlen(p);
-+        if (n > 50) { n = 50; while (n > 0 && p[n] != ' ') n--; if (!n) n = 50; }
-+        bool cut = line == maxLines - 1 && p[n];
-+        trackerLine(y, color, cut ? "%.*s..." : "%.*s", cut && n > 47 ? 47 : n, p);
-+        p += n;
-+        y += 16;
++        int fit = 0, i = 0;
++        while (p[i]) {
++            int j = i;
++            while (p[j] && p[j] != ' ') j++;
++            if (j >= (int)sizeof line) break;
++            memcpy(line, p, j); line[j] = 0;
++            if (fit && textW(line) > w) break;
++            fit = j;
++            i = p[j] ? j + 1 : j;
++        }
++        if (!fit) fit = (int)strnlen(p, sizeof line - 1);
++        snprintf(line, sizeof line, "%.*s", fit, p);
++        if (n == maxLines - 1 && p[fit]) { char c[168]; snprintf(c, sizeof c, "%s ...", line); ui3dsEllipsize(c, line, sizeof line, w); }
++        if (draw) text(x, y, rgb, line);
++        y += 14;
++        p += fit;
 +    }
 +    return y;
 +}
 +
-+static void spanText(int64_t ms, char *out, size_t cap) { smz_daily_span(ms, out, cap); }
++// Text taller than the font (up to 32 px), drawn through the UI's upscaling into an RGBA4 buffer. Returns its width.
++static int bigText(int x, int y, int h, int rgb, const char *s)
++{
++    enum { BW = 200 };
++    static u16 buf[BW * 32];
++    memset(buf, 0, sizeof buf);
++    int w = ui3dsDrawStringToTexture(buf, s, 0, 0, BW, h, (u32)rgb << 8, h);
++    u16 c = to565(rgb);
++    for (int yy = 0; yy < h; yy++) {
++        int sy = y + yy;
++        if (sy < clipY0 || sy >= clipY1) continue;
++        for (int xx = 0; xx < w; xx++) {
++            int a = buf[yy * BW + xx] & 15, sx = x + xx;
++            if (!a || sx < clipX0 || sx >= clipX1) continue;
++            u16 *p = trkFb + sx * 240 + 239 - sy;
++            *p = a == 15 ? c : blend565(*p, c, a * 17);
++        }
++    }
++    return w;
++}
 +
-+void smz3TrackerFrame(void)
++static void bar(int x, int y, int w, int h, int done, int total, const TrkTheme &t)
++{
++    fill(x, y, x + w, y + h, t.panel);
++    if (total > 0 && done > 0) fill(x, y, x + w * (done > total ? total : done) / total, y + h, t.bar);
++}
++
++// ---- icons: romfs:/smz3/icons/<name>.pv (made by tools/gen_3ds_assets.py), loaded once
++
++struct TrkIcon { char name[40]; int w, h; u16 *c; u8 *a; };
++static TrkIcon icons[72];
++
++static const TrkIcon *getIcon(const char *file)
++{
++    char name[40];
++    snprintf(name, sizeof name, "%s", file);
++    char *dot = strrchr(name, '.');
++    if (dot && !strcmp(dot, ".png")) *dot = 0;
++    for (char *q = name; *q; q++) if (*q == ' ') *q = '_';
++    for (auto &i : icons) {
++        if (!i.name[0]) {
++            snprintf(i.name, sizeof i.name, "%s", name);
++            char path[96];
++            snprintf(path, sizeof path, "romfs:/smz3/icons/%s.pv", name);
++            size_t len = 0;
++            unsigned char *d = readFile(path, &len);
++            int w, h;
++            const unsigned char *px;
++            if (d && smz_preview_parse(d, len, &w, &h, &px)) {
++                i.c = (u16 *)malloc(w * h * 2);
++                i.a = (u8 *)malloc(w * h);
++                if (i.c && i.a) {
++                    for (int k = 0; k < w * h; k++) { i.c[k] = to565(px[k * 4] << 16 | px[k * 4 + 1] << 8 | px[k * 4 + 2]); i.a[k] = px[k * 4 + 3]; }
++                    i.w = w; i.h = h;
++                }
++            }
++            free(d);
++            return i.w ? &i : NULL;
++        }
++        if (!strcmp(i.name, name)) return i.w ? &i : NULL;
++    }
++    return NULL;
++}
++
++// The icon fitted in the box, keeping its aspect; alpha 0..256 for the whole picture.
++static void drawIcon(const TrkIcon *ic, int x, int y, int w, int h, int alpha)
++{
++    if (!ic) return;
++    int dw = w, dh = h;
++    if (ic->w * h > ic->h * w) dh = ic->h * w / ic->w; else dw = ic->w * h / ic->h;
++    x += (w - dw) / 2; y += (h - dh) / 2;
++    for (int yy = 0; yy < dh; yy++) {
++        int sy = y + yy;
++        if (sy < clipY0 || sy >= clipY1) continue;
++        int row = yy * ic->h / dh * ic->w;
++        for (int xx = 0; xx < dw; xx++) {
++            int sx = x + xx;
++            if (sx < clipX0 || sx >= clipX1) continue;
++            int k = row + xx * ic->w / dw, a = ic->a[k] * alpha >> 8;
++            if (a < 16) continue;
++            u16 *p = trkFb + sx * 240 + 239 - sy;
++            *p = a >= 250 ? ic->c[k] : blend565(*p, ic->c[k], a + 1);
++        }
++    }
++}
++
++// ---- the combined map: three sizes in romfs (1/2, 1/4 and 1/8 pixel per marker unit), sampled by the nearest pixel
++
++struct MapLevel { int w, h; u16 *px; };
++static MapLevel mapLevels[3];
++struct TrkMapView { float cx, cy, zoom; bool follow; };   // zoom: screen pixels per unit of the 1623 x 958 marker space
++
++static const MapLevel *mapLevel(float zoom)
++{
++    int n = zoom <= 0.125f ? 2 : zoom <= 0.25f ? 1 : 0;
++    MapLevel &l = mapLevels[n];
++    if (!l.px && l.w >= 0) {
++        char path[64];
++        snprintf(path, sizeof path, "romfs:/smz3/map%d.bin", n);
++        size_t len = 0;
++        unsigned char *d = readFile(path, &len);
++        l.w = -1;
++        if (d && len > 4) {
++            int w = d[0] | d[1] << 8, h = d[2] | d[3] << 8;
++            if (len >= 4 + (size_t)w * h * 2) { l.px = (u16 *)malloc((size_t)w * h * 2); if (l.px) { memcpy(l.px, d + 4, (size_t)w * h * 2); l.w = w; l.h = h; } }
++        }
++        free(d);
++    }
++    return l.px ? &l : NULL;
++}
++
++// Draws the part of the map under the screen rectangle (rx0..rx1, ry0..ry1), darkened by shift (0 none, 1 half, 3 an eighth).
++static void mapPixels(const TrkMapView &v, int ax, int ay, int aw, int ah, int rx0, int ry0, int rx1, int ry1, int shift)
++{
++    const MapLevel *l = mapLevel(v.zoom);
++    if (!l) return;
++    if (rx0 < clipX0) rx0 = clipX0;
++    if (ry0 < clipY0) ry0 = clipY0;
++    if (rx1 > clipX1) rx1 = clipX1;
++    if (ry1 > clipY1) ry1 = clipY1;
++    float s = l->w / 1623.0f;
++    float ox = v.cx - (ax + aw / 2.0f) / v.zoom, oy = v.cy - (ay + ah / 2.0f) / v.zoom;
++    u16 mask = shift == 1 ? 0x7BEF : shift == 2 ? 0x39E7 : 0x18E3;
++    u16 empty = to565(0x0B0E12);
++    for (int x = rx0; x < rx1; x++) {
++        int mx = (int)((ox + (x + 0.5f) / v.zoom) * s);
++        u16 *p = trkFb + x * 240 + 239 - ry0;
++        if (mx < 0 || mx >= l->w) { for (int y = ry0; y < ry1; y++) *p-- = empty; continue; }
++        for (int y = ry0; y < ry1; y++) {
++            int my = (int)((oy + (y + 0.5f) / v.zoom) * s);
++            u16 c = my < 0 || my >= l->h ? empty : l->px[my * l->w + mx];
++            *p-- = shift ? (u16)((c >> shift) & mask) : c;
++        }
++    }
++}
++
++static signed short stackHead[SMZ_TRK_MAX_LOCS];
++static unsigned char stackSize[SMZ_TRK_MAX_LOCS];
++
++// Zelda checks on one spot of the map (a dungeon's chests) are one dot, drawn by the first of them.
++static void buildStacks()
++{
++    static bool done = false;
++    if (done) return;
++    done = true;
++    const SmzMapData &m = SMZ3_MAP_DATA;
++    static int markerOf[SMZ_TRK_MAX_LOCS];
++    for (int i = 0; i < SMZ_TRK_MAX_LOCS; i++) markerOf[i] = -1;
++    for (int k = 0; k < m.n_markers; k++) if (m.markers[k].index >= 0 && m.markers[k].index < SMZ_TRK_MAX_LOCS) markerOf[m.markers[k].index] = k;
++    for (unsigned i = 0; i < smz3_location_count && i < SMZ_TRK_MAX_LOCS; i++) {
++        stackHead[i] = (signed short)i;
++        if (markerOf[i] < 0 || smz3_locations[i].game != SMZ3_GAME_ZELDA) continue;
++        const SmzMarker &a = m.markers[markerOf[i]];
++        for (unsigned j = 0; j < i; j++) {
++            if (markerOf[j] < 0 || smz3_locations[j].game != SMZ3_GAME_ZELDA) continue;
++            const SmzMarker &b = m.markers[markerOf[j]];
++            if (a.x == b.x && a.y == b.y) { stackHead[i] = stackHead[j]; break; }
++        }
++    }
++    for (unsigned i = 0; i < smz3_location_count && i < SMZ_TRK_MAX_LOCS; i++) if (stackSize[stackHead[i]] < 255) stackSize[stackHead[i]]++;
++}
++
++// ---- state of the run being played
++
++static SmzTracker trk;
++static SmzProof proof;
++static SmzDiscovery disc;
++static int curSlot = -1;
++static bool discoveredOnly = false;
++static SmzDailyRun dr;   // the daily challenge's attempt when the daily slot is played
++static bool daily = false;
++static int64_t dailyDoneMs = 0, newHintUntil = 0;
++static char runName[64];
++static bool finishedBefore = false;   // the run had ended when it was loaded
++static int cardState = 0;   // the run-complete card: 0 not yet, 1 shown, 2 closed
++static bool wantRunList = false;
++
++struct TrkHelp { int mode, count, used, given; char hints[SMZ_HOST_HELP_COUNT][SMZ_HOST_HELP_TEXT]; };
++static TrkHelp help;   // the run's <rom>.help file: mode 0 all, 1 limited, 2 none
++static char helpNote[SMZ_HOST_HELP_TEXT + 32];
++
++static void readHelp()
++{
++    char path[320];
++    snprintf(path, sizeof path, "%.300s.help", Memory.ROMFilename);
++    memset(&help, 0, sizeof help);
++    help.mode = 2;
++    FILE *f = fopen(path, "rb");
++    if (!f) return;
++    if (fscanf(f, "%d %d %d %d\n", &help.mode, &help.count, &help.used, &help.given) != 4) help.mode = 2;
++    for (int i = 0; i < SMZ_HOST_HELP_COUNT; i++) {
++        if (!fgets(help.hints[i], SMZ_HOST_HELP_TEXT, f)) break;
++        help.hints[i][strcspn(help.hints[i], "\r\n")] = 0;
++    }
++    fclose(f);
++}
++
++// ---- view state
++
++static int tab = TAB_RUN;
++static int scrollY[TAB_COUNT];
++static int contentH[TAB_COUNT];
++static TrkMapView bigMap = {811, 479, 0.19f, false}, miniMap = {811, 479, 0.45f, true};
++static bool dirty = true;
++static TrkTheme theme = THEME_ZELDA;
++
++struct Region { int game; const char *name; int first, count; bool open; };
++static Region regions[64];
++static int nRegions;
++static short regionLocs[SMZ_TRK_MAX_LOCS];
++
++static void buildRegions()
++{
++    if (nRegions) return;
++    int n = 0;
++    for (int g = SMZ3_GAME_ZELDA; g <= SMZ3_GAME_METROID; g++)
++        for (unsigned i = 0; i < smz3_location_count && i < SMZ_TRK_MAX_LOCS; i++) {
++            const smz3_location &l = smz3_locations[i];
++            if ((int)l.game != g) continue;
++            bool seen = false;
++            for (int r = 0; r < nRegions; r++) if (regions[r].game == g && !strcmp(regions[r].name, l.region)) seen = true;
++            if (seen || nRegions >= 64) continue;
++            Region &r = regions[nRegions++];
++            r.game = g; r.name = l.region; r.first = n; r.count = 0; r.open = false;
++            for (unsigned j = i; j < smz3_location_count && j < SMZ_TRK_MAX_LOCS; j++)
++                if ((int)smz3_locations[j].game == g && !strcmp(smz3_locations[j].region, l.region)) { regionLocs[n++] = (short)j; r.count++; }
++        }
++}
++
++static bool tabShown(int t)
++{
++    if (t == TAB_HELP) return help.mode != 2;
++    if (t == TAB_DAILY) return daily;
++    return true;
++}
++
++static int topOfTabs() { return daily ? STRIP_H : 0; }
++
++// The tabs shown, in order; returns how many.
++static int shownTabs(int *out)
++{
++    int n = 0;
++    for (int t = 0; t < TAB_COUNT; t++) if (tabShown(t)) out[n++] = t;
++    return n;
++}
++
++// ---- drawing
++
++static void fmtClock(int64_t ms, char *out, size_t cap)
++{
++    long long s = ms > 0 ? ms / 1000 : 0;
++    snprintf(out, cap, "%lld:%02lld:%02lld", s / 3600, s / 60 % 60, s % 60);
++}
++
++static int64_t runMs() { return trk.base_ms + trk.pending_ms; }
++
++// The clock the RUN tab shows: a daily challenge runs on the real clock from the game's start.
++static int64_t shownClockMs()
++{
++    if (daily && trk.game != 3 && dr.started_at) return smzDailyNowMs() - smz_daily_clock_from(&dr);
++    if (daily && dailyDoneMs > 1) return dailyDoneMs;
++    return runMs();
++}
++
++static void drawDailyStrip()
++{
++    int64_t now = smzDailyNowMs(), left = dr.closes_at - now;
++    bool finished = trk.game == 3;
++    fill(0, 0, 320, STRIP_H, 0x141B27);
++    char a[32], line[160];
++    int x = 6;
++    if (finished) {
++        fmtClock(dailyDoneMs > 1 ? dailyDoneMs : runMs(), a, sizeof a);
++        snprintf(line, sizeof line, "Done in %s", a);
++        text(x, 1, 0x4CC38A, line);
++        x += textW(line) + 14;
++    }
++    smz_daily_span(left, a, sizeof a);
++    snprintf(line, sizeof line, left > 0 ? "Closes in %s" : "Window closed", a);
++    text(x, 1, left < 15 * 60000 ? 0xE05A4F : 0xFFFFFF, line);
++    x += textW(line) + 14;
++    if (!finished) {
++        fmtClock(now - smz_daily_clock_from(&dr), a, sizeof a);
++        text(x, 1, 0xFFFFFF, a);
++        x += textW(a) + 14;
++        if (dr.next_hint_at > 0) {
++            smz_daily_span(dr.next_hint_at - now, a, sizeof a);
++            snprintf(line, sizeof line, "Next hint in %s", a);
++            textFit(x, 1, 316 - x, 0x8793A6, line);
++        }
++    }
++    if (now < newHintUntil && dr.n_hints > 0) {
++        snprintf(line, sizeof line, "Hint: %s", dr.hint[dr.n_hints - 1]);
++        textFit(6, 15, 308, 0xF2A33A, line);
++    } else textFit(6, 15, 308, 0xF2A33A, dr.goal);
++}
++
++static void drawTabs()
++{
++    int y = topOfTabs(), order[TAB_COUNT], n = shownTabs(order);
++    fill(0, y, 320, y + TAB_H, theme.bg);
++    int w = (320 - PAUSE_W) / n;
++    for (int i = 0; i < n; i++) {
++        int t = order[i], x = i * w;
++        if (t == tab) fill(x, y, x + w, y + TAB_H, theme.tab);
++        text(x, y + 3, t == tab ? theme.accent : theme.dim, TAB_NAMES[t], HALIGN_CENTER, x + w);
++    }
++    // the pause button: touching the screen no longer opens the emulator menu during a run
++    int px = 320 - PAUSE_W;
++    fill(px, y, 320, y + TAB_H, theme.panel);
++    fill(px + 8, y + 5, px + 11, y + TAB_H - 5, theme.dim);
++    fill(px + 14, y + 5, px + 17, y + TAB_H - 5, theme.dim);
++    fill(0, y + TAB_H - 1, 320, y + TAB_H, theme.panel);
++}
++
++static void drawRewards(int x, int y, int h)
++{
++    static const char *const TOKENS[4] = {"kraid_boss_token", "phantoon_boss_token", "draygon_boss_token", "ridley_boss_token"};
++    for (int i = 0; i < 4; i++, x += h + 1) drawIcon(getIcon(TOKENS[i]), x, y, h, h, trk.boss_mask >> i & 1 ? 256 : 70);
++    x += 4;
++    int gw = h * 7 / 10;
++    for (int n = 1; n <= 7; n++, x += gw + 1) {
++        bool done = trk.crystal_mask >> (n - 1) & 1, red = n == 5 || n == 6;
++        int c = !done ? 0x2A3340 : red ? 0xFF6B6B : 0x4FC3F7, rim = done ? 0xE8F6FF : 0x667080;
++        // a gem: a pentagon outline filled row by row
++        for (int yy = 0; yy < h; yy++) {
++            float f = yy < h * 0.32f ? yy / (h * 0.32f) : 1 - (yy - h * 0.32f) / (h * 0.68f) * 0.6f;
++            int half = (int)(gw * 0.5f * f + 0.5f), cx = x + gw / 2;
++            if (half < 1) half = 1;
++            fill(cx - half, y + yy, cx + half, y + yy + 1, rim);
++            if (yy > 0 && yy < h - 1 && half > 1) fill(cx - half + 1, y + yy, cx + half - 1, y + yy + 1, c);
++        }
++    }
++}
++
++static void drawMap(TrkMapView &v, int ax, int ay, int aw, int ah, bool mini)
++{
++    buildStacks();
++    if (v.follow && disc.has_position) { v.cx = disc.x; v.cy = disc.y; }
++    int sx0 = clipX0, sy0 = clipY0, sx1 = clipX1, sy1 = clipY1;
++    setClip(ax, ay, ax + aw, ay + ah);
++    mapPixels(v, ax, ay, aw, ah, ax, ay, ax + aw, ay + ah, discoveredOnly ? 3 : 1);
++    static SmzRect seen[400];
++    int ns = smz_disc_rects(&disc, seen, 400);
++    float ox = ax + aw / 2.0f - v.cx * v.zoom, oy = ay + ah / 2.0f - v.cy * v.zoom;
++    for (int i = 0; i < ns; i++) {
++        int x0 = (int)floorf(ox + seen[i].x * v.zoom), y0 = (int)floorf(oy + seen[i].y * v.zoom);
++        int x1 = (int)ceilf(ox + (seen[i].x + seen[i].w) * v.zoom), y1 = (int)ceilf(oy + (seen[i].y + seen[i].h) * v.zoom);
++        if (x1 <= ax || y1 <= ay || x0 >= ax + aw || y0 >= ay + ah) continue;
++        mapPixels(v, ax, ay, aw, ah, x0, y0, x1, y1, 0);
++    }
++    auto isSeen = [&](float x, float y) {
++        for (int i = 0; i < ns; i++) if (x >= seen[i].x && x < seen[i].x + seen[i].w && y >= seen[i].y && y < seen[i].y + seen[i].h) return true;
++        return false;
++    };
++    float rad = 1.6f + 3.0f * v.zoom;
++    if (rad > 6) rad = 6;
++    const SmzMapData &m = SMZ3_MAP_DATA;
++    for (int k = 0; k < m.n_markers; k++) {
++        int i = m.markers[k].index;
++        if (i < 0 || i >= (int)smz3_location_count || i >= SMZ_TRK_MAX_LOCS) continue;
++        float px = ox + m.markers[k].x * v.zoom, py = oy + m.markers[k].y * v.zoom;
++        if (px < ax - 8 || py < ay - 8 || px > ax + aw + 8 || py > ay + ah + 8) continue;
++        if (discoveredOnly && !isSeen((float)m.markers[k].x, (float)m.markers[k].y)) continue;
++        int head = stackHead[i];
++        bool done;
++        if (stackSize[head] > 1) {
++            if (i != head) continue;
++            done = true;
++            for (unsigned j = 0; j < smz3_location_count && j < SMZ_TRK_MAX_LOCS; j++) if (stackHead[j] == head && !trk.cleared[j]) done = false;
++        } else done = trk.cleared[i];
++        if (done) { dot(px, py, rad * 0.65f + 1, 0x000000); dot(px, py, rad * 0.65f, 0xFFFFFF); }
++        else { dot(px, py, rad + 1, 0xFFFFFF); dot(px, py, rad, 0x000000); dot(px, py, rad - 0.8f, 0xFFB300); }
++    }
++    SmzBossMark boss[16];
++    int nb = Memory.RAM ? smz_disc_boss_marks(&disc, Memory.RAM, 0x20000, boss, 16) : 0;
++    for (int i = 0; i < nb; i++) {
++        if (discoveredOnly && !isSeen(boss[i].x, boss[i].y)) continue;
++        int px = (int)(ox + boss[i].x * v.zoom), py = (int)(oy + boss[i].y * v.zoom), h = (int)(3 + 3 * v.zoom);
++        if (h > 7) h = 7;
++        fill(px - h, py - h, px + h, py + h, 0x000000);
++        fill(px - h + 1, py - h + 1, px + h - 1, py + h - 1, boss[i].done ? 0x606878 : 0xE05A4F);
++    }
++    if (disc.has_position) {
++        float px = ox + disc.x * v.zoom, py = oy + disc.y * v.zoom, pr = mini ? 4 : 3.5f + 2 * v.zoom;
++        dot(px, py, pr * 1.6f, 0x000000);
++        dot(px, py, pr * 1.3f, 0xFFFFFF);
++        dot(px, py, pr, 0xE05A4F);
++    }
++    // frame
++    fill(ax, ay, ax + aw, ay + 1, theme.panel);
++    fill(ax, ay + ah - 1, ax + aw, ay + ah, theme.panel);
++    fill(ax, ay, ax + 1, ay + ah, theme.panel);
++    fill(ax + aw - 1, ay, ax + aw, ay + ah, theme.panel);
++    setClip(sx0, sy0, sx1, sy1);
++}
++
++static int regionDone(const Region &r)
++{
++    int d = 0;
++    for (int k = 0; k < r.count; k++) d += trk.cleared[regionLocs[r.first + k]] ? 1 : 0;
++    return d;
++}
++
++static int runMiniTop, runMiniBottom;   // where the RUN tab's map is, for a tap
++
++// ---- item shortcuts (core/ui/smz3_shortcuts.h): the row over the RUN tab's map. In ALttP five slots, the same for every
++// run, equip their item on Y; in Super Metroid each beam owned turns on or off. Only in normal play, silently.
++
++#define SC_SLOTS 5
++#define SC_FILE SMZ_DIR "/shortcuts.txt"
++#define SC_ROW_X 162
++#define SC_ROW_W 154
++#define SC_ROW_H 30
++
++static int scSlots[SC_SLOTS] = {-1, -1, -1, -1, -1};
++static int scPick = -1;   // the slot whose item picker is open, -1 none
++
++static void scLoad()
++{
++    static bool loaded = false;
++    if (loaded) return;
++    loaded = true;
++    if (FILE *f = fopen(SC_FILE, "r")) {
++        for (int i = 0; i < SC_SLOTS; i++) if (fscanf(f, "%d", &scSlots[i]) != 1 || scSlots[i] < -1 || scSlots[i] >= SC_ZELDA_COUNT) scSlots[i] = -1;
++        fclose(f);
++    }
++}
++
++static void scSave()
++{
++    mkdir(SMZ_DIR, 0777);
++    if (FILE *f = fopen(SC_FILE, "w")) {
++        for (int i = 0; i < SC_SLOTS; i++) fprintf(f, "%d\n", scSlots[i]);
++        fclose(f);
++    }
++}
++
++static bool scOwned(int id) { return smz_shortcut_owned(id, Memory.RAM, 0x20000, Memory.SRAM, 0x20000) != 0; }
++static bool scActive(int id) { return smz_shortcut_active(id, Memory.RAM, 0x20000, Memory.SRAM, 0x20000) != 0; }
++
++static void scUse(int id)
++{
++    SmzPoke pk[4];
++    int n = smz_shortcut_pokes(id, Memory.RAM, 0x20000, Memory.SRAM, 0x20000, pk, 4);
++    for (int i = 0; i < n; i++) if (pk[i].offset < 0x20000) Memory.RAM[pk[i].offset] = pk[i].value;
++}
++
++// The ids in the row now: the five slots in ALttP (-1 empty), the beams owned in Super Metroid. Returns how many cells.
++static int scCells(int *ids)
++{
++    scLoad();
++    if (!trk.started) return 0;
++    if (trk.game == SMZ3_GAME_ZELDA) { for (int i = 0; i < SC_SLOTS; i++) ids[i] = scSlots[i]; return SC_SLOTS; }
++    int n = 0;
++    if (trk.game == SMZ3_GAME_METROID) for (int id = SC_ZELDA_COUNT; id < SC_COUNT; id++) if (scOwned(id)) ids[n++] = id;
++    return n;
++}
++
++static int scCellW() { return (SC_ROW_W - 4 * 3) / SC_SLOTS; }
++
++static void scIcon(int id, int x, int y, int w, int h, int alpha)
++{
++    const SmzShortcut &sc = smz_shortcuts[id];
++    if (sc.icon[0]) drawIcon(getIcon(sc.icon), x, y, w, h, alpha);
++    else {
++        char cut[16];
++        ui3dsEllipsize(sc.name, cut, sizeof cut, w);
++        text(x, y + (h - 13) / 2, alpha > 128 ? 0xFFFFFF : 0x667080, cut, HALIGN_CENTER, x + w);
++    }
++    if (id >= SC_BOTTLE1 && id <= SC_BOTTLE4) {   // the four bottles share one icon
++        char d[2] = {(char)('1' + id - SC_BOTTLE1), 0};
++        text(x + w + 1, y + h - 12, 0x000000, d, HALIGN_RIGHT);
++        text(x + w, y + h - 13, 0xFFFFFF, d, HALIGN_RIGHT);
++    }
++}
++
++static void drawShortcutRow(int y)
++{
++    int ids[SC_COUNT], n = scCells(ids), w = scCellW();
++    for (int i = 0; i < n; i++) {
++        int x = SC_ROW_X + i * (w + 3), id = ids[i];
++        bool on = id >= 0 && scActive(id);
++        fill(x, y, x + w, y + SC_ROW_H, on ? theme.tab : theme.panel);
++        if (on) { fill(x, y + SC_ROW_H - 2, x + w, y + SC_ROW_H, theme.accent); }
++        if (id < 0) text(x, y + 8, theme.dim, "+", HALIGN_CENTER, x + w);
++        else scIcon(id, x + 2, y + 2, w - 4, SC_ROW_H - 4, scOwned(id) ? 256 : 64);
++    }
++}
++
++// Cell of the row under (x, y), or -1.
++static int scCellAt(int x, int y, int rowY)
++{
++    int ids[SC_COUNT], n = scCells(ids), w = scCellW();
++    if (y < rowY || y >= rowY + SC_ROW_H) return -1;
++    for (int i = 0; i < n; i++) if (x >= SC_ROW_X + i * (w + 3) && x < SC_ROW_X + i * (w + 3) + w) return i;
++    return -1;
++}
++
++// The picker of an ALttP slot: the items owned, CLEAR and CLOSE.
++static void scPickerLayout(int y0, int i, int *x, int *y)
++{
++    *x = 8 + i % 9 * 34; *y = y0 + 24 + i / 9 * 34;
++}
++
++static void drawPicker(int y0, int y1)
++{
++    fill(0, y0, 320, y1, theme.bg);
++    char s[64];
++    int cur = scSlots[scPick];
++    snprintf(s, sizeof s, cur < 0 ? "Slot %d: tap an item to put in it" : "Slot %d: %s", scPick + 1, cur < 0 ? "" : smz_shortcuts[cur].name);
++    text(8, y0 + 5, theme.accent, s);
++    int k = 0;
++    for (int id = 0; id < SC_ZELDA_COUNT; id++) {
++        if (!scOwned(id)) continue;
++        int x, y;
++        scPickerLayout(y0, k++, &x, &y);
++        fill(x, y, x + 32, y + 32, id == cur ? theme.accent : theme.panel);
++        scIcon(id, x + 2, y + 2, 28, 28, 256);
++    }
++    if (!k) text(8, y0 + 28, theme.dim, "No items yet");
++    fill(8, y1 - 28, 156, y1 - 6, theme.panel);
++    text(8, y1 - 24, theme.text, "CLEAR", HALIGN_CENTER, 156);
++    fill(164, y1 - 28, 312, y1 - 6, theme.panel);
++    text(164, y1 - 24, theme.text, "CLOSE", HALIGN_CENTER, 312);
++}
++
++static void pickerTap(int x, int y, int y0, int y1)
++{
++    if (y >= y1 - 28 && y < y1 - 6) {
++        if (x < 160) { scSlots[scPick] = -1; scSave(); }
++        else scPick = -1;
++        return;
++    }
++    int k = 0;
++    for (int id = 0; id < SC_ZELDA_COUNT; id++) {
++        if (!scOwned(id)) continue;
++        int cx, cy;
++        scPickerLayout(y0, k++, &cx, &cy);
++        if (x >= cx && x < cx + 32 && y >= cy && y < cy + 32) { scSlots[scPick] = id; scSave(); scPick = -1; return; }
++    }
++}
++
++// A tap on the row: an empty ALttP slot opens its picker, a filled one equips its item, a beam turns on or off.
++static bool shortcutTap(int x, int y, bool hold)
++{
++    int ids[SC_COUNT], i = scCellAt(x, y, runMiniTop);
++    if (i < 0) return false;
++    scCells(ids);
++    if (trk.game == SMZ3_GAME_ZELDA && (hold || ids[i] < 0)) scPick = i;
++    else if (!hold && ids[i] >= 0) scUse(ids[i]);
++    return true;
++}
++
++static void drawRun(int y0, int y1)
++{
++    char s[96];
++    unsigned done = trk.zelda_cleared + trk.metroid_cleared, total = trk.zelda_total + trk.metroid_total;
++    int x = 6, cw = 150, y = y0 + 3;
++    snprintf(s, sizeof s, "%u%%", total ? done * 100 / total : 0);
++    int pw = bigText(x, y, 30, theme.accent, s);
++    const char *game = !trk.started ? "Waiting for a file" : trk.game == SMZ3_GAME_ZELDA ? "A Link to the Past" : trk.game == SMZ3_GAME_METROID ? "Super Metroid" : trk.game == 3 ? "Credits" : "Unknown";
++    textFit(x + pw + 6, y, cw - pw - 6, theme.accent, game);
++    fmtClock(shownClockMs(), s, sizeof s);
++    text(x + pw + 6, y + 15, theme.text, s);
++    y += 36;
++    textf(x, y, theme.text, "Zelda  %u / %u", trk.zelda_cleared, trk.zelda_total);
++    bar(x, y + 14, cw, 3, trk.zelda_cleared, trk.zelda_total, theme);
++    y += 20;
++    textf(x, y, theme.text, "Metroid  %u / %u", trk.metroid_cleared, trk.metroid_total);
++    bar(x, y + 14, cw, 3, trk.metroid_cleared, trk.metroid_total, theme);
++    y += 21;
++    int owned = 0;
++    for (unsigned i = 0; i < smz3_inventory_count && i < SMZ_TRK_MAX_INV; i++) owned += trk.started && trk.inventory[i] > 0;
++    long long sec = runMs() / 1000;
++    char pace[16] = "-";
++    if (sec >= 300) snprintf(pace, sizeof pace, "%.1f", done * 3600.0f / sec);
++    textf(x, y, theme.text, "Items %d / %u   %s/h", owned, smz3_inventory_count, pace);
++    y += 15;
++    drawRewards(x, y, 15);
++    y += 20;
++    if (trk.n_recent_items > 0 && y + 28 < y1) {
++        text(x, y, theme.dim, "RECENT ITEMS");
++        y += 14;
++        for (int i = 0; i < trk.n_recent_items && y + 14 <= y1; i++, y += 15) {
++            const smz3_inv_item &it = smz3_inventory_items[trk.recent_items[i]];
++            drawIcon(getIcon(it.icon), x, y, 14, 14, 256);
++            textFit(x + 17, y, cw - 17, theme.text, it.name);
++        }
++    }
++    // regions nearest to being finished: a goal the game screen does not show
++    if (y + 42 < y1) {
++        buildRegions();
++        int best[2] = {-1, -1}, left[2] = {1 << 30, 1 << 30};
++        for (int r = 0; r < nRegions; r++) {
++            int d = regionDone(regions[r]), l = regions[r].count - d;
++            if (d < 1 || l < 1) continue;
++            if (l < left[0]) { best[1] = best[0]; left[1] = left[0]; best[0] = r; left[0] = l; }
++            else if (l < left[1]) { best[1] = r; left[1] = l; }
++        }
++        if (best[0] >= 0) {
++            y += 3;
++            text(x, y, theme.dim, "NEARLY DONE");
++            y += 14;
++            for (int k = 0; k < 2 && best[k] >= 0; k++, y += 14) {
++                snprintf(s, sizeof s, "%s: %d left", regions[best[k]].name, left[k]);
++                textFit(x, y, cw, theme.dim, s);
++            }
++        }
++    }
++    runMiniTop = y0 + 4; runMiniBottom = y1 - 4;
++    int ids[SC_COUNT], mapTop = runMiniTop;
++    if (scCells(ids) > 0) { drawShortcutRow(runMiniTop); mapTop += SC_ROW_H + 4; }
++    drawMap(miniMap, 162, mapTop, 154, runMiniBottom - mapTop, true);
++    if (trk.game != SMZ3_GAME_ZELDA) scPick = -1;
++    if (scPick >= 0) drawPicker(y0, y1);
++}
++
++static bool countedItem(const char *n)
++{
++    static const char *const C[] = {"Bottles", "Hearts", "Heart Pieces", "Energy Tanks", "Reserve", "Missiles", "Super Missiles", "Power Bombs"};
++    for (const char *c : C) if (!strcmp(c, n)) return true;
++    return false;
++}
++
++static bool levelItem(const char *n) { return !strcmp(n, "Sword") || !strcmp(n, "Shield") || !strcmp(n, "Mail") || !strcmp(n, "Gloves"); }
++
++static void drawItems(int y0, int y1)
++{
++    const int cols = 9;
++    int n = smz3_inventory_count < SMZ_TRK_MAX_INV ? (int)smz3_inventory_count : SMZ_TRK_MAX_INV, rows = (n + cols - 1) / cols;
++    int cell = (y1 - y0 - 6) / rows;
++    if (cell > 34) cell = 34;
++    int left = (320 - cell * cols) / 2, top = y0 + (y1 - y0 - cell * rows) / 2;
++    for (int i = 0; i < n; i++) {
++        const smz3_inv_item &it = smz3_inventory_items[i];
++        int cx = left + i % cols * cell, cy = top + i / cols * cell, level = trk.started ? trk.inventory[i] : 0;
++        fill(cx + 1, cy + 1, cx + cell - 1, cy + cell - 1, theme.panel);
++        drawIcon(getIcon(it.icon), cx + 2, cy + 2, cell - 4, cell - 4, level > 0 ? 256 : 52);
++        if (level > 0 && (countedItem(it.name) || (levelItem(it.name) && level > 1))) {
++            char s[12];
++            snprintf(s, sizeof s, "%d", level);
++            text(cx + cell - 1, cy + cell - 14, 0x000000, s, HALIGN_RIGHT);
++            text(cx + cell - 2, cy + cell - 15, theme.text, s, HALIGN_RIGHT);
++        }
++    }
++}
++
++// Each region: a title with its count and a bar; a tap opens the list of its checks.
++static void drawChecks(int y0, int y1, int *tapRegion = NULL, int tapY = -1)
++{
++    buildRegions();
++    int y = y0 + 4 - scrollY[TAB_CHECKS], lastGame = 0;
++    char s[96];
++    for (int r = 0; r < nRegions; r++) {
++        Region &g = regions[r];
++        if (g.game != lastGame) {
++            lastGame = g.game;
++            if (!tapRegion) text(8, y + 2, theme.dim, lastGame == SMZ3_GAME_ZELDA ? "A LINK TO THE PAST" : "SUPER METROID");
++            y += 18;
++        }
++        int d = regionDone(g);
++        if (tapRegion && tapY >= y && tapY < y + 20) { *tapRegion = r; return; }
++        if (!tapRegion && y + 20 > y0 && y < y1) {
++            snprintf(s, sizeof s, "%s %s", g.open ? "-" : "+", g.name);
++            textFit(8, y, 230, d == g.count ? theme.done : theme.text, s);
++            snprintf(s, sizeof s, "%d / %d", d, g.count);
++            text(312, y, d == g.count ? theme.done : theme.text, s, HALIGN_RIGHT);
++            bar(8, y + 15, 304, 3, d, g.count, theme);
++        }
++        y += 21;
++        if (!g.open) continue;
++        for (int k = 0; k < g.count; k++, y += 14) {
++            if (tapRegion || y + 14 <= y0 || y >= y1) continue;
++            int i = regionLocs[g.first + k];
++            bool c = trk.cleared[i];
++            if (c) fill(20, y + 4, 26, y + 10, theme.done);
++            else { fill(20, y + 4, 26, y + 10, theme.dim); fill(21, y + 5, 25, y + 9, theme.bg); }
++            textFit(32, y, 280, c ? theme.done : theme.text, smz3_locations[i].name);
++        }
++        y += 4;
++    }
++    contentH[TAB_CHECKS] = y + scrollY[TAB_CHECKS] - y0;
++}
++
++static const char *const MAP_BUTTONS[4] = {"-", "+", "FOLLOW", "CENTER"};
++
++static void mapButtonRect(int i, int y1, int *x0, int *bx1)
++{
++    static const int W[4] = {24, 24, 58, 58};
++    int x = 316;
++    for (int k = 3; k >= i; k--) x -= W[k] + 4;
++    *x0 = x + 4; *bx1 = x + 4 + W[i];
++    (void)y1;
++}
++
++static void drawMapTab(int y0, int y1)
++{
++    drawMap(bigMap, 0, y0, 320, y1 - y0, false);
++    for (int i = 0; i < 4; i++) {
++        int bx0, bx1;
++        mapButtonRect(i, y1, &bx0, &bx1);
++        bool on = i == 2 && bigMap.follow;
++        fillAlpha(bx0, y1 - 22, bx1, y1 - 4, 0x000000, 180);
++        text(bx0, y1 - 21, on ? theme.accent : 0xFFFFFF, MAP_BUTTONS[i], HALIGN_CENTER, bx1);
++    }
++}
++
++static int hintButtonY = -1;
++
++static void drawHelp(int y0, int y1)
++{
++    int y = y0 + 6 - scrollY[TAB_HELP];
++    char s[96];
++    if (help.mode == 0) y = textWrap(8, y, 304, theme.text, "All helps are on: hints are unlimited.");
++    else { snprintf(s, sizeof s, "Helps left: %d of %d", help.count - help.used, help.count); text(8, y, theme.text, s); y += 14; }
++    if (helpNote[0]) y = textWrap(8, y + 4, 304, theme.accent, helpNote);
++    y += 6;
++    bool can = help.given < SMZ_HOST_HELP_COUNT && help.hints[help.given][0] && (help.mode == 0 || help.used < help.count);
++    hintButtonY = can ? y + scrollY[TAB_HELP] : -1;
++    if (can) {
++        fill(8, y, 160, y + 22, theme.panel);
++        fill(8, y + 21, 160, y + 22, theme.accent);
++        text(8, y + 4, theme.accent, "Give me a hint", HALIGN_CENTER, 160);
++        y += 30;
++    }
++    if (help.given > 0) {
++        text(8, y, theme.dim, "HINTS SO FAR");
++        y += 16;
++        for (int i = help.given - 1; i >= 0; i--) y = textWrap(8, y, 304, theme.text, help.hints[i]) + 4;
++    }
++    contentH[TAB_HELP] = y + scrollY[TAB_HELP] - y0;
++    (void)y1;
++}
++
++static void drawDaily(int y0, int y1)
++{
++    int64_t now = smzDailyNowMs(), left = dr.closes_at - now;
++    bool finished = trk.game == 3;
++    int y = y0 + 6 - scrollY[TAB_DAILY];
++    char a[32], b[32], s[200];
++    y = textWrap(8, y, 304, theme.accent, dr.goal) + 4;
++    if (finished) {
++        fmtClock(dailyDoneMs > 1 ? dailyDoneMs : runMs(), a, sizeof a);
++        snprintf(s, sizeof s, "CHALLENGE COMPLETE  %s", a);
++        text(8, y, 0x4CC38A, s);
++        y += 16;
++        char res[160];
++        y = textWrap(8, y, 304, theme.text, smzDailyResult(res, sizeof res) ? res : "Sending the time ...") + 6;
++    } else {
++        smz_daily_span(left, a, sizeof a);
++        fmtClock(now - smz_daily_clock_from(&dr), b, sizeof b);
++        if (left > 0) snprintf(s, sizeof s, "Window closes in %s    Own time %s", a, b);
++        else snprintf(s, sizeof s, "The window has closed: no prize    Own time %s", b);
++        y = textWrap(8, y, 304, left < 15 * 60000 ? 0xE05A4F : theme.dim, s) + 8;
++    }
++    text(8, y, theme.dim, "HINTS");
++    y += 16;
++    if (!dr.n_hints) { text(8, y, theme.dim, "None yet"); y += 14; }
++    for (int i = 0; i < dr.n_hints; i++) {
++        snprintf(s, sizeof s, "%lld min   %s", (long long)((dr.hint_at[i] - dr.started_at) / 60000), dr.hint[i]);
++        y = textWrap(8, y, 304, i == dr.n_hints - 1 && now < newHintUntil ? theme.accent : theme.text, s) + 6;
++    }
++    if (!finished) {
++        if (dr.next_hint_at > 0) { smz_daily_span(dr.next_hint_at - now, a, sizeof a); snprintf(s, sizeof s, "Next hint in %s", a); }
++        else snprintf(s, sizeof s, "Every hint is out");
++        text(8, y + 4, theme.dim, s);
++        y += 18;
++    }
++    contentH[TAB_DAILY] = y + scrollY[TAB_DAILY] - y0;
++    (void)y1;
++}
++
++static void clampScroll(int t);
++
++// The run-complete card: the final time, where it went, and A for the run list or B to watch the credits.
++static void drawFinishCard()
++{
++    int x0 = 24, y0 = 60, x1 = 296, y1 = 190;
++    fill(x0 - 2, y0 - 2, x1 + 2, y1 + 2, theme.accent);
++    fill(x0, y0, x1, y1, theme.bg);
++    text(x0, y0 + 8, theme.accent, daily ? "CHALLENGE COMPLETE" : "RUN COMPLETE", HALIGN_CENTER, x1);
++    int64_t ms = daily && dailyDoneMs > 1 ? dailyDoneMs : runMs();
++    char s[160];
++    snprintf(s, sizeof s, "%lld:%02lld:%02lld.%02lld", (long long)(ms / 3600000), (long long)(ms / 60000 % 60), (long long)(ms / 1000 % 60), (long long)(ms % 1000 / 10));
++    int w = ui3dsGetStringWidth(s, 0, 0xffff, 26);
++    bigText((x0 + x1 - w) / 2, y0 + 28, 26, theme.text, s);
++    const char *where = "Played offline: not on a ladder";
++    char res[160];
++    if (daily) where = smzDailyResult(res, sizeof res) ? res : "Sending the time ...";
++    else if (curSlot >= 0 && smzOnlineSlotKind(curSlot)) where = "The time goes to the ladder";
++    textWrap(x0 + 10, y0 + 62, x1 - x0 - 20, theme.dim, where, 2);
++    text(x0, y1 - 22, theme.text, "A Main menu    B Watch the credits", HALIGN_CENTER, x1);
++}
++
++static void trackerDraw()
++{
++    if (gfxGetScreenFormat(settings3DS.SecondScreen) != GSP_RGB565_OES) gfxSetScreenFormat(settings3DS.SecondScreen, GSP_RGB565_OES);
++    trkFb = (u16 *)gfxGetFramebuffer(settings3DS.SecondScreen, GFX_LEFT, NULL, NULL);
++    if (!tabShown(tab)) tab = TAB_RUN;
++    if (trk.started) theme = trk.game == SMZ3_GAME_METROID ? THEME_METROID : trk.game == SMZ3_GAME_ZELDA ? THEME_ZELDA : theme;
++    setClip(0, 0, 320, 240);
++    fill(0, 0, 320, 240, theme.bg);
++    if (daily) drawDailyStrip();
++    drawTabs();
++    int y0 = topOfTabs() + TAB_H, y1 = 240;
++    setClip(0, y0, 320, y1);
++    switch (tab) {
++    case TAB_RUN: drawRun(y0, y1); break;
++    case TAB_ITEMS: drawItems(y0, y1); break;
++    case TAB_CHECKS: drawChecks(y0, y1); break;
++    case TAB_MAP: drawMapTab(y0, y1); break;
++    case TAB_HELP: drawHelp(y0, y1); break;
++    case TAB_DAILY: drawDaily(y0, y1); break;
++    }
++    clampScroll(tab);
++    setClip(0, 0, 320, 240);
++    if (cardState == 1) drawFinishCard();
++    impl3dsFlushScreen(settings3DS.SecondScreen, false, false);
++    gfxScreenSwapBuffers(settings3DS.SecondScreen, false);
++    dirty = false;
++}
++
++// ---- touch: the tabs, scrolling by dragging, the map's buttons and panning
++
++static int touchX, touchY, touchStartX, touchStartY, touchMoved;
++static u64 touchAt;
++static bool touching = false;
++
++static void clampScroll(int t)
++{
++    int view = 240 - topOfTabs() - TAB_H, max = contentH[t] - view + 8;
++    if (scrollY[t] > max) scrollY[t] = max;
++    if (scrollY[t] < 0) scrollY[t] = 0;
++}
++
++static void trackerTap(int x, int y)
++{
++    int y0 = topOfTabs() + TAB_H, y1 = 240;
++    if (tab == TAB_RUN && scPick >= 0) { pickerTap(x, y, y0, y1); return; }
++    if (tab == TAB_RUN && shortcutTap(x, y, false)) return;
++    if (tab == TAB_RUN && x >= 162 && y >= runMiniTop && y < runMiniBottom) { tab = TAB_MAP; bigMap = miniMap; bigMap.zoom = 0.45f; return; }
++    if (tab == TAB_CHECKS) {
++        int r = -1;
++        drawChecks(y0, y1, &r, y);
++        if (r >= 0) regions[r].open = !regions[r].open;
++        return;
++    }
++    if (tab == TAB_MAP && y >= y1 - 24) {
++        for (int i = 0; i < 4; i++) {
++            int bx0, bx1;
++            mapButtonRect(i, y1, &bx0, &bx1);
++            if (x < bx0 || x >= bx1) continue;
++            if (i == 0 && bigMap.zoom > 0.2f) bigMap.zoom /= 1.5f;
++            if (i == 1 && bigMap.zoom < 1.5f) bigMap.zoom *= 1.5f;
++            if (i == 2) bigMap.follow = !bigMap.follow;
++            if (i == 3) { if (disc.has_position) { bigMap.cx = disc.x; bigMap.cy = disc.y; } else { bigMap.cx = 811; bigMap.cy = 479; bigMap.zoom = 0.19f; } }
++            return;
++        }
++    }
++    if (tab == TAB_HELP && hintButtonY >= 0) {
++        int by = hintButtonY - scrollY[TAB_HELP];
++        if (x >= 8 && x < 160 && y >= by && y < by + 22) {
++            char out[SMZ_HOST_HELP_TEXT + 32];
++            smz3AskHelp(out, sizeof out);
++            snprintf(helpNote, sizeof helpNote, "%s", out);
++            readHelp();
++        }
++    }
++}
++
++// A touch on the tab row picks that tab; true when it was there.
++static bool tabTouch(int x, int y)
++{
++    int ty = topOfTabs();
++    if (y < ty || y >= ty + TAB_H) return false;
++    int order[TAB_COUNT], n = shownTabs(order), w = (320 - PAUSE_W) / n, i = x / w;
++    if (i < n) { tab = order[i]; scPick = -1; dirty = true; }
++    return true;
++}
++
++static void dragBy(int dx, int dy)
++{
++    if (tab == TAB_MAP) { bigMap.follow = false; bigMap.cx -= dx / bigMap.zoom; bigMap.cy -= dy / bigMap.zoom; dirty = true; }
++    else if (tab == TAB_CHECKS || tab == TAB_HELP || tab == TAB_DAILY) { scrollY[tab] -= dy; clampScroll(tab); dirty = true; }
++}
++
++// debug aid: sdmc:/SMZ3/debug_touch.txt, lines "t <x> <y>" (a tap) or "d <dx> <dy>" (a drag), for driving the tracker
++// from a script on an emulator; the file is removed once read
++static void debugTouches()
++{
++    FILE *f = fopen(SMZ_DIR "/debug_touch.txt", "r");
++    if (!f) return;
++    char kind;
++    int a, b;
++    while (fscanf(f, " %c %d %d", &kind, &a, &b) == 3) {
++        if (kind == 't' && !tabTouch(a, b)) trackerTap(a, b);
++        if (kind == 'd') dragBy(a, b);
++    }
++    fclose(f);
++    remove(SMZ_DIR "/debug_touch.txt");
++}
++
++bool smz3TrackerTouch(unsigned keysDown, unsigned keysHeld)
++{
++    if (!smz3IsRun() || curSlot < 0) return false;
++    bool held = keysHeld & KEY_TOUCH;
++    if (held) {
++        touchPosition t;
++        hidTouchRead(&t);
++        if (keysDown & KEY_TOUCH) {
++            int ty = topOfTabs();
++            if (t.px >= 320 - PAUSE_W && t.py >= ty && t.py < ty + TAB_H) return false;   // the pause button: the emulator's menu
++            touching = !tabTouch(t.px, t.py);
++            touchAt = osGetTime();
++            touchStartX = touchX = t.px; touchStartY = touchY = t.py; touchMoved = 0;
++            return true;
++        }
++        if (!touching) return true;
++        int dx = t.px - touchX, dy = t.py - touchY;
++        touchMoved += abs(dx) + abs(dy);
++        touchX = t.px; touchY = t.py;
++        if (touchMoved > 6 && (dx || dy)) dragBy(dx, dy);
++        // holding a filled ALttP slot opens its picker
++        if (touchMoved <= 6 && tab == TAB_RUN && scPick < 0 && osGetTime() - touchAt >= 600 && shortcutTap(touchStartX, touchStartY, true)) { touching = false; dirty = true; }
++        return true;
++    }
++    if (touching) {
++        touching = false;
++        if (touchMoved <= 6) { trackerTap(touchStartX, touchStartY); dirty = true; }
++    }
++    return false;
++}
++
++// ---- reading the run once a second
++
++static void trackerUpdate()
 +{
 +    static u64 startedAt = 0;
-+    if (strncmp(Memory.ROMFilename, RUN_DIR "/", sizeof RUN_DIR) != 0 || !Memory.RAM || !Memory.SRAM) return;
-+    // debug aid: sdmc:/SMZ3/debug_poke.txt, lines "w <hex offset> <hex value>" (WRAM) or "s ..." (SRAM) are OR-ed into memory
++    // debug aid: sdmc:/SMZ3/debug_poke.txt, lines "w <hex offset> <hex value>" (WRAM) or "s ..." (SRAM) are OR-ed into memory,
++    // "W" and "S" write the value as it is
 +    if (FILE *dbg = fopen(SMZ_DIR "/debug_poke.txt", "r")) {
 +        char kind;
 +        unsigned off, val;
 +        while (fscanf(dbg, " %c %x %x", &kind, &off, &val) == 3) {
 +            if (kind == 'w' && off < 0x20000) Memory.RAM[off] |= (u8)val;
 +            if (kind == 's' && off < 0x20000) Memory.SRAM[off] |= (u8)val;
++            if (kind == 'W' && off < 0x20000) Memory.RAM[off] = (u8)val;
++            if (kind == 'S' && off < 0x20000) Memory.SRAM[off] = (u8)val;
 +        }
 +        fclose(dbg);
 +    }
@@ -1528,24 +2624,31 @@ index 0000000..86362d9
 +    if (sum.started && !startedAt) startedAt = osGetTime();
 +    if (!sum.started) startedAt = 0;
 +    // play time, proof of run and the online ladder: the shared tracker reads the same memory as the other frontends
-+    static SmzTracker trk;
-+    static SmzProof proof;
-+    static int curSlot = -1, calls = 0, proofDirty = 0, queued = 0;
++    static int calls = 0, proofDirty = 0, queued = 0;
 +    static u64 lastMs = 0, nextToken = 0;
-+    static SmzDailyRun dr;   // the daily challenge's attempt when the daily slot is played
-+    static bool daily = false;
 +    static int deadBosses = 0;
-+    static int64_t dailyDoneMs = 0, nextHintAsk = 0, newHintUntil = 0;
++    static int64_t nextHintAsk = 0;
++    char discPath[96];
++    snprintf(discPath, sizeof discPath, RUN_DIR "/slot%d.discovery", curSlot);
 +    if (gPlaySlot != curSlot) {
 +        curSlot = gPlaySlot;
++        snprintf(discPath, sizeof discPath, RUN_DIR "/slot%d.discovery", curSlot);
 +        SmzRun r0;
 +        char rp[96];
 +        snprintf(rp, sizeof rp, RUN_DIR "/slot%d.run", curSlot);
 +        memset(&r0, 0, sizeof r0);
 +        if (curSlot >= 0 && smz_run_load(rp, &r0) == 0) smz_tracker_reset(&trk, r0.play_ms, r0.save_ms, r0.save_zelda, r0.save_metroid);
 +        else smz_tracker_reset(&trk, 0, 0, 0, 0);
++        snprintf(runName, sizeof runName, "%s", r0.name);
 +        smz_goal_from_settings(r0.settings, &trk.goal);   // a daily challenge ends at its goal
 +        gChallenge = strstr(r0.settings, "\"challenge\":true") != NULL;
++        gFinished = finishedBefore = r0.game == 3;
++        cardState = 0;
++        discoveredOnly = strstr(r0.settings, "\"mapMode\":\"discovered\"") != NULL;
++        smz_disc_init(&disc, &SMZ3_MAP_DATA);
++        size_t dn = 0;
++        char *dt = (char *)readFile(discPath, &dn);
++        if (dt) { char *z = (char *)realloc(dt, dn + 1); if (z) { z[dn] = 0; smz_disc_load(&disc, z); dt = z; } free(dt); }
 +        size_t pn = 0;
 +        char *pt = (char *)readFile(smzOnlineProofPath(curSlot), &pn);
 +        if (pt) { char *z = (char *)realloc(pt, pn + 1); if (z) { z[pn] = 0; pt = z; } }
@@ -1558,6 +2661,12 @@ index 0000000..86362d9
 +        lastMs = osGetTime();
 +        calls = proofDirty = queued = 0;
 +        nextToken = 0;
++        readHelp();
++        helpNote[0] = 0;
++        tab = TAB_RUN;
++        memset(scrollY, 0, sizeof scrollY);
++        bigMap = {811, 479, 0.19f, false};
++        miniMap = {811, 479, 0.45f, true};
 +    }
 +    u64 nowMs = osGetTime();
 +    int dt = (int)(nowMs - lastMs);
@@ -1565,11 +2674,13 @@ index 0000000..86362d9
 +    if (dt < 0 || dt > 3000) dt = 1000;   // a pause in between is not play time
 +    if (deadBosses) smz_prepared_apply(deadBosses, Memory.RAM, 0x20000, Memory.SRAM, 0x20000);   // a mid-game daily start
 +    smz_tracker_tick(&trk, Memory.RAM, 0x20000, Memory.SRAM, 0x20000, dt, 1);
++    if (trk.started) smz_disc_update(&disc, Memory.RAM, 0x20000, (int)trk.game);
++    if (trk.game == 3) { gFinished = true; if (!cardState && !finishedBefore) cardState = 1; }
 +    if (daily && trk.started && smz_daily_note_began(&dr, smzDailyNowMs())) smzDailySave(&dr);   // the clock starts with the game, as in the ladder
 +    int online = curSlot >= 0 ? smzOnlineSlotKind(curSlot) : 0;
 +    if ((online || daily) && trk.started && smz_proof_note(&proof, trk.cleared, SMZ_TRK_MAX_LOCS, trk.base_ms + trk.pending_ms)) proofDirty = 1;
 +    // debug aid: sdmc:/SMZ3/debug_token.txt asks for the run's token even before the game has started
-+    if (online) if (FILE *dt = fopen(SMZ_DIR "/debug_token.txt", "r")) { fclose(dt); remove(SMZ_DIR "/debug_token.txt"); smzOnlineEnsureToken(curSlot); }
++    if (online) if (FILE *df = fopen(SMZ_DIR "/debug_token.txt", "r")) { fclose(df); remove(SMZ_DIR "/debug_token.txt"); smzOnlineEnsureToken(curSlot); }
 +    if (online && trk.started && trk.running && nowMs >= nextToken) { nextToken = nowMs + 60000; smzOnlineEnsureToken(curSlot); }
 +    if (curSlot >= 0 && (++calls % 10 == 0 || trk.game == 3)) {   // the run's file keeps the play time and the progress
 +        char rp[96];
@@ -1594,21 +2705,18 @@ index 0000000..86362d9
 +                dailyDoneMs = smzDailyNowMs() - smz_daily_clock_from(&dr);
 +                smzDailyQueueFinish(dailyDoneMs);
 +            }
-+            if (online && trk.game == 3 && !queued && strstr(r1.settings, "\"defaultRules\":true")) {
++            if (online && trk.game == 3 && !queued && !finishedBefore && strstr(r1.settings, "\"defaultRules\":true")) {
 +                queued = 1;
 +                smzOnlineQueueFinish(curSlot, r1.play_ms, atoi(r1.seed));
 +            }
 +        }
++        if (disc.dirty) {
++            static char dtext[8192];
++            int n = smz_disc_save(&disc, dtext, sizeof dtext);
++            FILE *df = n > 0 ? fopen(discPath, "wb") : NULL;
++            if (df) { fwrite(dtext, 1, n, df); fclose(df); disc.dirty = 0; }
++        }
 +    }
-+    long long sec = (trk.base_ms + trk.pending_ms) / 1000;
-+    if (gfxGetScreenFormat(settings3DS.SecondScreen) != GSP_RGB565_OES) gfxSetScreenFormat(settings3DS.SecondScreen, GSP_RGB565_OES);
-+    ui3dsDrawRect(0, 0, 320, 240, PALETTE[0]);
-+    ui3dsDrawRect(0, 0, 320, 28, PALETTE[1]);
-+    trackerLine(7, PALETTE[5], daily ? "SMZ3 daily challenge" : "SMZ3 tracker");
-+    const char *game = !sum.started ? "Waiting for a file" : sum.game == SMZ3_GAME_ZELDA ? "A Link to the Past" : sum.game == SMZ3_GAME_METROID ? "Super Metroid" : "Credits";
-+    trackerLine(44, PALETTE[3], "%s", game);
-+    trackerLine(70, PALETTE[3], "Zelda    %u / %u", sum.zelda_cleared, sum.zelda_total);
-+    trackerLine(92, PALETTE[3], "Metroid  %u / %u", sum.metroid_cleared, sum.metroid_total);
 +    if (daily) {
 +        int64_t now = smzDailyNowMs();
 +        SmzDailyRun fresh;
@@ -1617,40 +2725,14 @@ index 0000000..86362d9
 +            if (dr.began_at && !fresh.began_at) { fresh.began_at = dr.began_at; smzDailySave(&fresh); }   // set while the hints were on their way
 +            dr = fresh;
 +        }
-+        bool finished = trk.game == 3;
-+        if (!finished && dr.next_hint_at > 0 && now >= dr.next_hint_at && now >= nextHintAsk) { nextHintAsk = now + 15000; smzDailyRequestHints(&dr); }
-+        char a[24], b[24];
-+        int y = 112;
-+        y = trackerWrap(y, PALETTE[5], 2, dr.goal);
-+        int64_t left = dr.closes_at - now;
-+        if (finished) {
-+            int64_t t = dailyDoneMs > 1 ? dailyDoneMs / 1000 : sec;
-+            trackerLine(y + 2, PALETTE[7], "CHALLENGE COMPLETE  %lld:%02lld:%02lld", (long long)(t / 3600), (long long)(t / 60 % 60), (long long)(t % 60));
-+            char res[160];
-+            trackerWrap(y + 20, PALETTE[3], 2, smzDailyResult(res, sizeof res) ? res : "Sending the time ...");
-+        } else {
-+            int64_t own = (now - smz_daily_clock_from(&dr)) / 1000;
-+            spanText(left, a, sizeof a);
-+            if (left > 0) trackerLine(y + 2, left < 15 * 60000 ? PALETTE[6] : PALETTE[3], "Window closes in %s", a);
-+            else trackerLine(y + 2, PALETTE[6], "TIME IS UP: a finish goes on the late list");
-+            trackerLine(y + 18, PALETTE[3], "Own time  %lld:%02lld:%02lld", (long long)(own / 3600), (long long)(own / 60 % 60), (long long)(own % 60));
-+            spanText(dr.next_hint_at - now, b, sizeof b);
-+            if (dr.next_hint_at > 0) trackerLine(y + 34, PALETTE[4], "Next hint in %s", b);
-+            else trackerLine(y + 34, PALETTE[4], "Every hint is out");
-+            y += 54;
-+            for (int i = dr.n_hints - 1; i >= 0 && y < 226; i--)   // the newest first, in amber while it is new
-+                y = trackerWrap(y, i == dr.n_hints - 1 && now < newHintUntil ? PALETTE[5] : PALETTE[3], i == dr.n_hints - 1 ? 3 : 1, dr.hint[i]);
-+        }
-+    } else trackerLine(122, PALETTE[4], "%lld:%02lld:%02lld", sec / 3600, sec / 60 % 60, sec % 60);
-+    // debug aid: with sdmc:/SMZ3/debug_panel.txt present the panel also shows where Samus is (room, x, y, missiles),
-+    // which is how a blind input route can be followed on an emulator whose picture is garbled
++        if (trk.game != 3 && dr.next_hint_at > 0 && now >= dr.next_hint_at && now >= nextHintAsk) { nextHintAsk = now + 15000; smzDailyRequestHints(&dr); }
++    }
++    // debug aid: with sdmc:/SMZ3/debug_panel.txt present, where Samus and Link are goes to debug_state.txt, which is how a
++    // blind input route can be followed on an emulator whose picture is garbled
 +    if (FILE *dp = fopen(SMZ_DIR "/debug_panel.txt", "r")) {
 +        fclose(dp);
 +        const u8 *r = Memory.RAM;
-+        trackerLine(150, PALETTE[4], "room %04X", r[0x79B] | r[0x79C] << 8);
-+        trackerLine(172, PALETTE[4], "x %u y %u", r[0xAF6] | r[0xAF7] << 8, r[0xAFA] | r[0xAFB] << 8);
-+        trackerLine(194, PALETTE[4], "m%u i%04X e%04X s%u", r[0x9C6] | r[0x9C7] << 8, r[0x9A2] | r[0x9A3] << 8, r[0x9A4] | r[0x9A5] << 8, r[0x9D2] | r[0x9D3] << 8);
-+        if (FILE *st = fopen(SMZ_DIR "/debug_state.txt", "w")) {   // the same numbers for a script that reads the SD card
++        if (FILE *st = fopen(SMZ_DIR "/debug_state.txt", "w")) {
 +            fprintf(st, "%u %u %u %u %u %u %u %u %u %u %u %u %u %u\n", r[0x79B] | r[0x79C] << 8, r[0xAF6] | r[0xAF7] << 8, r[0xAFA] | r[0xAFB] << 8,
 +                    r[0x9C6] | r[0x9C7] << 8, sum.metroid_cleared, sum.zelda_cleared, r[0x9D2] | r[0x9D3] << 8,
 +                    Memory.SRAM[0x33FE], r[0xA0] | r[0xA1] << 8, r[0x22] | r[0x23] << 8, r[0x20] | r[0x21] << 8, r[0x1B],
@@ -1670,8 +2752,34 @@ index 0000000..86362d9
 +        if (FILE *sr = fopen(SMZ_DIR "/sram.bin", "wb")) { fwrite(Memory.SRAM, 1, 0x8000, sr); fclose(sr); }
 +        remove(SMZ_DIR "/debug_dump.txt");
 +    }
-+    impl3dsFlushScreen(settings3DS.SecondScreen, false, false);
-+    gfxScreenSwapBuffers(settings3DS.SecondScreen, false);
++}
++
++void smz3StateLoaded(void) { trk.state_loaded = 3; }
++
++unsigned smz3TrackerKeys(unsigned keysDown, bool *openMenu)
++{
++    *openMenu = false;
++    if (!smz3IsRun() || cardState != 1 || !(keysDown & (KEY_A | KEY_B))) return 0;
++    if (keysDown & KEY_A) { wantRunList = *openMenu = true; }
++    cardState = 2;
++    dirty = true;
++    return KEY_A | KEY_B;
++}
++
++bool smz3TakeRunListRequest(void)
++{
++    bool want = wantRunList;
++    wantRunList = false;
++    return want;
++}
++
++void smz3TrackerFrame(bool tick)
++{
++    static int sinceDraw = 0;
++    if (strncmp(Memory.ROMFilename, RUN_DIR "/", sizeof RUN_DIR) != 0 || !Memory.RAM || !Memory.SRAM) return;
++    sinceDraw++;
++    if (tick || curSlot != gPlaySlot) { trackerUpdate(); debugTouches(); dirty = true; }
++    if (dirty && (tick || sinceDraw >= 3)) { trackerDraw(); sinceDraw = 0; }   // a drag redraws at most every third frame
 +}
 +
 +// ---- helps of the run being played (the pause menu asks for them)
@@ -1680,7 +2788,7 @@ index 0000000..86362d9
 +
 +// Monthly and weekly runs allow no save states of any kind.
 +bool smz3NoFastForward(void) { return smz3IsRun() && gChallenge; }
-+bool smz3NoStates(void) { return smz3IsRun() && (gChallenge || (gPlaySlot >= 0 && smzOnlineSlotKind(gPlaySlot) >= 1)); }
++bool smz3NoStates(void) { return smz3IsRun() && (gChallenge || gFinished || (gPlaySlot >= 0 && smzOnlineSlotKind(gPlaySlot) >= 1)); }
 +
 +// Gives the next hint (a help is spent in the limited mode). The text is for a dialog.
 +void smz3AskHelp(char *out, size_t cap)
@@ -1715,10 +2823,10 @@ index 0000000..86362d9
 +}
 diff --git a/source/smz3run.h b/source/smz3run.h
 new file mode 100644
-index 0000000..21a9bb4
+index 0000000..ab815db
 --- /dev/null
 +++ b/source/smz3run.h
-@@ -0,0 +1,22 @@
+@@ -0,0 +1,34 @@
 +#ifndef SMZ3RUN_H
 +#define SMZ3RUN_H
 +
@@ -1728,8 +2836,20 @@ index 0000000..21a9bb4
 +// the player picked Continue on a run, false when they left the menu.
 +bool smz3RunMenu(char *romPathOut, size_t cap);
 +
-+// Draws the run tracker on the second screen; call about once a second while emulating. Does nothing for other games.
-+void smz3TrackerFrame(void);
++// The run tracker on the second screen; call every frame while emulating, with tick set about once a second (the run is
++// read then; touches redraw in between). Does nothing for other games.
++void smz3TrackerFrame(bool tick);
++// Touch input while emulating (keys from hidKeysDown / hidKeysHeld). True when the tracker took the touch, so it must not
++// open the emulator's menu; false for other games and for the tracker's pause button.
++bool smz3TrackerTouch(unsigned keysDown, unsigned keysHeld);
++
++// While the run-complete card is up, A (to the run list) and B (close it) are the card's: returns the keys taken from the
++// game (0 otherwise). After A, openMenu is set: the emulator opens its menu and smz3TakeRunListRequest() is true once.
++unsigned smz3TrackerKeys(unsigned keysDown, bool *openMenu);
++bool smz3TakeRunListRequest(void);
++
++// A save state was loaded: the tracker's recent lists drop what it undid.
++void smz3StateLoaded(void);
 +
 +// True while a generated run is loaded.
 +bool smz3IsRun(void);

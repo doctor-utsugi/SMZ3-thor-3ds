@@ -133,6 +133,15 @@ void smz_tracker_tick(SmzTracker *t, const uint8_t *wram, size_t wram_len, const
         t->inventory[i] = inv[i];
     }
     t->inv_baseline = started;
+    if (t->state_loaded > 0 && started) {   /* a few reads, in case the first one lands on a transition frame */
+        t->state_loaded--;
+        int n = 0;
+        for (int i = 0; i < t->n_recent_checks; i++) if (cleared[t->recent_checks[i]]) t->recent_checks[n++] = t->recent_checks[i];
+        t->n_recent_checks = n;
+        n = 0;
+        for (int i = 0; i < t->n_recent_items; i++) if (t->inventory[t->recent_items[i]] > 0) t->recent_items[n++] = t->recent_items[i];
+        t->n_recent_items = n;
+    }
 
     int was_over = t->game == SMZ3_GAME_CREDITS;   /* the read that sees the end still counts the time up to it */
     if (started && t->goal.kind != GOAL_NONE && smz_goal_done(&t->goal, wram, wram_len, sram, sram_len)) t->goal_met = 1;

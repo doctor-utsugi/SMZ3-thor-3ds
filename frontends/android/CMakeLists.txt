@@ -24,6 +24,7 @@ add_library(smz3core SHARED
     ../../core/ui/smz3_host.c
     ../../core/ui/smz3_goal.c
     ../../core/ui/smz3_daily.c
+    ../../core/ui/smz3_shortcuts.c
     ../../core/ui/smz3_runlogic.c
     ../../core/ui/smz3_tracker.c)
 target_include_directories(smz3core PRIVATE ../../core ../../core/gen ../../core/ui)
