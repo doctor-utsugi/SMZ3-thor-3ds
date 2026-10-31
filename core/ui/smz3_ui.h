@@ -9,6 +9,7 @@
 
 #define UI_LADDER_ROWS 30
 #define UI_LADDER_SHOWN 8
+#define UI_WORLD_GOALS 6
 #define UI_W 320
 #define UI_H 240
 #define UI_SLOTS 32           /* most slots a frontend can show; each one sets how many it keeps with ui_set_slot_count */
@@ -48,13 +49,13 @@ typedef struct { char name[24]; char spec[UI_SPEC_LEN]; } UiSaved;
 
 /* kind 0 rectangle, 1 text, 3 gradient to the colour in align, 4 progress ring (align: percent; only hosts that set rings get it),
  * 5 glowing orb of diameter w centred in its box (only hosts that set orbs get it),
- * 2 sprite preview: draw the picture of text ("link/<name>" or "samus/<name>", file <name>.pv beside the
+ * 2 sprite preview: draw the picture of text ("link/<name>" or "samus/<name>", or "goal/<sprite>" for a world goal, file <name>.pv beside the
  * .rdc: u8 width, u8 height, then width*height RGBA bytes) centred and scaled to fit the x, y, w, h box. */
 typedef struct { uint8_t kind; int16_t x, y, w, h; uint8_t color; uint8_t align; char text[64]; } UiCmd;
 enum { C_BG, C_PANEL, C_SEL, C_TEXT, C_DIM, C_ACCENT, C_WARN, C_GREEN, C_CYAN, C_TEAL, C_NAVY, C_VIOLET, C_GOLD };
 
 typedef struct { int16_t x, y, w, h; uint8_t kind; int16_t idx; } UiHit;
-enum { H_SLOT, H_MENU, H_TAB, H_ROW, H_SPRITE, H_SCROLL, H_CREATE, H_BACK, H_CHEVRON, H_CONFIRM, H_MODE, H_SAVED, H_SAVED_DEL, H_KEY, H_START, H_COUNTRY, H_ONLINE, H_LOADCHOICE, H_LADDER, H_LTAB, H_DAILY, H_DAILY_BTN };
+enum { H_SLOT, H_MENU, H_TAB, H_ROW, H_SPRITE, H_SCROLL, H_CREATE, H_BACK, H_CHEVRON, H_CONFIRM, H_MODE, H_SAVED, H_SAVED_DEL, H_KEY, H_START, H_COUNTRY, H_ONLINE, H_LOADCHOICE, H_LADDER, H_LTAB, H_DAILY, H_DAILY_BTN, H_WORLD };
 
 typedef struct {
     UiScreen screen, back;
@@ -86,7 +87,9 @@ typedef struct {
     int flags;                   /* the host draws "flag/<CC>" pictures; without them countries show as their code */
     int ladder_on, ladder_tab, ladder_scroll;   /* the host can show the online tables / the tab shown (0 original, 1 monthly, 2 weekly) / first row shown */
     struct { int loaded; char label[16]; int n; struct { char name[24]; char cc[3]; int64_t ms; } row[UI_LADDER_ROWS]; } ladder[3];   /* loaded: 0 not yet, 1 ok, -1 failed */
-    int daily_on, daily_sel, daily_cursor, daily_has_run, daily_info;   /* the run list's Daily row: shown / has the cursor; its screen's button (0 Start, 1 Info, 2 Back); the host keeps an attempt; the Info page is open */
+    struct { int loaded; char month[8]; int64_t ends_at; int counted, gems_if_met, n;
+             struct { char key[16], title[40], sprite[32]; int64_t target, total, min, mine; } g[UI_WORLD_GOALS]; } world;   /* the ladder's World tab (tab 3) */
+    int daily_on, daily_sel, daily_cursor, daily_has_run, daily_info;   /* the run list's Daily row: shown / has the cursor (2: the World goals row under it); its screen's button (0 Start, 1 Info, 2 Back); the host keeps an attempt; the Info page is open */
     SmzDailyInfo daily;
     char start_label[24], notice[32];
     int rules_scroll;            /* first row shown on the rules screen */
@@ -123,6 +126,9 @@ void ui_set_sprites(SmzUi *u, int game, const char *const *names, int n);
 void ui_input(SmzUi *u, UiButton b);
 /* Touch at canvas coordinates (as drawn by the last ui_draw): selects and activates the row under the point. */
 void ui_touch(SmzUi *u, int x, int y);
+typedef enum { UI_CUE_NONE, UI_CUE_MOVE, UI_CUE_TAB, UI_CUE_SELECT, UI_CUE_OPEN, UI_CUE_BACK, UI_CUE_CONFIRM } UiCue;
+/* The sound an input should make, from the menu before and after it; b is the button pressed, or -1 for a touch. */
+UiCue ui_cue(const SmzUi *before, const SmzUi *after, int b);
 /* Saved customs: text is the file the host stored ("name<TAB>spec" lines); NULL (no file yet) installs the built-in ones.
  * ui_saved_dirty returns 1 once after the list changed, then the host writes ui_saved_text again. */
 void ui_saved_load(SmzUi *u, const char *text);
@@ -137,6 +143,10 @@ void ui_ladder_begin(SmzUi *u, int tab, const char *label, int ok);
 void ui_ladder_add(SmzUi *u, int tab, const char *name, const char *country, int64_t ms);
 /* Fills a table from the server's /api/ladder answer ({"month"|"week":"...","runs":[{"player","country","timeMs"}]}); NULL marks it failed. */
 void ui_ladder_load_json(SmzUi *u, int tab, const char *json);
+/* The world goals of the month from the server's /api/goals answer (NULL: no connection). */
+void ui_world_load_json(SmzUi *u, const char *json);
+/* The world goals are on screen (the ladder's World tab, or the run list's row under the Daily one): the host refreshes them now and then. */
+int ui_world_showing(const SmzUi *u);
 void ui_player_load(SmzUi *u, const char *text);
 int ui_player_text(const SmzUi *u, char *out, size_t cap);
 int ui_player_dirty(SmzUi *u);

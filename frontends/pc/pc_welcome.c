@@ -365,7 +365,7 @@ void fx_draw(int win_w, int win_h)
         int b = (int)(y / band);   /* the four bands lock in one after another */
         float edge = p * (w + h * slope + 0.18f * w * 3) - 0.18f * w * b - y * slope;
         float cover = edge < 0 ? 0 : edge;
-        if (cover < w) gfx_rect(cover, y, w - cover, 2, rgba(0x0A, 0x0E, 0x15, 0.96f));
+        if (cover < w) gfx_rect(cover, y, w - cover, 2, rgba(0x0A, 0x0E, 0x15, 1));
         if (!holding && edge > -8 && edge < w) {
             gfx_rect(edge - 5, y, 14, 2, rgba(0xF2, 0xA3, 0x3A, 0.22f * (1 - t)));
             gfx_rect(edge, y, 3, 2, rgba(0xFF, 0xE7, 0xA8, 1 - t * 0.6f));

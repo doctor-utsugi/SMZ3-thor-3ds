@@ -38,25 +38,13 @@ SDL_Keycode sc_key(int id) { return id >= 0 && id < SC_COUNT ? key_of[id] : SDLK
 int sc_pad(int id) { return id >= 0 && id < SC_COUNT ? pad_of[id] : -1; }
 void sc_clear(int id) { if (id >= 0 && id < SC_COUNT) { key_of[id] = SDLK_UNKNOWN; pad_of[id] = -1; sc_cfg_save(); } }
 
-/* The keys the game screen already uses (pc_main.c: pad_bits and the event loop). */
-static const struct { SDL_Keycode k; const char *use; } USED_KEYS[] = {
-    {SDLK_UP, "the SNES D-pad"}, {SDLK_DOWN, "the SNES D-pad"}, {SDLK_LEFT, "the SNES D-pad"}, {SDLK_RIGHT, "the SNES D-pad"},
-    {SDLK_x, "SNES A"}, {SDLK_z, "SNES B"}, {SDLK_s, "SNES X"}, {SDLK_a, "SNES Y"}, {SDLK_q, "SNES L"}, {SDLK_w, "SNES R"},
-    {SDLK_RETURN, "Start"}, {SDLK_BACKSPACE, "Select"}, {SDLK_RSHIFT, "Select"}, {SDLK_TAB, "the tracker"},
-    {SDLK_ESCAPE, "leaving the run"}, {SDLK_SPACE, "fast forward"}, {SDLK_F5, "save state"}, {SDLK_F7, "load state"},
-    {SDLK_F6, "the state slot"}, {SDLK_F8, "the state slot"}, {SDLK_F11, "full screen"}, {SDLK_v, "the video panel"},
-    {SDLK_e, "the tracker's tabs"}, {SDLK_p, "the tracker's pause"}, {SDLK_f, "the map's follow"}, {SDLK_d, "the dungeon maps"},
-    {SDLK_h, "the dungeon maps"}, {SDLK_EQUALS, "the map's zoom"}, {SDLK_MINUS, "the map's zoom"}, {SDLK_KP_PLUS, "the map's zoom"},
-    {SDLK_KP_MINUS, "the map's zoom"}, {SDLK_PAGEUP, "the map's zoom"}, {SDLK_PAGEDOWN, "the map's zoom"},
-};
-
 static char why[96];
 
 const char *sc_bind_key(int id, SDL_Keycode k)
 {
     if (id < 0 || id >= SC_COUNT) return "nothing";
-    for (size_t i = 0; i < sizeof USED_KEYS / sizeof USED_KEYS[0]; i++)
-        if (USED_KEYS[i].k == k) { snprintf(why, sizeof why, "%s is used by %s", SDL_GetKeyName(k), USED_KEYS[i].use); return why; }
+    const char *use = pad_key_use(k);
+    if (use) { snprintf(why, sizeof why, "%s is used by %s", SDL_GetKeyName(k), use); return why; }
     for (int i = 0; i < SC_COUNT; i++)
         if (i != id && key_of[i] == k) { snprintf(why, sizeof why, "%s is used by %s", SDL_GetKeyName(k), smz_shortcuts[i].name); return why; }
     key_of[id] = k;

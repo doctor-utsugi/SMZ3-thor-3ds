@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """Packs the tracker assets for the 3DS: the map's room table, region boxes and markers as C (SMZ3_MAP_DATA), the combined
-map as RGB565 at three sizes, and the item icons and boss tokens as .pv files (u8 w, u8 h, RGBA).
+map as RGB565 at three sizes, and the item icons, boss tokens and world goal icons as .pv files (u8 w, u8 h, RGBA).
 
 gen_3ds_assets.py <app assets dir (smz3/)> <out C file> <romfs dir>"""
 import json, os, struct, sys
@@ -44,3 +44,7 @@ for name in os.listdir(os.path.join(src, "items")):
     pv(os.path.join(src, "items", name), os.path.join(romfs, "icons", name[:-4] + ".pv"))
 for name in os.listdir(os.path.join(src, "rewards")):
     pv(os.path.join(src, "rewards", name), os.path.join(romfs, "icons", name[:-4] + ".pv"), crop=True)
+# world goal icons ("goal/boss/kraid" is goals/boss_kraid); the goals without one draw a sprite cut from the ROM
+os.makedirs(os.path.join(romfs, "goals"), exist_ok=True)
+for name in os.listdir(os.path.join(src, "goals")) if os.path.isdir(os.path.join(src, "goals")) else []:
+    pv(os.path.join(src, "goals", name), os.path.join(romfs, "goals", name[:-4] + ".pv"))

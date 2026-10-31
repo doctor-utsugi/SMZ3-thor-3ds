@@ -133,7 +133,8 @@ static void change(SmzUi *u, int opt, int dir, int big)
 }
 
 /* slot rows on screen: the Daily row takes the first place */
-static int slots_shown(const SmzUi *u) { return UI_SLOTS_SHOWN - (u->daily_on != 0); }
+static int world_row(const SmzUi *u) { return u->ladder_on && u->daily_on; }   /* the World goals row under the Daily one */
+static int slots_shown(const SmzUi *u) { return UI_SLOTS_SHOWN - (u->daily_on != 0) - world_row(u); }
 
 static void slot_view(SmzUi *u)
 {
@@ -401,20 +402,113 @@ void ui_ladder_load_json(SmzUi *u, int tab, const char *json)
     }
 }
 
+static int64_t json_num(const char *from, const char *to, const char *key)
+{
+    char pat[24];
+    snprintf(pat, sizeof pat, "\"%s\":", key);
+    const char *p = strstr(from, pat);
+    return p && (!to || p < to) ? atoll(p + strlen(pat)) : 0;
+}
+
+void ui_world_load_json(SmzUi *u, const char *json)
+{
+    if (!json || !*json) { if (u->world.loaded != 1) u->world.loaded = -1; return; }   /* a failed refresh keeps what was shown */
+    const char *goals = strstr(json, "\"goals\":");
+    if (!goals) { u->world.loaded = -1; return; }
+    memset(&u->world, 0, sizeof u->world);
+    json_text(json, goals, "month", u->world.month, sizeof u->world.month);
+    u->world.ends_at = json_num(json, goals, "endsAt");
+    const char *after = strchr(goals, ']');
+    u->world.counted = (int)json_num(after ? after : goals, NULL, "counted");
+    u->world.gems_if_met = (int)json_num(after ? after : goals, NULL, "gemsIfMet");
+    for (const char *p = strchr(goals, '['); p && (p = strchr(p, '{')) && (!after || p < after) && u->world.n < UI_WORLD_GOALS; ) {
+        const char *end = strchr(p, '}');
+        if (!end) break;
+        typeof(u->world.g[0]) *g = &u->world.g[u->world.n++];
+        json_text(p, end, "key", g->key, sizeof g->key);
+        json_text(p, end, "title", g->title, sizeof g->title);
+        json_text(p, end, "sprite", g->sprite, sizeof g->sprite);
+        g->target = json_num(p, end, "target"); g->total = json_num(p, end, "total");
+        g->min = json_num(p, end, "min"); g->mine = json_num(p, end, "mine");
+        p = end + 1;
+    }
+    u->world.loaded = 1;
+}
+
+int ui_world_showing(const SmzUi *u) { return (u->screen == UI_LADDER && u->ladder_tab == 3) || (u->screen == UI_SLOTS_SCREEN && world_row(u)); }
+
+/* "November" from "2026-11". */
+static const char *month_name(const char *ym)
+{
+    static const char *const M[12] = {"January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"};
+    int m = strlen(ym) >= 7 ? atoi(ym + 5) : 0;
+    return m >= 1 && m <= 12 ? M[m - 1] : "";
+}
+
+static void thousands(char *out, size_t cap, int64_t v)
+{
+    char d[24];
+    snprintf(d, sizeof d, "%lld", (long long)v);
+    size_t n = strlen(d), o = 0;
+    for (size_t i = 0; i < n && o + 2 < cap; i++) { if (i && (n - i) % 3 == 0) out[o++] = ','; out[o++] = d[i]; }
+    out[o] = 0;
+}
+
+static void gem(SmzUi *u, int x, int y, int have, int red);
+
+static void world_tab(SmzUi *u)
+{
+    char s[64], a[16], b[16];
+    if (u->world.loaded == 0) { text(u, UI_W / 2, 120, C_DIM, 1, "Loading ..."); return; }
+    if (u->world.loaded < 0) { text(u, UI_W / 2, 120, C_WARN, 1, "No connection"); return; }
+    time_t last = (time_t)(u->world.ends_at / 1000 - 1);
+    struct tm *g = gmtime(&last);
+    int64_t left = u->world.ends_at - (int64_t)time(NULL) * 1000;
+    int days = left > 0 ? (int)((left + 86399999) / 86400000) : 0;
+    if (g) snprintf(s, sizeof s, "Ends %.3s %d  -  %d day%s left", month_name(u->world.month), g->tm_mday, days, days == 1 ? "" : "s");
+    text(u, 8, 59, C_DIM, 0, left > 0 ? s : "Ended: the gems are paid");
+    if (u->world.counted) {
+        snprintf(s, sizeof s, "%d if met", u->world.gems_if_met);
+        text(u, UI_W - 8, 59, C_CYAN, 2, s);
+        gem(u, UI_W - 8 - (int)strlen(s) * 7 - 13, 61, 1, 0);
+    }
+    for (int i = 0; i < u->world.n && i < 4; i++) {
+        const typeof(u->world.g[0]) *w = &u->world.g[i];
+        int y = 72 + i * 38, met = w->target > 0 && w->total >= w->target;
+        rect(u, 6, y, UI_W - 12, 36, C_PANEL);
+        if (met) rect(u, 6, y, 3, 36, C_GOLD);
+        rect(u, 10, y + 2, 32, 32, C_BG);
+        if (w->sprite[0]) { snprintf(s, sizeof s, "goal/%s", w->sprite); put(u, 2, 10, y + 2, 32, 32, C_TEXT, 0, s); }
+        text(u, 48, y + 3, C_TEXT, 0, w->title);
+        thousands(a, sizeof a, w->total); thousands(b, sizeof b, w->target);
+        snprintf(s, sizeof s, "%s / %s", a, b);
+        text(u, UI_W - 10, y + 3, met ? C_ACCENT : C_TEXT, 2, met ? "Met" : s);
+        int bw = UI_W - 60;
+        rect(u, 48, y + 17, bw, 5, C_BG);
+        int fill = w->target > 0 ? (int)(bw * (w->total > w->target ? w->target : w->total) / w->target) : 0;
+        if (fill) rect(u, 48, y + 17, fill, 5, met ? C_ACCENT : C_GREEN);
+        thousands(a, sizeof a, w->mine);
+        if (w->mine >= w->min) snprintf(s, sizeof s, "You %s  counts", a);
+        else { thousands(b, sizeof b, w->min - w->mine); snprintf(s, sizeof s, "You %s  -  %s more to count", a, b); }
+        text(u, 48, y + 23, w->mine >= w->min ? C_GREEN : C_DIM, 0, s);
+    }
+}
+
 static void ladder_open(SmzUi *u)
 {
     u->screen = UI_LADDER;
     u->ladder_scroll = 0;
     for (int t = 0; t < 3; t++) if (u->ladder[t].loaded < 0) u->ladder[t].loaded = 0;
+    if (u->world.loaded < 0) u->world.loaded = 0;
     u->action = ACT_LADDER;
 }
 
 static void ladder_input(SmzUi *u, UiButton b)
 {
-    int n = u->ladder[u->ladder_tab].n;
+    int n = u->ladder_tab < 3 ? u->ladder[u->ladder_tab].n : 0;
     if (b == BTN_B || b == BTN_SELECT) u->screen = UI_SLOTS_SCREEN;
-    else if (b == BTN_LEFT || b == BTN_L) { u->ladder_tab = (u->ladder_tab + 2) % 3; u->ladder_scroll = 0; }
-    else if (b == BTN_RIGHT || b == BTN_R) { u->ladder_tab = (u->ladder_tab + 1) % 3; u->ladder_scroll = 0; }
+    else if (b == BTN_LEFT || b == BTN_L) { u->ladder_tab = (u->ladder_tab + 3) % 4; u->ladder_scroll = 0; }
+    else if (b == BTN_RIGHT || b == BTN_R) { u->ladder_tab = (u->ladder_tab + 1) % 4; u->ladder_scroll = 0; }
     else if (b == BTN_DOWN && u->ladder_scroll + UI_LADDER_SHOWN < n) u->ladder_scroll++;
     else if (b == BTN_UP && u->ladder_scroll > 0) u->ladder_scroll--;
 }
@@ -731,13 +825,16 @@ void ui_input(SmzUi *u, UiButton b)
     u->notice[0] = 0;
     switch (u->screen) {
     case UI_SLOTS_SCREEN:
-        if (u->daily_on && (b == BTN_UP || b == BTN_DOWN)) {   /* the Daily row sits between the last slot and the first */
-            if (u->daily_sel) { u->daily_sel = 0; u->slot_cursor = b == BTN_UP ? u->slot_count - 1 : 0; }
-            else if ((b == BTN_UP && u->slot_cursor == 0) || (b == BTN_DOWN && u->slot_cursor == u->slot_count - 1)) u->daily_sel = 1;
-            else u->slot_cursor += b == BTN_UP ? -1 : 1;
+        if (u->daily_on && (b == BTN_UP || b == BTN_DOWN)) {   /* the Daily and World rows sit between the last slot and the first */
+            int specials = 1 + world_row(u), n = specials + u->slot_count;
+            int pos = u->daily_sel ? u->daily_sel - 1 : specials + u->slot_cursor;
+            pos = (pos + (b == BTN_UP ? n - 1 : 1)) % n;
+            if (pos < specials) u->daily_sel = pos + 1;
+            else { u->daily_sel = 0; u->slot_cursor = pos - specials; }
             slot_view(u);
         }
         else if (b == BTN_UP || b == BTN_DOWN) { u->slot_cursor = (u->slot_cursor + (b == BTN_UP ? u->slot_count - 1 : 1)) % u->slot_count; slot_view(u); }
+        else if (b == BTN_A && u->daily_sel == 2) { ladder_open(u); u->ladder_tab = 3; }
         else if (b == BTN_A && u->daily_sel) { u->screen = UI_DAILY; u->daily_info = 0; u->daily_cursor = daily_button(u) ? 0 : 2; }
         else if (b == BTN_L || b == BTN_R) {
             u->daily_sel = 0;
@@ -835,6 +932,24 @@ void ui_input(SmzUi *u, UiButton b)
     }
 }
 
+UiCue ui_cue(const SmzUi *a, const SmzUi *z, int b)
+{
+    if (z->action != ACT_NONE && a->action == ACT_NONE) return z->action == ACT_DELETE || z->action == ACT_LADDER ? UI_CUE_SELECT : UI_CUE_CONFIRM;
+    if (z->screen != a->screen) return b == BTN_B || z->screen == a->back || z->screen == UI_SLOTS_SCREEN ? UI_CUE_BACK : UI_CUE_OPEN;
+    if (z->daily_info != a->daily_info) return z->daily_info ? UI_CUE_OPEN : UI_CUE_BACK;
+    if (z->level != a->level || z->ladder_tab != a->ladder_tab) return UI_CUE_TAB;
+    if (memcmp(z->value, a->value, sizeof z->value) || z->run_mode != a->run_mode || z->name_len != a->name_len || strcmp(z->name, a->name)) return UI_CUE_SELECT;
+    if (z->slot_cursor != a->slot_cursor || z->menu_cursor != a->menu_cursor || z->confirm_cursor != a->confirm_cursor ||
+        memcmp(z->cursor, a->cursor, sizeof z->cursor) || memcmp(z->scroll, a->scroll, sizeof z->scroll) ||
+        z->sprite_cursor != a->sprite_cursor || z->mode_cursor != a->mode_cursor || z->saved_cursor != a->saved_cursor ||
+        z->saved_col != a->saved_col || z->key_cursor != a->key_cursor || z->country_cursor != a->country_cursor ||
+        z->online_cursor != a->online_cursor || z->start_cursor != a->start_cursor || z->start_col != a->start_col ||
+        z->lc.cursor != a->lc.cursor || z->daily_sel != a->daily_sel || z->daily_cursor != a->daily_cursor ||
+        z->rules_scroll != a->rules_scroll || z->ladder_scroll != a->ladder_scroll || z->slot_scroll != a->slot_scroll)
+        return UI_CUE_MOVE;
+    return UI_CUE_NONE;
+}
+
 void ui_touch(SmzUi *u, int x, int y)
 {
     for (int i = 0; i < u->hit_count; i++) {
@@ -843,6 +958,7 @@ void ui_touch(SmzUi *u, int x, int y)
         switch (t->kind) {
         case H_SLOT: u->slot_cursor = t->idx; u->daily_sel = 0; ui_input(u, BTN_A); break;
         case H_DAILY: u->daily_sel = 1; ui_input(u, BTN_A); break;
+        case H_WORLD: u->daily_sel = 2; ui_input(u, BTN_A); break;
         case H_DAILY_BTN: if (!u->daily_info) u->daily_cursor = t->idx; ui_input(u, BTN_A); break;
         case H_CHEVRON:
             u->slot_scroll += t->idx;
@@ -1061,8 +1177,8 @@ static void daily_row(SmzUi *u, int y, int w)
     const SmzDailyInfo *d = &u->daily;
     char s[64], t[24];
     int64_t now = now_ms();
-    rect(u, 8, y, w, 44, u->daily_sel ? C_SEL : C_PANEL);
-    if (!u->daily_sel) put(u, 3, 13, y, w - 5, 44, C_NAVY, C_VIOLET, NULL);
+    rect(u, 8, y, w, 44, u->daily_sel == 1 ? C_SEL : C_PANEL);
+    if (u->daily_sel != 1) put(u, 3, 13, y, w - 5, 44, C_NAVY, C_VIOLET, NULL);
     rect(u, 8, y, 5, 44, C_GOLD);
     hit(u, H_DAILY, 0, 8, y, w, 44);
     text(u, 20, y + 3, C_ACCENT, 0, "DAILY CHALLENGE");
@@ -1095,6 +1211,34 @@ static void daily_row(SmzUi *u, int y, int w)
     daily_status(u, s, sizeof s);
     text(u, 20, y + 28, d->state == DAILY_DONE ? C_GREEN : d->state == DAILY_FAILED || d->state == DAILY_LATE ? C_WARN : C_DIM, 0, s);
     window_line(u, y, w, left, d->closes_at - d->opens_at, hurry ? C_WARN : C_GREEN);
+}
+
+/* The run list's World goals row: an icon and a bar per goal of the month. */
+static void world_list_row(SmzUi *u, int y, int w)
+{
+    char s[48];
+    rect(u, 8, y, w, 44, u->daily_sel == 2 ? C_SEL : C_PANEL);
+    rect(u, 8, y, 5, 44, C_CYAN);
+    hit(u, H_WORLD, 0, 8, y, w, 44);
+    text(u, 20, y + 3, C_CYAN, 0, "WORLD GOALS");
+    if (u->world.loaded == 0) { text(u, 20, y + 23, C_DIM, 0, "Connecting..."); return; }
+    if (u->world.loaded < 0) { text(u, 20, y + 23, C_DIM, 0, "Offline: the goals need the server"); return; }
+    int64_t left = u->world.ends_at - now_ms();
+    int days = left > 0 ? (int)((left + 86399999) / 86400000) : 0;
+    snprintf(s, sizeof s, left > 0 ? "%d day%s left" : "Ended", days, days == 1 ? "" : "s");
+    text(u, 8 + w - 6, y + 3, C_TEXT, 2, s);
+    int col = (w - 16) / 4;
+    for (int i = 0; i < u->world.n && i < 4; i++) {
+        const typeof(u->world.g[0]) *g = &u->world.g[i];
+        int x = 20 + i * col, met = g->target > 0 && g->total >= g->target, bw = col - 28;
+        rect(u, x, y + 20, 16, 16, C_BG);
+        if (g->sprite[0]) { snprintf(s, sizeof s, "goal/%s", g->sprite); put(u, 2, x, y + 20, 16, 16, C_TEXT, 0, s); }
+        rect(u, x + 20, y + 22, bw, 4, C_BG);
+        int fill = g->target > 0 ? (int)(bw * (g->total > g->target ? g->target : g->total) / g->target) : 0;
+        if (fill) rect(u, x + 20, y + 22, fill, 4, met ? C_ACCENT : C_GREEN);
+        snprintf(s, sizeof s, "%d%%", g->target > 0 ? (int)(100 * (g->total > g->target ? g->target : g->total) / g->target) : 0);
+        text(u, x + 20, y + 28, met ? C_ACCENT : C_DIM, 0, met ? "Met" : s);
+    }
 }
 
 /* The rules and the details, behind the Info button. */
@@ -1173,7 +1317,8 @@ void ui_draw(SmzUi *u)
     case UI_SLOTS_SCREEN: {
         int more = u->slot_count > slots_shown(u);
         /* with the token counter beside Ladder the title is shorter, so it fits in the hosts' wider fonts too */
-        if (u->daily_sel) snprintf(buf, sizeof buf, "SMZ3  -  Special run");
+        if (u->daily_sel == 1) snprintf(buf, sizeof buf, "SMZ3  -  Special run");
+        else if (u->daily_sel == 2) snprintf(buf, sizeof buf, "SMZ3  -  World goals");
         else snprintf(buf, sizeof buf, more ? (u->daily_on ? "SMZ3  -  Runs  (%d/%d)" : "SMZ3  -  Select a run  (%d/%d)") : u->daily_on ? "SMZ3  -  Runs" : "SMZ3  -  Select a run", u->slot_cursor + 1, u->slot_count);
         title(u, buf);
         if (u->ladder_on) {
@@ -1184,6 +1329,7 @@ void ui_draw(SmzUi *u)
         if (u->daily_on && u->daily.loaded == 1) token_chip(u, UI_W - 70 - 52, 4);
         int w = UI_W - 16 - (more ? 26 : 0), top = 32, shown = slots_shown(u);
         if (u->daily_on) { daily_row(u, top, w); top += 47; }
+        if (world_row(u)) { world_list_row(u, top, w); top += 47; }
         for (int r = 0; r < shown && u->slot_scroll + r < u->slot_count; r++) {
             int i = u->slot_scroll + r, y = top + r * 47, used = u->slots[i].used;
             rect(u, 8, y, w, 44, i == u->slot_cursor && !u->daily_sel ? C_SEL : C_PANEL);
@@ -1568,21 +1714,22 @@ void ui_draw(SmzUi *u)
         break;
     }
     case UI_LADDER: {
-        static const char *const TABS[3] = {"Original", "Monthly", "Weekly"};
-        const typeof(u->ladder[0]) *l = &u->ladder[u->ladder_tab];
-        if (l->label[0] && u->ladder_tab) snprintf(buf, sizeof buf, "Online ladder  %s", l->label);
+        static const char *const TABS[4] = {"Original", "Monthly", "Weekly", "World"};
+        const typeof(u->ladder[0]) *l = &u->ladder[u->ladder_tab < 3 ? u->ladder_tab : 0];
+        if (u->ladder_tab == 3) snprintf(buf, sizeof buf, "World goals  %s", month_name(u->world.month));
+        else if (l->label[0] && u->ladder_tab) snprintf(buf, sizeof buf, "Online ladder  %s", l->label);
         else snprintf(buf, sizeof buf, "Online ladder");
         title(u, buf);
         rect(u, UI_W - 84, 4, 78, 20, C_SEL);
         text(u, UI_W - 45, 8, C_TEXT, 1, "< Save list");
         hit(u, H_LADDER, 1, UI_W - 84, 4, 78, 20);
-        for (int t = 0; t < 3; t++) {
-            int x = 6 + t * 104;
-            rect(u, x, 32, 102, 22, t == u->ladder_tab ? C_SEL : C_PANEL);
-            hit(u, H_LTAB, t, x, 32, 102, 22);
-            snprintf(buf, sizeof buf, "%s", TABS[t]);
-            text(u, x + 51, 38, t == u->ladder_tab ? C_TEXT : C_DIM, 1, buf);
+        for (int t = 0; t < 4; t++) {
+            int x = 6 + t * 78;
+            rect(u, x, 32, 76, 22, t == u->ladder_tab ? C_SEL : C_PANEL);
+            hit(u, H_LTAB, t, x, 32, 76, 22);
+            text(u, x + 38, 38, t == u->ladder_tab ? C_TEXT : C_DIM, 1, TABS[t]);
         }
+        if (u->ladder_tab == 3) { world_tab(u); legend(u, "Left Right Tab  Select Save list"); break; }
         if (l->loaded == 0) text(u, UI_W / 2, 120, C_DIM, 1, "Loading ...");
         else if (l->loaded < 0) text(u, UI_W / 2, 120, C_WARN, 1, "No connection");
         else if (!l->n) text(u, UI_W / 2, 120, C_DIM, 1, "No finished runs yet");

@@ -19,8 +19,8 @@
 static int http(const char *method, const char *path, const char *body, char *out, size_t cap)
 {
     char req[600], res[600], cmd[2048], url[256];
-    snprintf(req, sizeof req, "%s", store_path("tmp/request.json"));
-    snprintf(res, sizeof res, "%s", store_path("tmp/response.txt"));
+    snprintf(req, sizeof req, "%s", store_path("tmp/request%lu.json", (unsigned long)GetCurrentThreadId()));   /* requests run on several threads */
+    snprintf(res, sizeof res, "%s", store_path("tmp/response%lu.txt", (unsigned long)GetCurrentThreadId()));
     snprintf(url, sizeof url, "%s%s", getenv("SMZ3_SERVER") ? getenv("SMZ3_SERVER") : BASE, path);
     out[0] = 0;
     if (body && store_write(req, body, strlen(body))) return -1;
@@ -250,6 +250,30 @@ int online_ladder_json(int tab, char *out, size_t cap)
 {
     static const char *const PATH[3] = {"/api/ladder?kind=original", "/api/ladder?kind=monthly", "/api/ladder?kind=weekly"};
     return tab >= 0 && tab <= 2 && http("GET", PATH[tab], NULL, out, cap) == 200;
+}
+
+int online_goals_json(char *out, size_t cap)
+{
+    char id[48], path[96];
+    install_id(id);
+    snprintf(path, sizeof path, "/api/goals?install=%s", id);
+    return http("GET", path, NULL, out, cap) == 200;
+}
+
+int online_goals_report(int slot, int64_t created, int online, const char *counters)
+{
+    char id[48], run[64], body[2048], reply[256];
+    install_id(id);
+    snprintf(run, sizeof run, "s%d-%lld", slot, (long long)created);
+    int n = snprintf(body, sizeof body, "{\"install\":\"%s\",\"run\":\"%s\",\"online\":%s,\"counts\":{", id, run, online ? "true" : "false");
+    for (const char *p = counters; p && *p && n < (int)sizeof body - 64;) {
+        const char *eq = strchr(p, '='), *end = strchr(p, ',');
+        if (!end) end = p + strlen(p);
+        if (eq && eq < end && *p != '_') n += snprintf(body + n, sizeof body - (size_t)n, "%s\"%.*s\":%.*s", body[n - 1] == '{' ? "" : ",", (int)(eq - p), p, (int)(end - eq - 1), eq + 1);
+        p = *end ? end + 1 : end;
+    }
+    snprintf(body + n, sizeof body - (size_t)n, "}}");
+    return http("POST", "/api/goals/report", body, reply, sizeof reply) == 200;
 }
 
 void online_queue_finish(int slot, int64_t time_ms, int seed)

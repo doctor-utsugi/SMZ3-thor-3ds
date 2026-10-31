@@ -234,7 +234,7 @@ void settings_nav(UiButton b)
         else { cursor = screen == S_SC ? 2 : screen == S_VIDEO ? 1 : 0; screen = S_MAIN; scroll = 0; }
     } else if (b == BTN_A) {
         if (screen == S_MAIN) {
-            if (cursor == 0) { screen = S_PAD; cursor = 0; scroll = 0; }
+            if (cursor == 0) { screen = S_PAD; cursor = 0; scroll = 0; sc_msg[0] = 0; }
             else if (cursor == 1) { screen = S_VIDEO; cursor = 0; scroll = 0; }
             else if (cursor == 2) { screen = S_SC; cursor = 0; scroll = 0; sc_msg[0] = 0; }
             else hk.quit();
@@ -243,7 +243,7 @@ void settings_nav(UiButton b)
             else video_change(cursor, 1);
         } else if (screen == S_PAD) {
             if (cursor < PA_COUNT) { rebind_action = cursor; rebind_until = SDL_GetTicks() + 6000; screen = S_REBIND; }
-            else if (cursor == PA_COUNT) { pad_cfg_reset(); pad_cfg_save(); }
+            else if (cursor == PA_COUNT) { pad_cfg_reset(); pad_cfg_save(); snprintf(sc_msg, sizeof sc_msg, "Back to the default keys and buttons"); }
             else { screen = S_MAIN; cursor = 0; scroll = 0; }
         } else if (screen == S_SC) {
             if (cursor < SC_COUNT) { rebind_action = cursor; rebind_until = SDL_GetTicks() + 6000; screen = S_SCBIND; }
@@ -270,10 +270,27 @@ int settings_raw(const SDL_Event *e, int code)
         return 1;
     }
     if (screen != S_REBIND) return 0;
+    if (e->type == SDL_KEYDOWN && e->key.repeat) return 1;
     if (e->type == SDL_KEYDOWN && e->key.keysym.sym == SDLK_ESCAPE) { screen = S_PAD; return 1; }
+    const char *name = pad_action_name(rebind_action);
+    if (e->type == SDL_KEYDOWN && rebind_action < PA_TRACKER) {
+        SDL_Keycode key = e->key.keysym.sym;
+        const char *use = pad_key_use(key);
+        if (key == SDLK_DELETE) { pad_set_key(rebind_action, SDLK_UNKNOWN); snprintf(sc_msg, sizeof sc_msg, "%s has no key now", name); }
+        else if (key == pad_key(rebind_action)) sc_msg[0] = 0;
+        else if (use) snprintf(sc_msg, sizeof sc_msg, "%s is used by %s", SDL_GetKeyName(key), use);
+        else {
+            for (int i = 0; i < SC_COUNT && !use; i++) if (sc_key(i) == key) use = smz_shortcuts[i].name;
+            if (use) snprintf(sc_msg, sizeof sc_msg, "%s is used by %s", SDL_GetKeyName(key), use);
+            else { pad_set_key(rebind_action, key); snprintf(sc_msg, sizeof sc_msg, "%s is on %s", name, SDL_GetKeyName(key)); }
+        }
+        screen = S_PAD;
+        return 1;
+    }
     if (code >= 0) {
         pad_set(rebind_action, code);
         pad_cfg_save();
+        snprintf(sc_msg, sizeof sc_msg, "%s is on %s", name, pad_code_name(code));
         screen = S_PAD;
         return 1;
     }
@@ -300,13 +317,13 @@ void settings_draw(float k, float ox, float oy)
     if (screen == S_OFF) return;
     gfx_backdrop_ui(k, ox, oy);
     rect(k, ox, oy, 0, 0, 320, 28, 1);
-    const char *title = screen == S_MAIN ? "Settings" : screen == S_FILES ? "Find the ROM files" : screen == S_VIDEO ? "Video" : screen == S_SC || screen == S_SCBIND ? "Item shortcuts" : "Controller buttons";
+    const char *title = screen == S_MAIN ? "Settings" : screen == S_FILES ? "Find the ROM files" : screen == S_VIDEO ? "Video" : screen == S_SC || screen == S_SCBIND ? "Item shortcuts" : "Buttons and keys";
     gfx_logo(ox + 8 * k, oy + 2 * k, 24 * k, 1);
     text(k, ox, oy, 38, 6, 5, 0, title);
     const char *hint = "A choose   B back";
     (void)hint;
     if (screen == S_MAIN) {
-        static const char *const L[] = {"Controller buttons", "Video", "Item shortcuts", "Quit"};
+        static const char *const L[] = {"Buttons and keys", "Video", "Item shortcuts", "Quit"};
         for (int i = 0; i < MAIN_COUNT; i++) row(k, ox, oy, i, L[i], NULL, i == cursor);
         hint = "A choose   B back";
     } else if (screen == S_VIDEO) {
@@ -318,9 +335,8 @@ void settings_draw(float k, float ox, float oy)
             snprintf(v, sizeof v, "< %s >", val);
             row(k, ox, oy, i, lab, v, r == cursor);
         }
-        float ny = 32 + SHOWN * ROW_H + 6;
-        text(k, ox, oy, 12, ny, 4, 0, "In game, V (X in the tracker) opens these over the game");
-        hint = "Left Right change   B back";    } else if (screen == S_SC || screen == S_SCBIND) {
+        hint = "Left Right change   B back";
+    } else if (screen == S_SC || screen == S_SCBIND) {
         for (int i = 0; i < SHOWN && scroll + i < SC_COUNT + 1; i++) {
             int r = scroll + i;
             if (r == SC_COUNT) { row(k, ox, oy, i, "Back", NULL, r == cursor); continue; }
@@ -345,17 +361,21 @@ void settings_draw(float k, float ox, float oy)
     } else if (screen == S_PAD || screen == S_REBIND) {
         for (int i = 0; i < SHOWN && scroll + i < PA_COUNT + 2; i++) {
             int r = scroll + i;
-            if (r < PA_COUNT) row(k, ox, oy, i, pad_action_name(r), pad_code_name(pad_code(r)), r == cursor);
+            char val[64];
+            if (r < PA_TRACKER) snprintf(val, sizeof val, "%s  /  %s", pad_key(r) != SDLK_UNKNOWN ? SDL_GetKeyName(pad_key(r)) : "-", pad_code_name(pad_code(r)));
+            if (r < PA_COUNT) row(k, ox, oy, i, pad_action_name(r), r < PA_TRACKER ? val : pad_code_name(pad_code(r)), r == cursor);
             else row(k, ox, oy, i, r == PA_COUNT ? "Reset to defaults" : "Back", NULL, r == cursor);
         }
+        if (sc_msg[0]) text(k, ox, oy, 12, 32 + SHOWN * ROW_H - 1, 5, 0, sc_msg);
         hint = "A change   B back";
         if (screen == S_REBIND) {
             rect(k, ox, oy, 20, 80, 280, 80, 2);
             rect(k, ox, oy, 20, 80, 280, 3, 5);
             char msg[96];
-            snprintf(msg, sizeof msg, "Press the button for %s", pad_action_name(rebind_action));
+            int keyed = rebind_action < PA_TRACKER;
+            snprintf(msg, sizeof msg, keyed ? "Press a key or a button for %s" : "Press the button for %s", pad_action_name(rebind_action));
             text(k, ox, oy, 160, 98, 3, 1, msg);
-            text(k, ox, oy, 160, 122, 4, 1, "Esc or wait to cancel");
+            text(k, ox, oy, 160, 122, 4, 1, keyed ? "Delete clears the key   Esc or wait to cancel" : "Esc or wait to cancel");
             int left = (int)(rebind_until - SDL_GetTicks());
             if (left <= 0) screen = S_PAD;
             else rect(k, ox, oy, 20, 154, 280.0f * left / 6000.0f, 6, 5);

@@ -493,8 +493,9 @@ JNIEXPORT void JNICALL NATIVE(uiSetSprites)(JNIEnv *env, jclass cls, jint game, 
     free(list); free(js);
 }
 
-JNIEXPORT void JNICALL NATIVE(uiInput)(JNIEnv *env, jclass cls, jint button) { ui_input(&g_ui, (UiButton)button); }
-JNIEXPORT void JNICALL NATIVE(uiTouch)(JNIEnv *env, jclass cls, jint x, jint y) { ui_touch(&g_ui, x, y); }
+static SmzUi g_ui_before;   /* the menu before an input, to tell which sound it makes */
+JNIEXPORT jint JNICALL NATIVE(uiInput)(JNIEnv *env, jclass cls, jint button) { g_ui_before = g_ui; ui_input(&g_ui, (UiButton)button); return ui_cue(&g_ui_before, &g_ui, button); }
+JNIEXPORT jint JNICALL NATIVE(uiTouch)(JNIEnv *env, jclass cls, jint x, jint y) { g_ui_before = g_ui; ui_touch(&g_ui, x, y); return ui_cue(&g_ui_before, &g_ui, -1); }
 JNIEXPORT void JNICALL NATIVE(uiIdle)(JNIEnv *env, jclass cls) { ui_idle(&g_ui); }
 
 JNIEXPORT void JNICALL NATIVE(uiBusy)(JNIEnv *env, jclass cls, jstring msg)
@@ -680,3 +681,40 @@ JNIEXPORT jstring JNICALL NATIVE(dailySettingsJson)(JNIEnv *env, jclass cls, jst
     (*env)->ReleaseStringUTFChars(env, check, c);
     return (*env)->NewStringUTF(env, buf);
 }
+
+/* ---- world goal counters of the run being played (see smz3_counters.h) ---- */
+#include "smz3_counters.h"
+static SmzCounters g_counters;
+
+JNIEXPORT void JNICALL NATIVE(countersLoad)(JNIEnv *env, jclass cls, jstring text)
+{
+    const char *t = text ? (*env)->GetStringUTFChars(env, text, NULL) : NULL;
+    smz_counters_load(&g_counters, t);
+    if (t) (*env)->ReleaseStringUTFChars(env, text, t);
+}
+
+JNIEXPORT void JNICALL NATIVE(countersTick)(JNIEnv *env, jclass cls, jbyteArray wram, jbyteArray sram, jint game, jint items)
+{
+    jsize wl = (*env)->GetArrayLength(env, wram), sl = (*env)->GetArrayLength(env, sram);
+    jbyte *w = (*env)->GetByteArrayElements(env, wram, NULL);
+    jbyte *s = (*env)->GetByteArrayElements(env, sram, NULL);
+    smz_counters_tick(&g_counters, game, (const uint8_t *)w, (size_t)wl, (const uint8_t *)s, (size_t)sl, items);
+    (*env)->ReleaseByteArrayElements(env, wram, w, JNI_ABORT);
+    (*env)->ReleaseByteArrayElements(env, sram, s, JNI_ABORT);
+}
+
+JNIEXPORT jstring JNICALL NATIVE(countersText)(JNIEnv *env, jclass cls)
+{
+    char t[640];
+    if (smz_counters_text(&g_counters, t, sizeof t) < 0) t[0] = 0;
+    return (*env)->NewStringUTF(env, t);
+}
+
+JNIEXPORT void JNICALL NATIVE(uiWorldJson)(JNIEnv *env, jclass cls, jstring json)
+{
+    const char *j = json ? (*env)->GetStringUTFChars(env, json, NULL) : NULL;
+    ui_world_load_json(&g_ui, j);
+    if (j) (*env)->ReleaseStringUTFChars(env, json, j);
+}
+
+JNIEXPORT jboolean JNICALL NATIVE(uiWorldShowing)(JNIEnv *env, jclass cls) { return ui_world_showing(&g_ui) ? JNI_TRUE : JNI_FALSE; }

@@ -16,6 +16,9 @@ out.append("const unsigned PC_MAP_PNG_LEN = %d;" % len(png))
 icons = sorted(os.listdir(os.path.join(src, "items")))
 # the boss tokens of the run list, named "rewards/<file>" beside the item icons (paths are relative to items/)
 icons += ["../rewards/" + n for n in sorted(os.listdir(os.path.join(src, "rewards")))]
+# the world goal icons, named "goals/<file>"
+if os.path.isdir(os.path.join(src, "goals")):
+    icons += ["../goals/" + n for n in sorted(os.listdir(os.path.join(src, "goals")))]
 # the country flags (assets/flags, made by tools/gen_flags.py), named "flags/<CODE>.png"
 flags = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "assets", "flags")
 icons += [os.path.join(flags, n) for n in sorted(os.listdir(flags))]

@@ -14,6 +14,7 @@ typedef struct {
     int zelda_cleared, zelda_total, metroid_cleared, metroid_total;
     int64_t save_ms; int save_zelda, save_metroid;   /* the game's own save: play time and checks done (0: not known) */
     int boss_mask, crystal_mask;  /* bit 0 Kraid, 1 Phantoon, 2 Draygon, 3 Ridley; bit n-1 is crystal n */
+    char goals[640];             /* the world goal counters (smz_counters_text) */
 } SmzRun;
 
 /* 0 on success, -1 when the file is missing or unreadable. */

@@ -15,12 +15,58 @@ static const int DEFAULTS[PA_COUNT] = {
 };
 static const char *const NAMES[PA_COUNT] = {"SNES B", "SNES A", "SNES Y", "SNES X", "SNES L", "SNES R", "Start", "Select", "Tracker", "Leave run", "Fast forward", "Save state", "Load state", "State slot -", "State slot +"};
 static const int SNES_BIT[8] = {PAD_B, PAD_A, PAD_Y, PAD_X, PAD_L, PAD_R, PAD_START, PAD_SELECT};
+static const SDL_Keycode KEY_DEFAULTS[8] = {SDLK_z, SDLK_x, SDLK_a, SDLK_s, SDLK_q, SDLK_w, SDLK_RETURN, SDLK_BACKSPACE};
+static SDL_Keycode key_of[8];
 
-void pad_cfg_reset(void) { memcpy(code_of, DEFAULTS, sizeof code_of); }
+/* The keys the game screen keeps for itself (pc_main.c: the event loop). */
+static const struct { SDL_Keycode k; const char *use; } FIXED_KEYS[] = {
+    {SDLK_UP, "the SNES D-pad"}, {SDLK_DOWN, "the SNES D-pad"}, {SDLK_LEFT, "the SNES D-pad"}, {SDLK_RIGHT, "the SNES D-pad"},
+    {SDLK_TAB, "the tracker"}, {SDLK_ESCAPE, "leaving the run"}, {SDLK_SPACE, "fast forward"}, {SDLK_F5, "save state"}, {SDLK_F7, "load state"},
+    {SDLK_F6, "the state slot"}, {SDLK_F8, "the state slot"}, {SDLK_F9, "the aspect ratio"}, {SDLK_F11, "full screen"}, {SDLK_F1, "the settings"},
+    {SDLK_v, "the video panel"}, {SDLK_e, "the tracker's tabs"}, {SDLK_p, "the tracker's pause"}, {SDLK_f, "the map's follow"},
+    {SDLK_d, "the dungeon maps"}, {SDLK_h, "the dungeon maps"}, {SDLK_EQUALS, "the map's zoom"}, {SDLK_MINUS, "the map's zoom"},
+    {SDLK_KP_PLUS, "the map's zoom"}, {SDLK_KP_MINUS, "the map's zoom"}, {SDLK_PAGEUP, "the map's zoom"}, {SDLK_PAGEDOWN, "the map's zoom"},
+};
+
+static void keys_save(void)
+{
+    char text[160];
+    int len = 0;
+    for (int a = 0; a < 8; a++) len += snprintf(text + len, sizeof text - (size_t)len, "%d=%d\n", a, (int)key_of[a]);
+    store_write(store_path("keys.cfg"), text, (size_t)len);
+}
+
+static void keys_load(void)
+{
+    memcpy(key_of, KEY_DEFAULTS, sizeof key_of);
+    size_t n;
+    char *text = (char *)store_read(store_path("keys.cfg"), &n);
+    if (!text) return;
+    text = realloc(text, n + 1);
+    text[n] = 0;
+    for (char *line = strtok(text, "\n"); line; line = strtok(NULL, "\n")) {
+        int a, k;
+        if (sscanf(line, "%d=%d", &a, &k) == 2 && a >= 0 && a < 8) key_of[a] = (SDL_Keycode)k;
+    }
+    free(text);
+}
+
+SDL_Keycode pad_key(int action) { return action >= 0 && action < 8 ? key_of[action] : SDLK_UNKNOWN; }
+void pad_set_key(int action, SDL_Keycode k) { if (action >= 0 && action < 8) { key_of[action] = k; keys_save(); } }
+
+const char *pad_key_use(SDL_Keycode k)
+{
+    for (size_t i = 0; i < sizeof FIXED_KEYS / sizeof FIXED_KEYS[0]; i++) if (FIXED_KEYS[i].k == k) return FIXED_KEYS[i].use;
+    for (int a = 0; a < 8; a++) if (key_of[a] == k) return NAMES[a];
+    return NULL;
+}
+
+void pad_cfg_reset(void) { memcpy(code_of, DEFAULTS, sizeof code_of); memcpy(key_of, KEY_DEFAULTS, sizeof key_of); }
 
 void pad_cfg_load(void)
 {
     pad_cfg_reset();
+    keys_load();
     size_t n;
     char *text = (char *)store_read(store_path("pad.cfg"), &n);
     if (!text) return;
@@ -39,6 +85,7 @@ void pad_cfg_save(void)
     int len = 0;
     for (int a = 0; a < PA_COUNT; a++) len += snprintf(text + len, sizeof text - (size_t)len, "%d=%d\n", a, code_of[a]);
     store_write(store_path("pad.cfg"), text, (size_t)len);
+    keys_save();
 }
 
 int pad_code(int action) { return code_of[action]; }

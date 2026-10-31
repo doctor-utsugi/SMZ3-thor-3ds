@@ -59,6 +59,17 @@ for name in ("unknown", "kraid boss token", "phantoon boss token", "draygon boss
     shutil.copyfile(rewards_src / (name + ".png"), rewards_dst / (name.replace(" ", "_") + ".png"))
 print("reward icons copied")
 
+# World goal icons that the sprite set has; the other goals draw a sprite cut from the player's own ROM
+items_src = root / "vendor/SMZ3CasSprites/Sprites/Items"
+goals_dst = assets / "goals"
+goals_dst.mkdir(exist_ok=True)
+GOAL_ICONS = {"boss_kraid": "kraid", "boss_phantoon": "phantoon", "boss_draygon": "draygon", "boss_ridley": "ridley",
+              "boss_sporespawn": "spore spawn", "boss_crocomire": "crocomire", "boss_botwoon": "botwoon", "boss_motherbrain": "mother brain",
+              "zelda_rupee": "twenty rupees", "shared_items": "chest", "shared_portal": "other game item", "shared_daily": "important other game item"}
+for key, name in GOAL_ICONS.items():
+    shutil.copyfile(items_src / (name + ".png"), goals_dst / (key + ".png"))
+print(len(GOAL_ICONS), "goal icons copied")
+
 # IPS patches the on-device generator applies, and the options panel description (gen-cli schema)
 ips_src = root / "vendor/SMZ3Randomizer/src/TrackerCouncil.Smz3.SeedGenerator/FileData/IpsPatches"
 ips_dst = assets / "ips"

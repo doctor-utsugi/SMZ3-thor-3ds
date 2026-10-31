@@ -464,10 +464,10 @@ index 0000000..cbd6dbc
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/NativeMenuScreen.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/NativeMenuScreen.kt
 new file mode 100644
-index 0000000..c689bc0
+index 0000000..e3cb9e9
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/NativeMenuScreen.kt
-@@ -0,0 +1,676 @@
+@@ -0,0 +1,695 @@
 +package com.swordfish.lemuroid.app.mobile.feature.runs
 +
 +import android.graphics.Paint
@@ -523,6 +523,7 @@ index 0000000..c689bc0
 +import androidx.compose.ui.input.pointer.pointerInput
 +import androidx.compose.ui.platform.LocalContext
 +import com.swordfish.lemuroid.app.shared.game.viewmodel.Smz3MenuSelection
++import com.swordfish.lemuroid.app.shared.game.viewmodel.Smz3Finish
 +import com.swordfish.lemuroid.app.shared.game.viewmodel.Smz3Native
 +import com.swordfish.lemuroid.lib.library.db.RetrogradeDatabase
 +import kotlin.math.PI
@@ -572,8 +573,14 @@ index 0000000..c689bc0
 +        if (key.startsWith("flag/")) {   // a country flag, from the app's assets
 +            return@runCatching context.assets.open("smz3/flags/${key.substringAfter('/')}.png").use { android.graphics.BitmapFactory.decodeStream(it) }.asImageBitmap()
 +        }
++        val goal = if (key.startsWith("goal/")) key.substringAfter('/').replace('/', '_') else null
++        if (goal != null) {   // a world goal: the app's icon, or else the sprite cut from the player's ROM (goals/<key>.pv)
++            runCatching { context.assets.open("smz3/goals/$goal.png").use { android.graphics.BitmapFactory.decodeStream(it) } }.getOrNull()?.let {
++                return@runCatching com.swordfish.lemuroid.app.shared.game.viewmodel.cropToArt(it).asImageBitmap()
++            }
++        }
 +        val game = if (key.startsWith("link/")) 0 else 1
-+        val bytes = File(spriteDir(game), key.substringAfter('/') + ".pv").readBytes()
++        val bytes = if (goal != null) File(File(context.filesDir, "goals"), "$goal.pv").readBytes() else File(spriteDir(game), key.substringAfter('/') + ".pv").readBytes()
 +        val w = bytes[0].toInt() and 255; val h = bytes[1].toInt() and 255
 +        val px = IntArray(w * h) { i ->
 +            val o = 2 + i * 4
@@ -633,6 +640,7 @@ index 0000000..c689bc0
 +    val focus = remember { FocusRequester() }
 +    val pendingMonthly = remember { java.util.concurrent.atomic.AtomicReference<Pair<String, Int>?>(null) }
 +    val pendingLadder = remember { java.util.concurrent.atomic.AtomicReference<Array<String?>?>(null) }
++    val pendingGoals = remember { java.util.concurrent.atomic.AtomicReference<Array<String?>?>(null) }
 +    val pendingWeekly = remember { java.util.concurrent.atomic.AtomicReference<Pair<String, Int>?>(null) }
 +    // the daily challenge's answer (null text: offline) and the device clock when it came
 +    val pendingDaily = remember { java.util.concurrent.atomic.AtomicReference<Pair<String?, Long>?>(null) }
@@ -705,6 +713,14 @@ index 0000000..c689bc0
 +        while (true) {
 +            kotlinx.coroutines.delay(300)
 +            pendingLadder.getAndSet(null)?.let { tables -> tables.forEachIndexed { tab, json -> Smz3Native.uiLadderJson(tab, json) }; version++ }
++            pendingGoals.getAndSet(null)?.let { Smz3Native.uiWorldJson(it[0]); version++ }
++        }
++    }
++    // the world goals (the run list's row, the ladder's World tab) refresh once a minute while they are shown
++    LaunchedEffect(Unit) {
++        while (true) {
++            if (Smz3Native.uiWorldShowing()) Thread { pendingGoals.set(arrayOf(OnlineLadder.goalsJson(context))) }.start()
++            kotlinx.coroutines.delay(60_000)
 +        }
 +    }
 +
@@ -860,13 +876,16 @@ index 0000000..c689bc0
 +            Act.LOAD_STATE -> RunStore.load(context, slot)?.let { play(it, true) }
 +            Act.DELETE -> { RunStore.delete(context, slot); refreshSlots() }
 +            Act.GENERATE -> generate(slot)
-+            Act.LADDER -> Thread { pendingLadder.set(Array(3) { OnlineLadder.ladderJson(it) }) }.start()
++            Act.LADDER -> {
++                Thread { pendingLadder.set(Array(3) { OnlineLadder.ladderJson(it) }) }.start()
++                Thread { pendingGoals.set(arrayOf(OnlineLadder.goalsJson(context))) }.start()
++            }
 +            Act.DAILY -> startDaily()
 +            Act.NONE -> {}
 +        }
 +    }
 +
-+    fun press(button: Int) { Smz3Native.uiInput(button); pollActions(); version++; publishSelection() }
++    fun press(button: Int) { Smz3Finish.cue(Smz3Native.uiInput(button)); pollActions(); version++; publishSelection() }
 +
 +    val pulse by rememberInfiniteTransition(label = "pulse").animateFloat(0f, 1f, infiniteRepeatable(tween(1850, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "pulse")
 +    val drift by rememberInfiniteTransition(label = "drift").animateFloat(0f, 1f, infiniteRepeatable(tween(60000, easing = LinearEasing), RepeatMode.Restart), label = "drift")
@@ -900,7 +919,7 @@ index 0000000..c689bc0
 +                    detectTapGestures { p ->
 +                        if (wipe.isRunning && wipe.value < 0.6f) return@detectTapGestures
 +                        val scale = size.width / W
-+                        Smz3Native.uiTouch((p.x / scale).toInt(), (p.y / scale).toInt()); pollActions(); version++; publishSelection()
++                        Smz3Finish.cue(Smz3Native.uiTouch((p.x / scale).toInt(), (p.y / scale).toInt())); pollActions(); version++; publishSelection()
 +                    }
 +                },
 +        ) {
@@ -1146,10 +1165,10 @@ index 0000000..c689bc0
 +private fun Color.toArgb(): Int = android.graphics.Color.argb((alpha * 255).toInt(), (red * 255).toInt(), (green * 255).toInt(), (blue * 255).toInt())
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/OnlineLadder.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/OnlineLadder.kt
 new file mode 100644
-index 0000000..a93a4b6
+index 0000000..3fda22b
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/OnlineLadder.kt
-@@ -0,0 +1,217 @@
+@@ -0,0 +1,236 @@
 +package com.swordfish.lemuroid.app.mobile.feature.runs
 +
 +import android.content.Context
@@ -1352,6 +1371,25 @@ index 0000000..a93a4b6
 +        c.readTimeout = 8000
 +        c.inputStream.bufferedReader().use { it.readText() }.also { c.disconnect() }
 +    }.getOrNull()
++
++    /** The world goals of the month for this install, null when the server cannot be reached. Call off the main thread. */
++    fun goalsJson(context: Context): String? = runCatching {
++        val c = URL("$BASE/api/goals?install=" + installId(context)).openConnection() as HttpURLConnection
++        c.connectTimeout = 8000
++        c.readTimeout = 8000
++        c.inputStream.bufferedReader().use { it.readText() }.also { c.disconnect() }
++    }.getOrNull()
++
++    /** Sends a run's world goal counters (key=n,key=n text); the run is told apart by its slot and when it was made. Call off the main thread. */
++    fun reportGoals(context: Context, slot: Int, createdAt: Long, online: Boolean, counters: String) {
++        val counts = JSONObject()
++        for (part in counters.split(',')) {
++            val k = part.substringBefore('=', ""); val v = part.substringAfter('=', "").toLongOrNull()
++            if (k.isNotEmpty() && !k.startsWith("_") && v != null) counts.put(k, v)
++        }
++        if (counts.length() == 0) return
++        post("/api/goals/report", JSONObject().put("install", installId(context)).put("run", "s$slot-$createdAt").put("online", online).put("counts", counts))
++    }
 +
 +    /** Downloads the three ladders into the cache; true when the original one worked. Call off the main thread. */
 +    fun refresh(context: Context): Boolean {
@@ -1774,10 +1812,10 @@ index 0000000..91f0bba
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/RunStore.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/RunStore.kt
 new file mode 100644
-index 0000000..9770779
+index 0000000..1a3814c
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/RunStore.kt
-@@ -0,0 +1,134 @@
+@@ -0,0 +1,140 @@
 +package com.swordfish.lemuroid.app.mobile.feature.runs
 +
 +import android.content.Context
@@ -1882,6 +1920,12 @@ index 0000000..9770779
 +    fun discoveryFile(context: Context, slot: Int) = File(File(context.filesDir, "runs").apply { mkdirs() }, "slot$slot.disc.json")
 +
 +    fun recentFile(context: Context, slot: Int) = File(File(context.filesDir, "runs").apply { mkdirs() }, "slot$slot.recent.json")
++
++    /** The run's world goal counters (key=n,key=n text, see smz3_counters.h). */
++    fun goalsFile(context: Context, slot: Int) = File(File(context.filesDir, "runs").apply { mkdirs() }, "slot$slot.goals")
++
++    /** The counters at a save state (index -1: the quick save): loading the state puts them back. */
++    fun goalsStateFile(context: Context, slot: Int, index: Int) = File(File(context.filesDir, "runs").apply { mkdirs() }, "slot$slot.goals.state$index")
 +
 +    fun marksFile(context: Context, slot: Int) = File(File(context.filesDir, "runs").apply { mkdirs() }, "slot$slot.marks.json")
 +
@@ -2019,7 +2063,7 @@ index 7985ccc..df2281c 100644
  
      suspend fun hdMode() = booleanPreference(R.string.pref_key_hd_mode, false)
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/BaseGameActivity.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/BaseGameActivity.kt
-index 6d06420..2034db0 100644
+index 6d06420..8254e3a 100644
 --- a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/BaseGameActivity.kt
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/BaseGameActivity.kt
 @@ -21,6 +21,7 @@ import com.swordfish.lemuroid.app.shared.ImmersiveActivity
@@ -2152,13 +2196,17 @@ index 6d06420..2034db0 100644
      private fun performToggleFastForward() {
          baseGameScreenViewModel.toggleFastForward()
      }
-@@ -351,6 +428,14 @@ abstract class BaseGameActivity : ImmersiveActivity() {
+@@ -351,6 +428,18 @@ abstract class BaseGameActivity : ImmersiveActivity() {
      }
  
      override fun onDestroy() {
 +        com.swordfish.lemuroid.app.shared.game.viewmodel.Smz3Idle.hideBlack()
 +        com.swordfish.lemuroid.app.shared.game.viewmodel.Smz3Tracker.onRunComplete = null
 +        com.swordfish.lemuroid.app.shared.game.viewmodel.Smz3Finish.clear()
++        com.swordfish.lemuroid.app.mobile.feature.runs.RunStore.activeSlot(this)?.let { slot ->   // the world goals hear about the run as it closes
++            val run = com.swordfish.lemuroid.app.mobile.feature.runs.RunStore.load(this, slot)
++            if (run != null) com.swordfish.lemuroid.app.shared.game.viewmodel.Smz3Tracker.reportGoals(applicationContext, slot, run.createdAt)
++        }
 +        com.swordfish.lemuroid.app.shared.game.viewmodel.Smz3Finish.onMenu = null
 +        com.swordfish.lemuroid.app.shared.game.viewmodel.Smz3Finish.onCredits = null
 +        finishDialog?.dismiss()
@@ -2332,10 +2380,26 @@ index 02e981f..c1bfab7 100644
  
          return currentState.gameData to result
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/GameViewModelSaves.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/GameViewModelSaves.kt
-index 1eea23b..ef34a6a 100644
+index 1eea23b..8f5ac58 100644
 --- a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/GameViewModelSaves.kt
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/GameViewModelSaves.kt
-@@ -119,7 +119,7 @@ class GameViewModelSaves(
+@@ -42,6 +42,7 @@ class GameViewModelSaves(
+     suspend fun saveSlot(index: Int) {
+         getCurrentSaveState()?.let {
+             statesManager.setSlotSave(game, it, systemCoreConfig.coreID, index)
++            Smz3Tracker.saveGoalsAt(appContext, index)
+             runCatching {
+                 takeScreenshotPreview(index)
+             }
+@@ -55,6 +56,7 @@ class GameViewModelSaves(
+                     withContext(Dispatchers.IO) {
+                         loadSaveState(it)
+                     }
++                if (loaded) Smz3Tracker.loadGoalsAt(appContext, index)
+ 
+                 if (!loaded) {
+                     sideEffects.showToast(appContext.getString(R.string.game_toast_load_state_failed))
+@@ -119,7 +121,7 @@ class GameViewModelSaves(
      }
  
      private suspend fun isAutoSaveEnabled(): Boolean {
@@ -2344,7 +2408,7 @@ index 1eea23b..ef34a6a 100644
      }
  
      private suspend fun takeScreenshotPreview(index: Int) {
-@@ -155,7 +155,8 @@ class GameViewModelSaves(
+@@ -155,16 +157,18 @@ class GameViewModelSaves(
              retroGameView.changeDisk(saveState.metadata.diskIndex)
          }
  
@@ -2354,6 +2418,17 @@ index 1eea23b..ef34a6a 100644
      }
  
      fun saveQuickSave() {
+         currentQuickSave = getCurrentSaveState()
++        if (currentQuickSave != null) Smz3Tracker.saveGoalsAt(appContext, -1)
+         sideEffects.showToast(appContext.getString(R.string.game_toast_quick_save_saved))
+     }
+ 
+     fun loadQuickSave() {
+-        loadSaveState(currentQuickSave ?: return)
++        if (loadSaveState(currentQuickSave ?: return)) Smz3Tracker.loadGoalsAt(appContext, -1)
+         sideEffects.showToast(appContext.getString(R.string.game_toast_quick_save_loaded))
+     }
+ }
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Bosses.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Bosses.kt
 new file mode 100644
 index 0000000..1a5680e
@@ -4478,10 +4553,10 @@ index 0000000..a5aaa3c
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Native.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Native.kt
 new file mode 100644
-index 0000000..3ec4c14
+index 0000000..873b98e
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Native.kt
-@@ -0,0 +1,99 @@
+@@ -0,0 +1,107 @@
 +package com.swordfish.lemuroid.app.shared.game.viewmodel
 +
 +/** JNI bridge to the shared C core (core/smz3_state.c). */
@@ -4543,8 +4618,9 @@ index 0000000..3ec4c14
 +    @JvmStatic external fun uiInit()
 +    @JvmStatic external fun uiSetSlot(i: Int, used: Boolean, name: String, summary: String)
 +    @JvmStatic external fun uiSetSprites(game: Int, names: Array<String>)
-+    @JvmStatic external fun uiInput(button: Int)
-+    @JvmStatic external fun uiTouch(x: Int, y: Int)
++    /** Returns the sound the input makes (UiCue: 0 none, 1 move, 2 tab, 3 select, 4 open, 5 back, 6 confirm). */
++    @JvmStatic external fun uiInput(button: Int): Int
++    @JvmStatic external fun uiTouch(x: Int, y: Int): Int
 +    @JvmStatic external fun uiIdle()
 +    @JvmStatic external fun uiBusy(message: String)
 +    @JvmStatic external fun uiDraw(): Array<String>
@@ -4568,6 +4644,13 @@ index 0000000..3ec4c14
 +    @JvmStatic external fun uiRunWeekly(): Int
 +    @JvmStatic external fun uiLadderEnable(on: Boolean)
 +    @JvmStatic external fun uiLadderJson(tab: Int, json: String?)
++    /** The world goals of the month (the server's /api/goals answer, null when it could not be reached), for the ladder's World tab. */
++    @JvmStatic external fun uiWorldJson(json: String?)
++    @JvmStatic external fun uiWorldShowing(): Boolean
++    /** The world goal counters of the run being played: restore them (run file or save state), read the game, and their text. */
++    @JvmStatic external fun countersLoad(text: String?)
++    @JvmStatic external fun countersTick(wram: ByteArray, sram: ByteArray, game: Int, items: Int)
++    @JvmStatic external fun countersText(): String
 +    @JvmStatic external fun uiOption(opt: Int): Int
 +    @JvmStatic external fun uiScreen(): Int
 +    @JvmStatic external fun uiSetSlotCount(n: Int)
@@ -5750,10 +5833,10 @@ index 0000000..378f91a
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Tracker.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Tracker.kt
 new file mode 100644
-index 0000000..9c9a77e
+index 0000000..c127fff
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Tracker.kt
-@@ -0,0 +1,426 @@
+@@ -0,0 +1,455 @@
 +package com.swordfish.lemuroid.app.shared.game.viewmodel
 +
 +import android.app.Presentation
@@ -5847,6 +5930,22 @@ index 0000000..9c9a77e
 +    private var lastPad = 0
 +    private var lastSmState = -1
 +
++    /** Keeps the world goal counters beside a save state, and puts them back when that state is loaded (repeating a stretch adds nothing). */
++    fun saveGoalsAt(context: Context, index: Int) {
++        RunStore.activeSlot(context)?.let { RunStore.goalsStateFile(context, it, index).writeText(Smz3Native.countersText()) }
++    }
++
++    fun loadGoalsAt(context: Context, index: Int) {
++        RunStore.activeSlot(context)?.let { slot -> runCatching { RunStore.goalsStateFile(context, slot, index).readText() }.getOrNull()?.let { Smz3Native.countersLoad(it) } }
++    }
++
++    /** Sends the run's world goal counters in the background (every few minutes, at the end and when the game closes). */
++    fun reportGoals(context: Context, slot: Int, createdAt: Long) {
++        val text = Smz3Native.countersText()
++        val online = OnlineLadder.slotKind(context, slot) != 0
++        Thread { OnlineLadder.reportGoals(context, slot, createdAt, online, text) }.start()
++    }
++
 +    fun start(scope: CoroutineScope, view: GLRetroView) {
 +        val context = view.context
 +        val displays = context.getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
@@ -5892,6 +5991,8 @@ index 0000000..9c9a77e
 +            var seenCount = -1
 +            var discoveredOnly = false
 +            var lastGame = 0
++            var countersSlot: Int? = null
++            var nextGoalsReport = SystemClock.elapsedRealtime() + 300_000
 +            while (isActive) {
 +                // a full read every 500 ms; in between, while a run is being played, a light check every 100 ms so the
 +                // end of the run is taken close to the real moment (the final time is what the ladder keeps)
@@ -5903,6 +6004,7 @@ index 0000000..9c9a77e
 +                    if (lastGame == 0 || lastGame == 3) continue
 +                    val w = view.readMemory(GLRetroView.MEMORY_SYSTEM_RAM, 0, WRAM_SIZE)
 +                    val sr = view.readMemory(GLRetroView.MEMORY_SAVE_RAM, 0, SRAM_SIZE)
++                    Smz3Native.countersTick(w, sr, lastGame, -1)   // an enemy's death lasts less than the full read's 500 ms
 +                    if (Smz3Native.summarize(w, sr)[0] == 3) break
 +                }
 +                val wram = view.readMemory(GLRetroView.MEMORY_SYSTEM_RAM, 0, WRAM_SIZE)
@@ -5999,6 +6101,11 @@ index 0000000..9c9a77e
 +                    pendingPlayTime = 0
 +                }
 +                Smz3Help.select(context, slotNow)
++                if (slotNow != countersSlot) {   // the world goal counters belong to the run
++                    countersSlot = slotNow
++                    Smz3Native.countersLoad(slotNow?.let { runCatching { RunStore.goalsFile(context, it).readText() }.getOrNull() })
++                }
++                Smz3Native.countersTick(wram, sram, if (started) s[0] else 0, if (started) s[2] + s[4] else -1)
 +                val help = Smz3Help.current()
 +                if (slotNow != discoverySlot) {
 +                    discoverySlot = slotNow
@@ -6141,6 +6248,11 @@ index 0000000..9c9a77e
 +                                ),
 +                            )
 +                            pendingSave = null
++                            RunStore.goalsFile(context, slot).writeText(Smz3Native.countersText())
++                            if (SystemClock.elapsedRealtime() >= nextGoalsReport || finishing) {
++                                nextGoalsReport = SystemClock.elapsedRealtime() + 300_000
++                                reportGoals(context, slot, run.createdAt)
++                            }
 +                            if (run.completedAt == 0L) baseMs = totalMs
 +                            pendingPlayTime = 0
 +                        }
@@ -9169,10 +9281,10 @@ index 0000000..cd98374
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Finish.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Finish.kt
 new file mode 100644
-index 0000000..48eddd0
+index 0000000..96cc28c
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Finish.kt
-@@ -0,0 +1,397 @@
+@@ -0,0 +1,412 @@
 +package com.swordfish.lemuroid.app.shared.game.viewmodel
 +
 +import android.annotation.SuppressLint
@@ -9277,6 +9389,21 @@ index 0000000..48eddd0
 +                track.release()
 +            }
 +        }.start()
++    }
++
++    private val CUES = arrayOf(
++        floatArrayOf(1318f, 0f, 0f, 45f, 0f, 0.10f), floatArrayOf(880f, 1175f, 0f, 70f, 40f, 0.11f), floatArrayOf(659f, 988f, 0f, 90f, 45f, 0.12f),
++        floatArrayOf(523f, 659f, 784f, 140f, 38f, 0.10f), floatArrayOf(988f, 659f, 0f, 90f, 45f, 0.11f), floatArrayOf(523f, 784f, 1047f, 220f, 55f, 0.12f),
++    )
++    private val cueMix = arrayOfNulls<FloatArray>(CUES.size)
++
++    /** The menu's sounds, the same as the PC's: the UiCue a menu input returned (move, tab, select, open, back, confirm). */
++    fun cue(c: Int) {
++        if (c < 1 || c > CUES.size) return
++        val mix = cueMix[c - 1] ?: CUES[c - 1].let { s ->
++            FloatArray(RATE / 2).also { m -> for (i in 0 until 3) if (s[i] > 0) note(m, (RATE * s[4] * i / 1000).toInt(), s[i], s[3], s[5]) }
++        }.also { cueMix[c - 1] = it }
++        play(mix)
 +    }
 +
 +    fun tick() = play(FloatArray(RATE / 10).also { note(it, 0, 1568f, 60f, 0.08f); note(it, RATE * 30 / 1000, 2093f, 60f, 0.08f) })

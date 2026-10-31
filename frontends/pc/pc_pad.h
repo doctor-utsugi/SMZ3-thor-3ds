@@ -15,6 +15,11 @@ int pad_code(int action);
 void pad_set(int action, int code);
 const char *pad_action_name(int action);
 const char *pad_code_name(int code);
+/* The keyboard: the key of an SNES button (PA_B .. PA_SELECT), kept in keys.cfg; SDLK_UNKNOWN when it has none or for the other actions. */
+SDL_Keycode pad_key(int action);
+void pad_set_key(int action, SDL_Keycode k);
+/* What the game screen uses a key for (an SNES button or one of the fixed keys), NULL when it is free. */
+const char *pad_key_use(SDL_Keycode k);
 
 /* True while the button or trigger of that code is held / the event is a press of it. */
 int pad_held(SDL_GameController *c, int code);

@@ -13,6 +13,7 @@
 #include "pc_emu.h"
 #include "pc_assets.h"
 #include "pc_sfx.h"
+#include "smz3_counters.h"
 #include "pc_gfx.h"
 #include "pc_help.h"
 #include "stb_image.h"
@@ -696,6 +697,18 @@ static int g_week_seed, g_week_ready;
 /* the three ladder tables are fetched in the background when the player opens them */
 static char g_ladder[3][16384];
 static int g_ladder_state[3];   /* 0 idle, 1 fetching, 2 ready, 3 failed */
+static char g_goals[8192];
+static int g_goals_state;   /* as g_ladder_state */
+static void *goals_thread(void *arg)
+{
+    (void)arg;
+    static char buf[8192];
+    int ok = online_goals_json(buf, sizeof buf);
+    if (ok) memcpy(g_goals, buf, sizeof buf);
+    g_goals_state = ok ? 2 : 3;
+    return NULL;
+}
+
 static void *ladder_thread(void *arg)
 {
     (void)arg;
@@ -736,6 +749,26 @@ static void note(const char *msg) { snprintf(g_note, sizeof g_note, "%s", msg); 
 #define QSLOTS 4
 /* Quick states of a run, kept as runs/slotN.qK.state. */
 /* Returns 1 when it saved or loaded. */
+static SmzCounters g_goalc;   /* the world goal counters of the run being played */
+
+typedef struct { int slot, online; int64_t created; char text[640]; } GoalReport;
+static void *goals_report_thread(void *arg)
+{
+    GoalReport *g = arg;
+    online_goals_report(g->slot, g->created, g->online, g->text);
+    free(g);
+    return NULL;
+}
+
+static void goals_report(int slot, const SmzRun *run)
+{
+    GoalReport *g = calloc(1, sizeof *g);
+    if (!g) return;
+    g->slot = slot; g->created = run->created; g->online = online_slot_kind(slot) > 0;
+    if (smz_counters_text(&g_goalc, g->text, sizeof g->text) <= 0) { free(g); return; }
+    detach(goals_report_thread, g);
+}
+
 static int quick_state(int slot, int q, int save)
 {
     char m[64];
@@ -745,12 +778,17 @@ static int quick_state(int slot, int q, int save)
         uint8_t *buf = malloc(n);
         int ok = buf && emu_state_save(buf, n) == 0 && store_write(path, buf, n) == 0;
         free(buf);
+        char t[640];
+        if (ok && smz_counters_text(&g_goalc, t, sizeof t) >= 0) store_write(store_path("runs/slot%d.q%d.goals", slot + 1, q + 1), t, strlen(t));   /* loading it puts the counters back here */
         snprintf(m, sizeof m, ok ? "Saved state %d" : "Could not save state %d", q + 1);
     } else {
         size_t n;
         uint8_t *st = store_read(path, &n);
         int ok = st && emu_state_load(st, n) == 0;
         free(st);
+        size_t gn;
+        char *gt = ok ? (char *)store_read(store_path("runs/slot%d.q%d.goals", slot + 1, q + 1), &gn) : NULL;
+        if (gt) { gt[gn] = 0; smz_counters_load(&g_goalc, gt); free(gt); }
         snprintf(m, sizeof m, ok ? "Loaded state %d" : "State %d is empty", q + 1);
         note(m);
         return ok;
@@ -787,14 +825,11 @@ static int pad_bits(const Uint8 *k)
     if (k[SDL_SCANCODE_DOWN]) b |= PAD_DOWN;
     if (k[SDL_SCANCODE_LEFT]) b |= PAD_LEFT;
     if (k[SDL_SCANCODE_RIGHT]) b |= PAD_RIGHT;
-    if (k[SDL_SCANCODE_X]) b |= PAD_A;
-    if (k[SDL_SCANCODE_Z]) b |= PAD_B;
-    if (k[SDL_SCANCODE_S]) b |= PAD_X;
-    if (k[SDL_SCANCODE_A]) b |= PAD_Y;
-    if (k[SDL_SCANCODE_Q]) b |= PAD_L;
-    if (k[SDL_SCANCODE_W]) b |= PAD_R;
-    if (k[SDL_SCANCODE_RETURN]) b |= PAD_START;
-    if (k[SDL_SCANCODE_BACKSPACE] || k[SDL_SCANCODE_RSHIFT]) b |= PAD_SELECT;
+    static const int BIT[8] = {PAD_B, PAD_A, PAD_Y, PAD_X, PAD_L, PAD_R, PAD_START, PAD_SELECT};
+    for (int a = 0; a < 8; a++) {
+        SDL_Keycode key = pad_key(a);
+        if (key != SDLK_UNKNOWN && k[SDL_GetScancodeFromKey(key)]) b |= BIT[a];
+    }
     b |= pad_snes_bits(pad);
     return b;
 }
@@ -1217,6 +1252,8 @@ static void play(int slot, int game_save_only)
     memset(in_logic, 0, sizeof in_logic);
     static SmzTracker trk;
     smz_tracker_reset(&trk, run.play_ms, run.save_ms, run.save_zelda, run.save_metroid);
+    smz_counters_load(&g_goalc, run.goals);
+    Uint32 next_goals = SDL_GetTicks() + 300000;
     smz_goal_from_settings(run.settings, &trk.goal);   /* a daily challenge ends at its goal */
     int challenge = strstr(run.settings, "\"challenge\":true") != NULL;   /* no fast forward (save states are off in its settings) */
     int dead_bosses = smz_daily_prepared_bosses(run.settings);   /* a mid-game start keeps these bosses dead */
@@ -1427,6 +1464,7 @@ static void play(int slot, int game_save_only)
             if (wram && sram) {
                 if (dead_bosses) smz_prepared_apply(dead_bosses, (uint8_t *)wram, wl, sram, sl);   /* the emulator's own RAM */
                 smz_tracker_tick(&trk, wram, wl, sram, sl, dt, fast ? 4 : 1);
+                smz_counters_tick(&g_goalc, trk.started ? (int)trk.game : 0, wram, wl, sram, sl, (int)(trk.zelda_cleared + trk.metroid_cleared));
                 if (trk.save_changed) store_write(store_path("runs/slot%d.srm", slot + 1), sram, sl);
                 if (daily && trk.started && smz_daily_note_began(&dr, online_now_ms())) online_daily_save(&dr);   /* the clock starts with the game, as in the ladder */
                 if (trk.game == 3 && !finished) {
@@ -1485,7 +1523,9 @@ static void play(int slot, int game_save_only)
         if ((now - last_save) * 1000 / freq >= 5000) {
             last_save = now;
             snapshot_run(&run, &trk, finished);
+            smz_counters_text(&g_goalc, run.goals, sizeof run.goals);
             store_run_save(slot + 1, &run);
+            if (SDL_GetTicks() >= next_goals) { next_goals = SDL_GetTicks() + 300000; goals_report(slot + 1, &run); }
             if (proof_dirty) { save_proof(slot + 1, &proof); proof_dirty = 0; }
             if (disc.dirty) {
                 char text[8192];
@@ -1652,7 +1692,9 @@ static void play(int slot, int game_save_only)
         free(buf);
     }
     snapshot_run(&run, &trk, finished);
+    smz_counters_text(&g_goalc, run.goals, sizeof run.goals);
     store_run_save(slot + 1, &run);
+    goals_report(slot + 1, &run);
     if (audio) SDL_CloseAudioDevice(audio);
     if (tex) SDL_DestroyTexture(tex);
     emu_close();
@@ -1702,6 +1744,14 @@ static uint8_t *load_preview(const char *key, size_t *len)
     char name[64];
     if (!strncmp(key, "reward/", 7)) { snprintf(name, sizeof name, "rewards/%s_boss_token.png", key + 7); return icon_preview(name, len); }
     if (!strncmp(key, "flag/", 5)) { snprintf(name, sizeof name, "flags/%s.png", key + 5); return icon_preview(name, len); }
+    if (!strncmp(key, "goal/", 5)) {   /* "goal/boss/kraid": goals/boss_kraid.png, or the sprite cut from the ROM */
+        char k[40];
+        snprintf(k, sizeof k, "%s", key + 5);
+        for (char *c = k; *c; c++) if (*c == '/') *c = '_';
+        snprintf(name, sizeof name, "goals/%s.png", k);
+        uint8_t *pv = icon_preview(name, len);
+        return pv ? pv : store_read(store_path("goals/%s.pv", k), len);
+    }
     snprintf(name, sizeof name, "%s", key);
     return store_read(store_path("sprites/%s.pv", name), len);
 }
@@ -1794,12 +1844,25 @@ static int daily_begin(char *err, size_t cap)
     return rc;
 }
 
+static void menu_cue(UiCue c)
+{
+    static const SfxKind S[] = {[UI_CUE_MOVE] = SFX_MOVE, [UI_CUE_TAB] = SFX_TAB, [UI_CUE_SELECT] = SFX_SELECT, [UI_CUE_OPEN] = SFX_OPEN, [UI_CUE_BACK] = SFX_BACK, [UI_CUE_CONFIRM] = SFX_CONFIRM};
+    if (c != UI_CUE_NONE) sfx_play(S[c]);
+}
+
+static SmzUi ui_before;
+
 static void menu_button(UiButton b)
 {
     if (fx_busy()) return;
-    if (settings_active()) settings_nav(b);
-    else if (welcome_active()) welcome_nav(b);
-    else ui_input(&ui, b);
+    if (settings_active() || welcome_active()) {   /* their own menus: the sound follows the button */
+        if (settings_active()) settings_nav(b); else welcome_nav(b);
+        menu_cue(b == BTN_UP || b == BTN_DOWN ? UI_CUE_MOVE : b == BTN_B ? UI_CUE_BACK : b == BTN_L || b == BTN_R ? UI_CUE_TAB : UI_CUE_SELECT);
+        return;
+    }
+    ui_before = ui;
+    ui_input(&ui, b);
+    menu_cue(ui_cue(&ui_before, &ui, b));
 }
 
 static void window_main(int start_slot)
@@ -1905,7 +1968,7 @@ static void window_main(int start_slot)
                 SDL_GetRendererOutputSize(ren, &ww, &wh);
                 float k = (float)ww / UI_W < (float)wh / UI_H ? (float)ww / UI_W : (float)wh / UI_H;
                 int lx = (int)((e.button.x - (ww - UI_W * k) / 2) / k), ly = (int)((e.button.y - (wh - UI_H * k) / 2) / k);
-                if (fx_busy()) {} else if (welcome_active()) welcome_click(lx, ly); else ui_touch(&ui, lx, ly);
+                if (fx_busy()) {} else if (welcome_active()) welcome_click(lx, ly); else { ui_before = ui; ui_touch(&ui, lx, ly); menu_cue(ui_cue(&ui_before, &ui, -1)); }
             } else if (e.type == SDL_DROPFILE) {
                 note(accept_rom(e.drop.file));
                 g_base_checked = 0;
@@ -1929,6 +1992,11 @@ static void window_main(int start_slot)
         if (g_month_ready) { g_month_ready = 0; ui_set_monthly(&ui, g_month, g_month_seed, online_days_left()); }
         for (int t = 0; t < 3; t++)
             if (g_ladder_state[t] >= 2) { ui_ladder_load_json(&ui, t, g_ladder_state[t] == 2 ? g_ladder[t] : NULL); g_ladder_state[t] = 0; }
+        if (g_goals_state >= 2) { ui_world_load_json(&ui, g_goals_state == 2 ? g_goals : NULL); g_goals_state = 0; }
+        {
+            static Uint32 next_world;   /* the World tab refreshes once a minute while it is shown */
+            if (ui_world_showing(&ui) && !g_goals_state && SDL_GetTicks() >= next_world) { next_world = SDL_GetTicks() + 60000; g_goals_state = 1; detach(goals_thread, NULL); }
+        }
         if (g_week_ready) { g_week_ready = 0; ui_set_weekly(&ui, g_week, g_week_seed, online_weekly_days_left()); }
         online_save_profile(&ui);
         if (ui_saved_dirty(&ui)) {
@@ -1939,7 +2007,7 @@ static void window_main(int start_slot)
             UiAction act = ui.action;
             int slot = ui.action_slot;
             ui.action = ACT_NONE;
-            if (act == ACT_LADDER) { for (int t = 0; t < 3; t++) g_ladder_state[t] = 1; detach(ladder_thread, NULL); }
+            if (act == ACT_LADDER) { for (int t = 0; t < 3; t++) g_ladder_state[t] = 1; detach(ladder_thread, NULL); if (!g_goals_state) { g_goals_state = 1; detach(goals_thread, NULL); } }
             else if (act == ACT_DAILY) {
                 if (daily_begin(err, sizeof err) == 0) { pending_play = DAILY_SLOT - 1; pending_state_only = 0; }
                 else { note(err); next_daily = 0; }
@@ -2022,12 +2090,12 @@ static void window_main(int start_slot)
         {
             static int last_screen = -1, last_flags;
             int flags = welcome_active() | settings_active() << 1;
-            if ((int)ui.screen != last_screen || flags != last_flags) { if (last_screen >= 0) fx_screen_changed(); last_screen = (int)ui.screen; last_flags = flags; }
+            if ((int)ui.screen != last_screen || flags != last_flags) { if (last_screen >= 0) fx_screen_changed(); if (last_screen >= 0 && (flags & 2) != (last_flags & 2)) sfx_play(flags & 2 ? SFX_OPEN : SFX_CLOSE); last_screen = (int)ui.screen; last_flags = flags; }
             fx_draw(ww, wh);
             Uint32 since_gone = SDL_GetTicks() - gone_at;
-            if (gone && since_gone < 200) {   /* the screen that left fades out over the cover */
-                float a = 1 - since_gone / 200.0f;
-                SDL_SetTextureAlphaMod(gone, (Uint8)(255 * a * a));
+            if (gone && since_gone < 300) {   /* the screen that left fades out to black, well before the seam opens */
+                float a = 1 - since_gone / 300.0f;
+                SDL_SetTextureAlphaMod(gone, (Uint8)(255 * a * a * (3 - 2 * a)));
                 SDL_RenderCopy(ren, gone, NULL, NULL);
             }
         }

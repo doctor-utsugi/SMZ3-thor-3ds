@@ -59,7 +59,7 @@ index 591688c..0eb3100 100644
  
      TEX_COUNT,
 diff --git a/source/3dsimpl.cpp b/source/3dsimpl.cpp
-index d4fca8e..2146759 100644
+index d4fca8e..75779d2 100644
 --- a/source/3dsimpl.cpp
 +++ b/source/3dsimpl.cpp
 @@ -8,6 +8,7 @@
@@ -103,7 +103,18 @@ index d4fca8e..2146759 100644
          return true;
  
      char path[PATH_MAX];
-@@ -1032,6 +1036,7 @@ bool impl3dsSaveState(const char* filename)
+@@ -1021,7 +1025,9 @@ bool impl3dsSaveState(const char* filename)
+         return false;
+     }
+ 
+-	return Snapshot(filename);
++	if (!Snapshot(filename)) return false;
++	smz3StateSaved(filename);
++	return true;
+ }
+ 
+ //---------------------------------------------------------
+@@ -1032,6 +1038,7 @@ bool impl3dsSaveState(const char* filename)
  //---------------------------------------------------------
  bool impl3dsLoadStateSlot(int slotNumber)
  {
@@ -111,11 +122,11 @@ index d4fca8e..2146759 100644
      char path[PATH_MAX], ext[16];
      snprintf(ext, sizeof(ext), ".%d.frz", slotNumber);
      file3dsGetRelatedPath(Memory.ROMFilename, path, sizeof(path), ext, "savestates");
-@@ -1071,6 +1076,7 @@ bool impl3dsLoadState(const char* filename)
+@@ -1071,6 +1078,7 @@ bool impl3dsLoadState(const char* filename)
  	if (success)
  	{
  		gpu3dsInitializeMode7Vertexes();
-+		smz3StateLoaded();
++		smz3StateLoaded(filename);
  	}
  	return success;
  }
@@ -187,7 +198,7 @@ index c8b5241..c7f824c 100644
  
  }
 diff --git a/source/3dsmain.cpp b/source/3dsmain.cpp
-index 3692a54..5586a50 100644
+index 3692a54..a6b2c3e 100644
 --- a/source/3dsmain.cpp
 +++ b/source/3dsmain.cpp
 @@ -32,6 +32,7 @@
@@ -324,6 +335,14 @@ index 3692a54..5586a50 100644
  
  
          long actualTicksThisFrame = (long)(svcGetSystemTick() - startFrameTick);
+@@ -2589,6 +2651,7 @@ int main()
+     menu3dsShowSplashMessage("Saving & Exiting");
+     
+     settingsSave(settings3DS.isRomLoaded);
++    smz3RunClosing();
+     impl3dsSaveStateAuto();
+     impl3dsSaveCheats();
+ 
 diff --git a/source/3dsutils.cpp b/source/3dsutils.cpp
 index 9688a80..c195f76 100644
 --- a/source/3dsutils.cpp
@@ -338,10 +357,10 @@ index 9688a80..c195f76 100644
      }
 diff --git a/source/smz3online.cpp b/source/smz3online.cpp
 new file mode 100644
-index 0000000..e9073dc
+index 0000000..bf92e01
 --- /dev/null
 +++ b/source/smz3online.cpp
-@@ -0,0 +1,569 @@
+@@ -0,0 +1,642 @@
 +#include "smz3online.h"
 +
 +#include <3ds.h>
@@ -659,6 +678,55 @@ index 0000000..e9073dc
 +    return r;
 +}
 +
++// ---- world goals
++
++static char gGoals[8192];
++static int gGoalsState;   // 0 idle, 1 fetching, 2 ready, 3 failed
++
++static void goalsThread(void *)
++{
++    static char buf[8192];
++    char id[40], path[96];
++    installId(id);
++    snprintf(path, sizeof path, "/api/goals?install=%s", id);
++    int ok = httpRequest("GET", path, NULL, buf, sizeof buf) == 200;
++    LightLock_Lock(&gLock);
++    if (ok) memcpy(gGoals, buf, sizeof buf);
++    gGoalsState = ok ? 2 : 3;
++    LightLock_Unlock(&gLock);
++}
++
++int smzOnlineTakeGoals(char *out, size_t cap)
++{
++    lockInit();
++    LightLock_Lock(&gLock);
++    int r = 0;
++    if (gGoalsState == 2) { snprintf(out, cap, "%s", gGoals); r = 1; gGoalsState = 0; }
++    else if (gGoalsState == 3) { r = 2; gGoalsState = 0; }
++    LightLock_Unlock(&gLock);
++    return r;
++}
++
++struct GoalReport { int slot; bool online; int64_t created; char text[640]; };
++
++static void goalsReportThread(void *arg)
++{
++    GoalReport *g = (GoalReport *)arg;
++    char id[40], run[64], reply[256], body[2048];
++    installId(id);
++    snprintf(run, sizeof run, "s%d-%lld", g->slot, (long long)g->created);
++    int n = snprintf(body, sizeof body, "{\"install\":\"%s\",\"run\":\"%s\",\"online\":%s,\"counts\":{", id, run, g->online ? "true" : "false");
++    for (const char *p = g->text; *p && n < (int)sizeof body - 64;) {   // "key=n,..." without the "_" keys
++        const char *eq = strchr(p, '='), *end = strchr(p, ',');
++        if (!end) end = p + strlen(p);
++        if (eq && eq < end && *p != '_') n += snprintf(body + n, sizeof body - (size_t)n, "%s\"%.*s\":%.*s", body[n - 1] == '{' ? "" : ",", (int)(eq - p), p, (int)(end - eq - 1), eq + 1);
++        p = *end ? end + 1 : end;
++    }
++    snprintf(body + n, sizeof body - (size_t)n, "}}");
++    httpRequest("POST", "/api/goals/report", body, reply, sizeof reply);
++    free(g);
++}
++
 +// ---- threads
 +
 +static void spawn(ThreadFunc fn, void *arg)
@@ -840,6 +908,30 @@ index 0000000..e9073dc
 +    if (!busy) spawn(laddersThread, NULL);
 +}
 +
++void smzOnlineRequestGoals(void)
++{
++    lockInit();
++    netUp();
++    if (!gHttpReady) return;
++    LightLock_Lock(&gLock);
++    bool busy = gGoalsState == 1;
++    if (!busy) gGoalsState = 1;
++    LightLock_Unlock(&gLock);
++    if (!busy) spawn(goalsThread, NULL);
++}
++
++void smzOnlineGoalsReport(int slot, int64_t created, bool online, const char *counters)
++{
++    if (!counters || !*counters) return;
++    netUp();
++    if (!gHttpReady) return;
++    GoalReport *g = (GoalReport *)calloc(1, sizeof *g);
++    if (!g) return;
++    g->slot = slot; g->online = online; g->created = created;
++    snprintf(g->text, sizeof g->text, "%s", counters);
++    spawn(goalsReportThread, g);
++}
++
 +void smzOnlineEnsureToken(int slot)
 +{
 +    netUp();
@@ -913,10 +1005,10 @@ index 0000000..e9073dc
 +}
 diff --git a/source/smz3online.h b/source/smz3online.h
 new file mode 100644
-index 0000000..322435e
+index 0000000..e5040ed
 --- /dev/null
 +++ b/source/smz3online.h
-@@ -0,0 +1,58 @@
+@@ -0,0 +1,63 @@
 +#ifndef SMZ3ONLINE_H
 +#define SMZ3ONLINE_H
 +
@@ -943,6 +1035,11 @@ index 0000000..322435e
 +// 2 failed; the JSON is the server's /api/ladder answer).
 +void smzOnlineRequestLadders(void);
 +int smzOnlineTakeLadder(int tab, char *out, size_t cap);
++// The world goals of the month (/api/goals): Request starts the fetch, Take returns 1 with the JSON once, 2 when it failed, 0 meanwhile.
++void smzOnlineRequestGoals(void);
++int smzOnlineTakeGoals(char *out, size_t cap);
++// Sends a run's goal counters (smz_counters_text) on a thread; slot as in the run id "s<slot>-<created>".
++void smzOnlineGoalsReport(int slot, int64_t created, bool online, const char *counters);
 +// The player's profile file text ("name\tCC\tmode"), and saving it back.
 +bool smzOnlineProfileLoad(char *out, size_t cap);
 +void smzOnlineProfileSave(const char *text);
@@ -977,10 +1074,10 @@ index 0000000..322435e
 +#endif
 diff --git a/source/smz3run.cpp b/source/smz3run.cpp
 new file mode 100644
-index 0000000..f75731e
+index 0000000..cba0019
 --- /dev/null
 +++ b/source/smz3run.cpp
-@@ -0,0 +1,2998 @@
+@@ -0,0 +1,3107 @@
 +// SMZ3 runs: the shared C menu (core/ui) drawn on the second screen, and offline generation (core/gen).
 +#include <3ds.h>
 +#include <dirent.h>
@@ -1002,6 +1099,7 @@ index 0000000..f75731e
 +#include "smz3_run.h"
 +#include "smz3_ui.h"
 +#include "smz3_preview.h"
++#include "smz3_counters.h"
 +// from smz3_rom.h, whose generator headers stay out of C++
 +int smz_rom_shortcut_hooks(uint8_t *rom);
 +void smz_rom_checksum(uint8_t *rom);
@@ -1165,6 +1263,13 @@ index 0000000..f75731e
 +    char path[160];
 +    if (!strcmp(key, "logo")) snprintf(path, sizeof path, "romfs:/smz3/logo.pv");   // the app logo beside the menu titles
 +    else if (!strncmp(key, "flag/", 5)) snprintf(path, sizeof path, "romfs:/smz3/flags/%.2s.pv", key + 5);   // a country flag
++    else if (!strncmp(key, "goal/", 5)) {   // "goal/boss/kraid": the app's goals/boss_kraid, or the sprite cut from the ROM
++        char k[40];
++        snprintf(k, sizeof k, "%s", key + 5);
++        for (char *c = k; *c; c++) if (*c == '/') *c = '_';
++        snprintf(path, sizeof path, "romfs:/smz3/goals/%s.pv", k);
++        if (access(path, F_OK) != 0) snprintf(path, sizeof path, SMZ_DIR "/goals/%s.pv", k);
++    }
 +    else snprintf(path, sizeof path, SPRITE_DIR "/%s.pv", key);
 +    size_t len = 0;
 +    unsigned char *d = readFile(path, &len);
@@ -1737,11 +1842,14 @@ index 0000000..f75731e
 +
 +static void makeDungeonMaps(SmzUi *u);
 +
++static void uiCueSound(UiCue c);
++static void goalsLeave(bool report);
++
 +bool smz3RunMenu(char *romPathOut, size_t cap)
 +{
 +    static SmzUi ui;
 +    static char linkNames[UI_MAX_SPRITES][32], samusNames[UI_MAX_SPRITES][32];
-+    if (smz3IsRun()) impl3dsSaveStateAuto();   // now, while the flags still belong to the run that was being played
++    if (smz3IsRun()) { goalsLeave(true); impl3dsSaveStateAuto(); }   // now, while the flags still belong to the run that was being played
 +    gRunStates = false;
 +    ui_init(&ui);
 +    ui.rings = 1;   // the run list's percent sits in a progress ring (drawRing)
@@ -1769,6 +1877,8 @@ index 0000000..f75731e
 +    ui_daily_enable(&ui, 1);
 +    smzDailyRequestInfo();
 +    u64 nextInfo = osGetTime() + 60000;
++    u64 nextWorld = 0;   // the world goals: fetched once they come on screen, then once a minute while they stay
++    bool worldShown = false;
 +    refreshSlots(&ui);
 +
 +    bool chosen = false;
@@ -1792,11 +1902,18 @@ index 0000000..f75731e
 +        else if (down & KEY_SELECT) b = BTN_SELECT;
 +        else have = false;
 +        if (uiBusy()) have = false, down &= ~KEY_TOUCH;   // a new screen takes its time: no skipping through
-+        if (have) ui_input(&ui, b);
++        static SmzUi before;   // copied only on input: the struct is large
++        if (have) {
++            before = ui;
++            ui_input(&ui, b);
++            uiCueSound(ui_cue(&before, &ui, b));
++        }
 +        if (down & KEY_TOUCH) {
 +            touchPosition t;
 +            hidTouchRead(&t);
++            before = ui;
 +            ui_touch(&ui, t.px, t.py);
++            uiCueSound(ui_cue(&before, &ui, -1));
 +        }
 +        storeSavedCustoms(&ui);
 +        {
@@ -1809,6 +1926,12 @@ index 0000000..f75731e
 +                int st = smzOnlineTakeLadder(t, ladderJson, sizeof ladderJson);
 +                if (st) ui_ladder_load_json(&ui, t, st == 1 ? ladderJson : NULL);
 +            }
++            static char goalsJson[8192];
++            int gs = smzOnlineTakeGoals(goalsJson, sizeof goalsJson);
++            if (gs) ui_world_load_json(&ui, gs == 1 ? goalsJson : NULL);
++            bool world = ui_world_showing(&ui) != 0;
++            if (world && (!worldShown || osGetTime() >= nextWorld)) { nextWorld = osGetTime() + 60000; smzOnlineRequestGoals(); }
++            worldShown = world;
 +            static SmzDailyInfo daily;
 +            int ds = smzDailyTakeInfo(&daily);
 +            if (ds == 1) ui_daily_set(&ui, &daily, dailyKept(daily.window));
@@ -2146,6 +2269,9 @@ index 0000000..f75731e
 +// ---- state of the run being played
 +
 +static SmzTracker trk;
++static SmzCounters goalc;        // the world goal counters of the run being played
++static char goalsLoaded[640];    // a save state's counters, taken in once the tracker has the run
++static bool goalsPending;
 +static SmzProof proof;
 +static SmzDiscovery disc;
 +static int curSlot = -1;
@@ -3167,8 +3293,10 @@ index 0000000..f75731e
 +
 +static int pct(unsigned a, unsigned b) { return b ? (int)(100.0 * a / b + 0.5) : 0; }
 +
-+// sounds on ndsp channels 1 to 3 (the SNES plays on 0), one each so the rows don't cut the fanfare, synthesized once
-+enum { SFX_TICK, SFX_ROW, SFX_FANFARE, SFX_COUNT };
++// sounds on ndsp channels 1 to 4 (the SNES plays on 0), synthesized once: the card's three get a channel each so the rows
++// don't cut the fanfare, the menu cues share the last one so a new cue cuts the previous
++enum { SFX_TICK, SFX_ROW, SFX_FANFARE, SFX_UI, SFX_COUNT = SFX_UI + UI_CUE_CONFIRM };
++#define SFX_CHANNELS (SFX_UI + 1)
 +#define SFX_RATE 22050
 +static ndspWaveBuf sfxBuf[SFX_COUNT];
 +static bool sfxReady;
@@ -3183,12 +3311,40 @@ index 0000000..f75731e
 +    }
 +}
 +
++// the PC's menu note: a sine with 0.18 of its octave, a 4 ms attack and an exponential tail
++static void cueNote(s16 *out, int n, float at, float len, float hz, float vol)
++{
++    int i0 = (int)(at * SFX_RATE), i1 = (int)((at + len) * SFX_RATE);
++    for (int i = i0; i < i1 && i < n; i++) {
++        float t = (float)(i - i0) / SFX_RATE, env = fminf(1, t / 0.004f) * expf(-t * 5 / len);
++        float v = out[i] + 32767 * vol * env * (sinf(2 * (float)M_PI * hz * t) + 0.18f * sinf(4 * (float)M_PI * hz * t));
++        out[i] = (s16)(v > 32767 ? 32767 : v < -32767 ? -32767 : v);
++    }
++}
++
++// indexed by UiCue - 1: notes, ms per note, ms between notes, volume, as in pc_sfx.c
++static const struct { float hz[3], ms, gap, vol; } CUES[UI_CUE_CONFIRM] = {
++    {{1318, 0, 0}, 45, 0, 0.10f},          // MOVE
++    {{880, 1175, 0}, 70, 40, 0.11f},       // TAB
++    {{659, 988, 0}, 90, 45, 0.12f},        // SELECT
++    {{523, 659, 784}, 140, 38, 0.10f},     // OPEN
++    {{988, 659, 0}, 90, 45, 0.11f},        // BACK
++    {{523, 784, 1047}, 220, 55, 0.12f},    // CONFIRM
++};
++
++static float sfxLen(int k)
++{
++    static const float CARD[SFX_UI] = {0.03f, 0.16f, 2.0f};
++    if (k < SFX_UI) return CARD[k];
++    int notes = CUES[k - SFX_UI].hz[2] > 0 ? 3 : CUES[k - SFX_UI].hz[1] > 0 ? 2 : 1;
++    return (CUES[k - SFX_UI].gap * (notes - 1) + CUES[k - SFX_UI].ms) / 1000;
++}
++
 +static void sfxInit()
 +{
 +    if (sfxReady || snd3DS.audioType != 2) return;
-+    static const float LEN[SFX_COUNT] = {0.03f, 0.16f, 2.0f};
 +    for (int k = 0; k < SFX_COUNT; k++) {
-+        int n = (int)(LEN[k] * SFX_RATE);
++        int n = (int)(sfxLen(k) * SFX_RATE);
 +        s16 *p = (s16 *)linearAlloc(n * 2);
 +        if (!p) return;
 +        memset(p, 0, n * 2);
@@ -3199,12 +3355,14 @@ index 0000000..f75731e
 +            for (int i = 0; i < 4; i++) sfxNote(p, n, i * 0.07f, 0.25f, ARP[i], 0.12f);
 +            for (float hz : CHORD) sfxNote(p, n, 0.30f, 1.6f, hz, 0.07f);
 +        }
++        for (int i = 0; k >= SFX_UI && i < 3 && CUES[k - SFX_UI].hz[i] > 0; i++)
++            cueNote(p, n, CUES[k - SFX_UI].gap * i / 1000, CUES[k - SFX_UI].ms / 1000, CUES[k - SFX_UI].hz[i], CUES[k - SFX_UI].vol);
 +        DSP_FlushDataCache(p, n * 2);
 +        memset(&sfxBuf[k], 0, sizeof sfxBuf[k]);
 +        sfxBuf[k].data_vaddr = p;
 +        sfxBuf[k].nsamples = n;
 +    }
-+    for (int k = 0; k < SFX_COUNT; k++) {
++    for (int k = 0; k < SFX_CHANNELS; k++) {
 +        float mix[12] = {1, 1};
 +        ndspChnReset(1 + k);
 +        ndspChnSetInterp(1 + k, NDSP_INTERP_LINEAR);
@@ -3219,9 +3377,15 @@ index 0000000..f75731e
 +{
 +    sfxInit();
 +    if (!sfxReady) return;
-+    ndspChnWaveBufClear(1 + k);
++    int ch = 1 + (k < SFX_UI ? k : SFX_UI);
++    ndspChnWaveBufClear(ch);
 +    sfxBuf[k].status = NDSP_WBUF_FREE;
-+    ndspChnWaveBufAdd(1 + k, &sfxBuf[k]);
++    ndspChnWaveBufAdd(ch, &sfxBuf[k]);
++}
++
++static void uiCueSound(UiCue c)
++{
++    if (c != UI_CUE_NONE) sfxPlay(SFX_UI + c - 1);
 +}
 +
 +// The sounds follow the timeline, once a frame.
@@ -3743,6 +3907,7 @@ index 0000000..f75731e
 +    static u64 lastMs = 0, nextToken = 0;
 +    static int deadBosses = 0;
 +    static int64_t nextHintAsk = 0;
++    static u64 nextGoals = 0;
 +    char discPath[96];
 +    snprintf(discPath, sizeof discPath, RUN_DIR "/slot%d.discovery", curSlot);
 +    if (gPlaySlot != curSlot) {
@@ -3776,6 +3941,8 @@ index 0000000..f75731e
 +        daily = curSlot == SMZ_DAILY_SLOT && smzDailyLoad(&dr);
 +        deadBosses = smz_daily_prepared_bosses(r0.settings);
 +        dailyDoneMs = r0.game == 3 ? 1 : 0;   // finished before: its time was sent then
++        smz_counters_load(&goalc, r0.goals);
++        nextGoals = osGetTime() + 300000;
 +        nextHintAsk = newHintUntil = 0;
 +        lastMs = osGetTime();
 +        calls = proofDirty = queued = 0;
@@ -3787,6 +3954,7 @@ index 0000000..f75731e
 +        bigMap = {811, 479, 0.19f, false};
 +        miniMap = {811, 479, 0.45f, true};
 +    }
++    if (goalsPending) { goalsPending = false; smz_counters_load(&goalc, goalsLoaded); }
 +    u64 nowMs = osGetTime();
 +    int dt = (int)(nowMs - lastMs);
 +    lastMs = nowMs;
@@ -3810,6 +3978,8 @@ index 0000000..f75731e
 +        SmzRun r1;
 +        snprintf(rp, sizeof rp, RUN_DIR "/slot%d.run", curSlot);
 +        bool have = smz_run_load(rp, &r1) == 0 && trk.started;
++        if (have) smz_counters_text(&goalc, r1.goals, sizeof r1.goals);
++        if (have && nowMs >= nextGoals) { nextGoals = nowMs + 300000; smzOnlineGoalsReport(curSlot + 1, r1.created, smzOnlineSlotKind(curSlot) > 0, r1.goals); }
 +        if (have && finishedBefore) {   // it keeps its result; its rewards only add up
 +            r1.boss_mask |= trk.boss_mask; r1.crystal_mask |= trk.crystal_mask;
 +            r1.last_played = (int64_t)time(NULL) * 1000;
@@ -3882,7 +4052,40 @@ index 0000000..f75731e
 +    }
 +}
 +
-+void smz3StateLoaded(void) { trk.state_loaded = 3; }
++void smz3StateLoaded(const char *path)
++{
++    trk.state_loaded = 3;
++    char gp[PATH_MAX];
++    snprintf(gp, sizeof gp, "%s.goals", path);
++    size_t n = 0;
++    char *t = smz3IsRun() ? (char *)readFile(gp, &n) : NULL;   // none: the counters stay where they are
++    if (t) { snprintf(goalsLoaded, sizeof goalsLoaded, "%.*s", (int)n, t); goalsPending = true; free(t); }
++}
++
++void smz3StateSaved(const char *path)
++{
++    if (!smz3IsRun() || curSlot < 0) return;
++    char gp[PATH_MAX], t[640];
++    snprintf(gp, sizeof gp, "%s.goals", path);
++    int n = smz_counters_text(&goalc, t, sizeof t);
++    FILE *f = n >= 0 ? fopen(gp, "wb") : NULL;   // loading the state puts the counters back to this point
++    if (f) { fwrite(t, 1, (size_t)n, f); fclose(f); }
++}
++
++// Leaving the run: its file keeps the counters, and the server gets them.
++static void goalsLeave(bool report)
++{
++    if (curSlot < 0 || curSlot != gPlaySlot) return;
++    char rp[96];
++    SmzRun r;
++    snprintf(rp, sizeof rp, RUN_DIR "/slot%d.run", curSlot);
++    if (smz_run_load(rp, &r) != 0) return;
++    smz_counters_text(&goalc, r.goals, sizeof r.goals);
++    smz_run_save(rp, &r);
++    if (report) smzOnlineGoalsReport(curSlot + 1, r.created, smzOnlineSlotKind(curSlot) > 0, r.goals);
++}
++
++void smz3RunClosing(void) { if (smz3IsRun()) goalsLeave(false); }
 +
 +unsigned smz3TrackerKeys(unsigned keysDown, bool *openMenu)
 +{
@@ -3925,6 +4128,9 @@ index 0000000..f75731e
 +    if (settings3DS.TurboMode && now - lastFrameMs < 3000) { turboWallMs += now - lastFrameMs; turboEmuMs += 1000 / 60.0988; }
 +    lastFrameMs = now;
 +    if (tick || curSlot != gPlaySlot) { trackerUpdate(); debugTouches(); dirty = true; }
++    static unsigned frames;
++    if (++frames % 6 == 0 && curSlot >= 0 && curSlot == gPlaySlot && !goalsPending)   // ~100 ms: an enemy's death is short
++        smz_counters_tick(&goalc, trk.started ? (int)trk.game : 0, Memory.RAM, 0x20000, Memory.SRAM, 0x20000, (int)(trk.zelda_cleared + trk.metroid_cleared));
 +    if (cardState) { cardSounds(); if (cardT() < T_BUTTONS + 0.4f && sinceDraw >= 2) dirty = true; }   // the details move at 30 fps
 +    if (dirty && (tick || sinceDraw >= 3 || cardState)) { trackerDraw(); sinceDraw = 0; }   // a drag redraws at most every third frame
 +}
@@ -3981,10 +4187,10 @@ index 0000000..f75731e
 +}
 diff --git a/source/smz3run.h b/source/smz3run.h
 new file mode 100644
-index 0000000..dc59a02
+index 0000000..cadbd19
 --- /dev/null
 +++ b/source/smz3run.h
-@@ -0,0 +1,50 @@
+@@ -0,0 +1,54 @@
 +#ifndef SMZ3RUN_H
 +#define SMZ3RUN_H
 +
@@ -4010,8 +4216,12 @@ index 0000000..dc59a02
 +void smz3CardDraw(float xOffset);
 +bool smz3TakeRunListRequest(void);
 +
-+// A save state was loaded: the tracker's recent lists drop what it undid.
-+void smz3StateLoaded(void);
++// A save state was saved to or loaded from path: the world goal counters go with it in path.goals, and on a load the tracker's
++// recent lists drop what it undid.
++void smz3StateSaved(const char *path);
++void smz3StateLoaded(const char *path);
++// The app is closing: the run being played keeps its world goal counters.
++void smz3RunClosing(void);
 +
 +// True while a generated run is loaded.
 +bool smz3IsRun(void);

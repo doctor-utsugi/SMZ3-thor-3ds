@@ -222,6 +222,14 @@ module.exports = function daily(ctx) {
     }
     return false;
   }
+  // For goals.js: gems from elsewhere go through the same balance, and the windows finished in time per install in a month.
+  handle.grant = (install, window, amount, why) => { grant(install, window, amount, why); save(); };
+  handle.finishesIn = month => {
+    const n = {};
+    for (const [id, list] of Object.entries(db.results)) if (id.startsWith(month)) for (const r of list) if (finishedOk(r)) n[r.install] = (n[r.install] || 0) + 1;
+    return n;
+  };
+  handle.validInstall = validInstall;
   // The settings smz3check rebuilds a window's seed from.
   handle.settingsOf = id => {
     if (!cache.has(id)) try { cache.set(id, JSON.parse(fs.readFileSync(path.join(CDIR, id + '.json'), 'utf8'))); } catch (e) { return '{"nologic":1}'; }
