@@ -977,10 +977,10 @@ index 0000000..322435e
 +#endif
 diff --git a/source/smz3run.cpp b/source/smz3run.cpp
 new file mode 100644
-index 0000000..3c172fe
+index 0000000..f75731e
 --- /dev/null
 +++ b/source/smz3run.cpp
-@@ -0,0 +1,2985 @@
+@@ -0,0 +1,2998 @@
 +// SMZ3 runs: the shared C menu (core/ui) drawn on the second screen, and offline generation (core/gen).
 +#include <3ds.h>
 +#include <dirent.h>
@@ -1831,7 +1831,7 @@ index 0000000..3c172fe
 +                bool states = loaded && strstr(r.settings, "\"saveStates\":true") && smzOnlineSlotKind(slot) < 1 && slot != SMZ_DAILY_SLOT;
 +                if (states) file3dsGetRelatedPath(r.rom_path, state, sizeof state, ".auto.frz", "savestates");
 +                bool hasState = states && access(state, F_OK) == 0;
-+                if (act == ACT_CONTINUE && hasState && r.save_ms > 0 && r.play_ms - r.save_ms > 10000) {
++                if (act == ACT_CONTINUE && hasState && r.save_ms > 0 && (r.game == 3 || r.play_ms - r.save_ms > 10000)) {   // a finished run's clock is frozen
 +                    ui_load_choice(&ui, slot, r.save_ms, r.save_zelda, r.save_metroid, r.play_ms, r.zelda_cleared, r.metroid_cleared, r.zelda_total, r.metroid_total);
 +                } else if (loaded) {
 +                    makeDungeonMaps(&ui);
@@ -2155,7 +2155,9 @@ index 0000000..3c172fe
 +static int64_t dailyDoneMs = 0, newHintUntil = 0;
 +static char runName[64];
 +static bool finishedBefore = false;   // the run had ended when it was loaded
-+static int cardState = 0;   // the run-complete card: 0 not yet, 1 shown, 2 closed
++// The game's end, kept until the run is left even if the reading flickers: 0 not reached, 1 the run-complete card is up,
++// 2 ended without it (closed for the credits, or a finished run played again). Once ended, this screen shows the details.
++static int cardState = 0;
 +static bool wantRunList = false;
 +
 +struct TrkHelp { int mode, count, used, given; char hints[SMZ_HOST_HELP_COUNT][SMZ_HOST_HELP_TEXT]; };
@@ -3121,6 +3123,8 @@ index 0000000..3c172fe
 +static Part part[PARTS];
 +static u64 cardStart;
 +static int64_t cardMs;
++static unsigned cardZ, cardZT, cardM, cardMT;
++static SmzRun finalRun;   // a run finished before: its final counts
 +static float cardLastT;
 +static int cardTicks, cardRows;
 +static bool cardLanded, cardBurst;
@@ -3131,12 +3135,16 @@ index 0000000..3c172fe
 +static float frand() { return (float)rand() / RAND_MAX; }
 +static float cardT() { return (osGetTime() - cardStart) / 1000.0f; }
 +
++// The game has ended: the card when it ends now, only the details for a run finished before.
 +static void cardBegin()
 +{
-+    cardState = 1;
++    cardState = finishedBefore ? 2 : 1;
 +    cardStart = osGetTime();
 +    cardMs = daily && dailyDoneMs > 1 ? dailyDoneMs : runMs();
-+    cardLastT = 0; cardTicks = cardRows = 0; cardLanded = cardBurst = false;
++    if (finishedBefore) { cardZ = finalRun.zelda_cleared; cardZT = finalRun.zelda_total; cardM = finalRun.metroid_cleared; cardMT = finalRun.metroid_total; }
++    else { cardZ = trk.zelda_cleared; cardZT = trk.zelda_total; cardM = trk.metroid_cleared; cardMT = trk.metroid_total; }
++    cardLastT = 0; cardTicks = cardRows = 0; cardLanded = cardBurst = finishedBefore;
++    if (finishedBefore) cardTicks = 1000;
 +    memset(part, 0, sizeof part);
 +    dirty = true;
 +}
@@ -3493,7 +3501,7 @@ index 0000000..3c172fe
 +    int tw = ui3dsGetStringWidth(title, 0, 0xffff, 20);
 +    bigText((320 - tw) / 2, 8, 20, 0xF2A33A, title);
 +    fill(40, 33, 280, 34, 0x2A3442);
-+    unsigned all = trk.zelda_cleared + trk.metroid_cleared, allTotal = trk.zelda_total + trk.metroid_total;
++    unsigned all = cardZ + cardM, allTotal = cardZT + cardMT;
 +    for (int r = 0; r < CARD_ROWS; r++) {
 +        float rt = t - T_ROWS - r, rp = easeOut(rt / 0.35f), fillP = easeOut(rt / 0.7f);
 +        if (rt < 0) continue;
@@ -3501,7 +3509,7 @@ index 0000000..3c172fe
 +        char v[64];
 +        if (r == 0) {
 +            text(16, y + 5, dim, "TIME");
-+            fmtTime(cardMs, v, sizeof v);
++            fmtTime((int64_t)(cardMs * fillP), v, sizeof v);
 +            int w = ui3dsGetStringWidth(v, 0, 0xffff, 20);
 +            bigText(304 - w, y, 20, txt, v);
 +        } else if (r == 1) {
@@ -3510,7 +3518,7 @@ index 0000000..3c172fe
 +            int w = ui3dsGetStringWidth(v, 0, 0xffff, 20);
 +            bigText(304 - w, y, 20, fadeTo(0xFFE07A, rp), v);
 +        } else {
-+            unsigned got = r == 2 ? trk.zelda_cleared : trk.metroid_cleared, of = r == 2 ? trk.zelda_total : trk.metroid_total;
++            unsigned got = r == 2 ? cardZ : cardM, of = r == 2 ? cardZT : cardMT;
 +            text(16, y, dim, r == 2 ? "ZELDA" : "METROID");
 +            snprintf(v, sizeof v, "%u/%u   %d%%", got, of, pct(got, of));
 +            text(304, y, txt, v, HALIGN_RIGHT);
@@ -3519,7 +3527,12 @@ index 0000000..3c172fe
 +            if (bw > 0) fill(16, y + 17, 16 + bw, y + 23, fadeTo(r == 2 ? 0x5BD46A : 0xFF8A3D, rp));
 +        }
 +    }
-+    if (t >= T_BUTTONS) {
++    if (t >= T_BUTTONS && cardState != 1) {   // the credits: one way out
++        float bp = easeOut((t - T_BUTTONS) / 0.3f);
++        int y = CARD_BTN_Y + (int)((1 - bp) * 6);
++        fill(80, y, 240, y + 32, fadeTo(0xF2A33A, bp));
++        text(80, y + 9, fadeTo(0x10161F, bp, fadeTo(0xF2A33A, bp)), "Back to menu", HALIGN_CENTER, 240);
++    } else if (t >= T_BUTTONS) {
 +        float bp = easeOut((t - T_BUTTONS) / 0.3f);
 +        int y = CARD_BTN_Y + (int)((1 - bp) * 6);
 +        fill(12, y, 156, y + 32, fadeTo(0xF2A33A, bp));
@@ -3530,21 +3543,18 @@ index 0000000..3c172fe
 +    }
 +}
 +
-+// In the credits a way out stays on this screen, so a run never leaves the player stuck there.
-+#define CREDITS_BAR_Y 208
-+static bool creditsBar() { return trk.game == 3 && cardState != 1; }
-+
-+static void drawCreditsBar()
-+{
-+    fill(0, CREDITS_BAR_Y, 320, 240, 0x10161F);
-+    fill(0, CREDITS_BAR_Y, 320, CREDITS_BAR_Y + 2, 0xF2A33A);
-+    text(0, CREDITS_BAR_Y + 10, 0xFFE07A, "Back to menu", HALIGN_CENTER, 320);
-+}
-+
 +static void trackerDraw()
 +{
 +    if (gfxGetScreenFormat(settings3DS.SecondScreen) != GSP_RGB565_OES) gfxSetScreenFormat(settings3DS.SecondScreen, GSP_RGB565_OES);
 +    trkFb = (u16 *)gfxGetFramebuffer(settings3DS.SecondScreen, GFX_LEFT, NULL, NULL);
++    if (cardState) {   // the game has ended: the run's details instead of the tracker
++        setClip(0, 0, 320, 240);
++        drawCardDetails();
++        impl3dsFlushScreen(settings3DS.SecondScreen, false, false);
++        gfxScreenSwapBuffers(settings3DS.SecondScreen, false);
++        dirty = false;
++        return;
++    }
 +    if (!tabShown(tab)) tab = TAB_RUN;
 +    if (trk.started) theme = trk.game == SMZ3_GAME_METROID ? THEME_METROID : trk.game == SMZ3_GAME_ZELDA ? THEME_ZELDA : theme;
 +    setClip(0, 0, 320, 240);
@@ -3563,8 +3573,6 @@ index 0000000..3c172fe
 +    }
 +    clampScroll(tab);
 +    setClip(0, 0, 320, 240);
-+    if (cardState == 1) drawCardDetails();
-+    else if (creditsBar()) drawCreditsBar();
 +    impl3dsFlushScreen(settings3DS.SecondScreen, false, false);
 +    gfxScreenSwapBuffers(settings3DS.SecondScreen, false);
 +    dirty = false;
@@ -3669,15 +3677,19 @@ index 0000000..3c172fe
 +        touchPosition t;
 +        hidTouchRead(&t);
 +        if (keysDown & KEY_TOUCH) {
-+            if (cardState == 1) {   // the card: a tap before its buttons only jumps to them
++            if (cardState) {   // the details: a tap before their buttons only jumps to them
 +                touching = false;
 +                if (cardSkip() || t.py < CARD_BTN_Y || t.py >= CARD_BTN_Y + 32) return true;
++                if (cardState == 2) {   // Back to menu: the touch opens the menu, which goes on to the run list
++                    if (t.px < 80 || t.px >= 240) return true;
++                    wantRunList = true;
++                    return false;
++                }
 +                cardState = 2;
 +                dirty = true;
-+                if (t.px < 160) { wantRunList = true; return false; }   // the touch opens the menu, which goes on to the run list
++                if (t.px < 160) { wantRunList = true; return false; }
 +                return true;
 +            }
-+            if (creditsBar() && t.py >= CREDITS_BAR_Y) { wantRunList = true; touching = false; return false; }
 +            int ty = topOfTabs();
 +            if (t.px >= 320 - PAUSE_W && t.py >= ty && t.py < ty + TAB_H) return false;   // the pause button: the emulator's menu
 +            touching = !tabTouch(t.px, t.py);
@@ -3748,6 +3760,7 @@ index 0000000..3c172fe
 +        finishedBefore = r0.game == 3;
 +        finalMs = r0.play_ms;
 +        cardState = 0;
++        finalRun = r0;
 +        discoveredOnly = strstr(r0.settings, "\"mapMode\":\"discovered\"") != NULL;
 +        fixedKeys = strstr(r0.settings, "\"showFixedKeys\"") ? strstr(r0.settings, "\"showFixedKeys\":true") != NULL : !strcmp(r0.name, "Cozy run");
 +        dv = {false, false, 2, 0};
@@ -3785,7 +3798,7 @@ index 0000000..3c172fe
 +    smz_tracker_tick(&trk, Memory.RAM, 0x20000, Memory.SRAM, 0x20000, dt, 1);
 +    if (trk.started) smz_disc_update(&disc, Memory.RAM, 0x20000, (int)trk.game);
 +    dungeonReadLive();
-+    if (trk.game == 3 && !cardState && !finishedBefore) cardBegin();
++    if (trk.game == 3 && !cardState) cardBegin();
 +    if (daily && trk.started && smz_daily_note_began(&dr, smzDailyNowMs())) smzDailySave(&dr);   // the clock starts with the game, as in the ladder
 +    int online = curSlot >= 0 && !finishedBefore ? smzOnlineSlotKind(curSlot) : 0;   // a finished run played again sends nothing
 +    if ((online || (daily && !finishedBefore)) && trk.started && smz_proof_note(&proof, trk.cleared, SMZ_TRK_MAX_LOCS, trk.base_ms + trk.pending_ms)) proofDirty = 1;
@@ -3912,8 +3925,8 @@ index 0000000..3c172fe
 +    if (settings3DS.TurboMode && now - lastFrameMs < 3000) { turboWallMs += now - lastFrameMs; turboEmuMs += 1000 / 60.0988; }
 +    lastFrameMs = now;
 +    if (tick || curSlot != gPlaySlot) { trackerUpdate(); debugTouches(); dirty = true; }
-+    if (cardState == 1) { cardSounds(); if (cardT() < T_BUTTONS + 0.4f && sinceDraw >= 2) dirty = true; }   // the details move at 30 fps
-+    if (dirty && (tick || sinceDraw >= 3 || cardState == 1)) { trackerDraw(); sinceDraw = 0; }   // a drag redraws at most every third frame
++    if (cardState) { cardSounds(); if (cardT() < T_BUTTONS + 0.4f && sinceDraw >= 2) dirty = true; }   // the details move at 30 fps
++    if (dirty && (tick || sinceDraw >= 3 || cardState)) { trackerDraw(); sinceDraw = 0; }   // a drag redraws at most every third frame
 +}
 +
 +// ---- helps of the run being played (the pause menu asks for them)

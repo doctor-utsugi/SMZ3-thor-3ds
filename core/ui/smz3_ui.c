@@ -1513,7 +1513,7 @@ void ui_draw(SmzUi *u)
         snprintf(t, sizeof t, "%lld:%02lld:%02lld", d / 3600, d / 60 % 60, d % 60); text(u, xt, y + 16, C_TEXT, 1, t);
         long long gap = (u->lc.state_ms - u->lc.save_ms) / 1000;
         snprintf(t, sizeof t, "+%lld:%02lld further on", gap / 60, gap % 60);
-        text(u, (xs + xt) / 2, y + 32, C_CYAN, 1, t);
+        if (gap > 0) text(u, (xs + xt) / 2, y + 32, C_CYAN, 1, t);   /* a finished run's clock is frozen: no gap to tell */
         for (int k = 0; k < 2; k++) {
             int x = 8 + k * 156, cy = 112, z = k ? u->lc.state_z : u->lc.save_z, m = k ? u->lc.state_m : u->lc.save_m;
             int total = u->lc.zt + u->lc.mt, pct = total > 0 ? (z + m) * 100 / total : 0;

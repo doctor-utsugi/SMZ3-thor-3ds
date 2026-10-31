@@ -1595,6 +1595,12 @@ static void play(int slot, int game_save_only)
                              final_ms, trk.zelda_cleared, trk.zelda_total, trk.metroid_cleared, trk.metroid_total};
             finish_draw(&fc, ww, wh);
         }
+        if (finished && !done_popup && gx > 0) {   /* the credits: the run's details instead of the tracker */
+            FinishCard fc = {daily ? "CHALLENGE COMPLETE" : "RUN COMPLETE", run.name, "", C(0x87, 0x93, 0xA6), finished_before ? run.play_ms : final_ms,
+                             finished_before ? (unsigned)run.zelda_cleared : trk.zelda_cleared, trk.zelda_total,
+                             finished_before ? (unsigned)run.metroid_cleared : trk.metroid_cleared, trk.metroid_total};
+            finish_panel(&fc, 0, gx, (float)wh);
+        }
         if (finished && !done_popup && !exit_at && !show) {   /* the credits: the way out stays on screen */
             float u = wh / 720.0f;
             const char *nm = pad_code_name(pad_code(PA_LEAVE));
@@ -1941,7 +1947,7 @@ static void window_main(int start_slot)
             else if (act == ACT_DELETE) { store_run_delete(slot + 1); refill_slots(); }
             else if (act == ACT_CONTINUE) {
                 SmzRun r;
-                if (store_run_load(slot + 1, &r) == 0 && json_flag(r.settings, "saveStates", 0) && r.save_ms > 0 && r.play_ms - r.save_ms > 10000
+                if (store_run_load(slot + 1, &r) == 0 && json_flag(r.settings, "saveStates", 0) && r.save_ms > 0 && (r.game == 3 || r.play_ms - r.save_ms > 10000)
                     && access(store_path("runs/slot%d.state", slot + 1), F_OK) == 0)
                     ui_load_choice(&ui, slot, r.save_ms, r.save_zelda, r.save_metroid, r.play_ms, r.zelda_cleared, r.metroid_cleared, r.zelda_total, r.metroid_total);
                 else { pending_play = slot; pending_state_only = 0; }

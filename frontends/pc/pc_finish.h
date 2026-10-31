@@ -17,5 +17,7 @@ void finish_start(void);
 /* A press while the card plays: jumps to its end and returns 1; once the buttons are out it returns 0 and the press acts. */
 int finish_skip(void);
 void finish_draw(const FinishCard *f, int ww, int wh);
+/* After the card, while the credits roll: the run's details in place of the tracker panel at x..x+w. */
+void finish_panel(const FinishCard *f, float x, float w, float h);
 
 #endif

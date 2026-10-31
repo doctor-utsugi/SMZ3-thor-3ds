@@ -205,3 +205,29 @@ void finish_draw(const FinishCard *f, int ww, int wh)
 
     if (t < 0.35f) gfx_rect(0, 0, (float)ww, (float)wh, (SDL_Color){255, 250, 235, (Uint8)(150 * (1 - t / 0.35f))});
 }
+
+void finish_panel(const FinishCard *f, float x, float w, float h)
+{
+    float u = fminf(h / 720.0f, w / 260.0f), lx = x + 14 * u, rx = x + w - 14 * u, y = 26 * u;
+    SDL_Color dim = {0x87, 0x93, 0xA6, 255}, text = {0xE8, 0xEC, 0xF2, 255};
+    gfx_rect(x, 0, w, h, (SDL_Color){0x0A, 0x0E, 0x15, 255});
+    gfx_rect(x, 0, w, 3 * u, (SDL_Color){0xF2, 0xA3, 0x3A, 255});
+    gfx_text(x + w / 2, y, 20 * u, (SDL_Color){0xF2, 0xA3, 0x3A, 255}, 1, f->title); y += 32 * u;
+    gfx_text(x + w / 2, y, 13 * u, dim, 1, f->name); y += 44 * u;
+    char v[48];
+    fmt_time(f->ms, v, sizeof v);
+    gfx_text(lx, y, 12 * u, dim, 0, "TIME"); y += 20 * u;
+    gfx_text(lx, y, 30 * u, text, 0, v); y += 58 * u;
+    unsigned all = f->zelda + f->metroid, all_total = f->zelda_total + f->metroid_total;
+    gfx_text(lx, y, 12 * u, dim, 0, "COMPLETION"); y += 20 * u;
+    snprintf(v, sizeof v, "%d%%", pct(all, all_total));
+    gfx_text(lx, y, 30 * u, (SDL_Color){0xFF, 0xE0, 0x7A, 255}, 0, v); y += 58 * u;
+    for (int r = 0; r < 2; r++, y += 58 * u) {
+        unsigned got = r ? f->metroid : f->zelda, of = r ? f->metroid_total : f->zelda_total;
+        gfx_text(lx, y, 12 * u, dim, 0, r ? "METROID" : "ZELDA");
+        snprintf(v, sizeof v, "%u/%u  %d%%", got, of, pct(got, of));
+        gfx_text(rx, y - 2 * u, 14 * u, text, 2, v);
+        gfx_rect(lx, y + 20 * u, rx - lx, 7 * u, (SDL_Color){0x1D, 0x24, 0x30, 255});
+        gfx_rect(lx, y + 20 * u, (rx - lx) * (of ? (float)got / of : 0), 7 * u, r ? (SDL_Color){0xFF, 0x8A, 0x3D, 255} : (SDL_Color){0x5B, 0xD4, 0x6A, 255});
+    }
+}
