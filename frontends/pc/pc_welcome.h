@@ -29,6 +29,8 @@ void welcome_click(int x, int y);
 void welcome_draw(float k, float ox, float oy);
 /* The black fade that softens a change of screen: call when the screen changed, and draw every frame over everything. */
 void fx_screen_changed(void);
+/* 1 while a screen change still covers most of the new screen: menu input waits for it. */
+int fx_busy(void);
 void fx_draw(int win_w, int win_h);
 
 #endif

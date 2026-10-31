@@ -1028,10 +1028,30 @@ static void daily_status(const SmzUi *u, char *out, size_t cap)
     }
 }
 
+/* A 9x11 pixel padlock, for a challenge that is not open. */
+static void padlock(SmzUi *u, int x, int y, int c)
+{
+    rect(u, x + 2, y, 5, 2, c);
+    rect(u, x + 1, y + 1, 2, 4, c);
+    rect(u, x + 6, y + 1, 2, 4, c);
+    rect(u, x, y + 4, 9, 7, c);
+    rect(u, x + 4, y + 6, 1, 3, C_BG);
+}
+
+/* The window as a line along the card's foot: what is left of it while open, how close the next one is while closed. */
+static void window_line(SmzUi *u, int y, int w, int64_t done, int64_t span, int color)
+{
+    int full = w - 10;
+    int fill = span > 0 ? (int)(full * (done < 0 ? 0 : done > span ? span : done) / span) : 0;
+    rect(u, 13, y + 42, full, 2, C_BG);
+    if (fill > 0) rect(u, 13, y + 42, fill, 2, color);
+}
+
 static void daily_row(SmzUi *u, int y, int w)
 {
     const SmzDailyInfo *d = &u->daily;
     char s[64], t[24];
+    int64_t now = now_ms();
     rect(u, 8, y, w, 44, u->daily_sel ? C_SEL : C_PANEL);
     if (!u->daily_sel) put(u, 3, 13, y, w - 5, 44, C_NAVY, C_VIOLET, NULL);
     rect(u, 8, y, 5, 44, C_GOLD);
@@ -1040,20 +1060,32 @@ static void daily_row(SmzUi *u, int y, int w)
     if (d->loaded == 0) { text(u, 20, y + 23, C_DIM, 0, "Connecting..."); return; }
     if (d->loaded < 0) { text(u, 20, y + 23, C_DIM, 0, "Offline: the challenge needs the server"); return; }
     if (!d->window[0]) {
-        smz_daily_span(d->next_opens_at - now_ms(), t, sizeof t);
-        snprintf(s, sizeof s, "Next one in %s", t);
+        padlock(u, 20, y + 23, C_TEXT);
+        text(u, 33, y + 22, C_TEXT, 0, "[CLOSED]");
+        smz_daily_span(d->next_opens_at - now, t, sizeof t);
+        snprintf(s, sizeof s, "Opens in %s", t);
         text(u, 8 + w - 6, y + 3, C_TEXT, 2, s);
-        text(u, 20, y + 17, C_TEXT, 0, "Three a day, each open for 4 hours");
-        text(u, 20, y + 30, C_DIM, 0, "06:00, 14:00 and 22:00 UTC");
+        time_t at = (time_t)(d->next_opens_at / 1000);
+        struct tm *lt = localtime(&at);
+        if (lt) { strftime(t, sizeof t, "%H:%M", lt); snprintf(s, sizeof s, "Next one at %s", t); text(u, 8 + w - 6, y + 22, C_DIM, 2, s); }
+        window_line(u, y, w, 4 * 3600000LL - (d->next_opens_at - now), 4 * 3600000LL, C_DIM);   /* the gap between windows is 4 hours */
         return;
     }
-    int64_t left = d->closes_at - now_ms();
+    int64_t left = d->closes_at - now;
+    int hurry = left > 0 && left < 15 * 60000;
+    if (left > 0) {
+        int dot = (now / 1000) % 2 ? C_GREEN : C_TEAL;   /* beats once a second */
+        rect(u, 133, y + 6, 4, 6, dot);
+        rect(u, 132, y + 7, 6, 4, dot);
+        text(u, 142, y + 3, C_GREEN, 0, "NOW LIVE");
+    } else text(u, 128, y + 3, C_WARN, 0, "[CLOSED]");
     smz_daily_span(left, t, sizeof t);
-    snprintf(s, sizeof s, left > 0 ? "%s left" : "Closed", t);
-    text(u, 8 + w - 6, y + 3, left > 0 && left < 15 * 60000 ? C_WARN : C_TEXT, 2, s);
-    wrap(u, 20, y + 17, C_TEXT, 37, 13, 1, d->goal);
+    snprintf(s, sizeof s, left > 0 ? "%s left" : "", t);
+    text(u, 8 + w - 6, y + 3, hurry ? C_WARN : C_TEXT, 2, s);
+    wrap(u, 20, y + 16, C_TEXT, 37, 13, 1, d->goal);
     daily_status(u, s, sizeof s);
-    text(u, 20, y + 30, d->state == DAILY_DONE ? C_GREEN : d->state == DAILY_FAILED || d->state == DAILY_LATE ? C_WARN : C_DIM, 0, s);
+    text(u, 20, y + 28, d->state == DAILY_DONE ? C_GREEN : d->state == DAILY_FAILED || d->state == DAILY_LATE ? C_WARN : C_DIM, 0, s);
+    window_line(u, y, w, left, d->closes_at - d->opens_at, hurry ? C_WARN : C_GREEN);
 }
 
 /* The rules and the details, behind the Info button. */

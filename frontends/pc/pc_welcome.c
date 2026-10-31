@@ -349,10 +349,16 @@ void welcome_draw(float k, float ox, float oy)
 
 void fx_screen_changed(void) { fade_start = SDL_GetTicks(); }
 
+#define FX_HOLD 0.6f   /* the new screen stays black this long before the seam opens it */
+#define FX_OPEN 0.5f
+
+int fx_busy(void) { return fade_start && since(fade_start) < FX_HOLD + FX_OPEN * 0.6f; }
+
 void fx_draw(int win_w, int win_h)
 {
-    float t = since(fade_start) / 0.5f;
+    float t = (since(fade_start) - FX_HOLD) / FX_OPEN;
     if (t >= 1) return;
+    if (t < 0) t = 0;
     float p = ease(t), w = (float)win_w, h = (float)win_h, band = h / 4, slope = 0.22f;
     for (float y = 0; y < h; y += 2) {
         int b = (int)(y / band);   /* the four bands lock in one after another */

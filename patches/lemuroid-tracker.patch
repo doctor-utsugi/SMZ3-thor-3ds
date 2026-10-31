@@ -464,10 +464,10 @@ index 0000000..cbd6dbc
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/NativeMenuScreen.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/NativeMenuScreen.kt
 new file mode 100644
-index 0000000..7d03ba9
+index 0000000..78623de
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/NativeMenuScreen.kt
-@@ -0,0 +1,585 @@
+@@ -0,0 +1,614 @@
 +package com.swordfish.lemuroid.app.mobile.feature.runs
 +
 +import android.graphics.Paint
@@ -601,6 +601,29 @@ index 0000000..7d03ba9
 +    val scope = rememberCoroutineScope()
 +    var version by remember { mutableIntStateOf(0) }
 +    val quiet = remember { booleanArrayOf(false) }   // the next screen change comes without the wipe
++    val lastScreen0Reset = remember { booleanArrayOf(false) }   // back from a game: the list shows without a wipe
++    // Starting a game: the last frame stays, the seam closes over it to black, and black stays until the game is up
++    var launching by remember { androidx.compose.runtime.mutableStateOf(false) }
++    val closing = remember { Animatable(0f) }
++    val lastCommands = remember { arrayOf<Array<String>>(emptyArray()) }
++    val frozen = remember { arrayOf<Array<String>?>(null) }
++    val play: (Run, Boolean) -> Unit = { run, state ->
++        frozen[0] = lastCommands[0]
++        launching = true
++        scope.launch { closing.snapTo(0f); closing.animateTo(1f, tween(420, easing = FastOutSlowInEasing)) }
++        onContinue(run, state)
++    }
++    val lifecycle = androidx.compose.ui.platform.LocalLifecycleOwner.current.lifecycle
++    DisposableEffect(lifecycle) {
++        val back = androidx.lifecycle.LifecycleEventObserver { _, e ->
++            if (e == androidx.lifecycle.Lifecycle.Event.ON_RESUME && launching) { launching = false; frozen[0] = null; lastScreen0Reset[0] = true }
++        }
++        lifecycle.addObserver(back)
++        onDispose { lifecycle.removeObserver(back) }
++    }
++    LaunchedEffect(launching) {   // a game that never started (a missing ROM) gives the menu back
++        if (launching) { kotlinx.coroutines.delay(8000); if (lifecycle.currentState.isAtLeast(androidx.lifecycle.Lifecycle.State.RESUMED)) { launching = false; frozen[0] = null } }
++    }
 +    val focus = remember { FocusRequester() }
 +    val pendingMonthly = remember { java.util.concurrent.atomic.AtomicReference<Pair<String, Int>?>(null) }
 +    val pendingLadder = remember { java.util.concurrent.atomic.AtomicReference<Array<String?>?>(null) }
@@ -764,7 +787,7 @@ index 0000000..7d03ba9
 +    /** Start or Continue on the Daily screen: makes the window's run in the daily slot unless it is there, then plays it. */
 +    fun startDaily() {
 +        val window = Smz3Native.uiDailyWindow()
-+        if (DailyChallenge.kept(context, window)) { RunStore.load(context, DailyChallenge.SLOT)?.let { onContinue(it, false) }; return }
++        if (DailyChallenge.kept(context, window)) { RunStore.load(context, DailyChallenge.SLOT)?.let { play(it, false) }; return }
 +        quiet[0] = true   // Start goes straight to the game: no wipe into the busy screen nor back to the list
 +        Smz3Native.uiBusy("Starting the challenge ...")
 +        version++
@@ -803,7 +826,7 @@ index 0000000..7d03ba9
 +                version++
 +                kotlinx.coroutines.delay(5000)
 +            }
-+            outcome.getOrNull()?.let { onContinue(it, false) }
++            outcome.getOrNull()?.let { play(it, false) }
 +            quiet[0] = true
 +            Smz3Native.uiIdle()
 +            refreshSlots()
@@ -820,14 +843,14 @@ index 0000000..7d03ba9
 +        when (act) {
 +            Act.CONTINUE -> RunStore.load(context, slot)?.let { run ->
 +                // a save state ahead of the game save asks which of the two to load; ladder runs have none
-+                if (OnlineLadder.slotKind(context, slot) >= 1) onContinue(run, false)
++                if (OnlineLadder.slotKind(context, slot) >= 1) play(run, false)
 +                else if (run.saveMs > 0 && run.playTimeMs - run.saveMs > 10_000) {
 +                    Smz3Native.uiLoadChoice(slot, run.saveMs, run.saveZelda, run.saveMetroid, run.playTimeMs, run.zeldaCleared, run.metroidCleared, run.zeldaTotal, run.metroidTotal)
 +                    version++
-+                } else onContinue(run, true)
++                } else play(run, true)
 +            }
-+            Act.LOAD_SAVE -> RunStore.load(context, slot)?.let { onContinue(it, false) }
-+            Act.LOAD_STATE -> RunStore.load(context, slot)?.let { onContinue(it, true) }
++            Act.LOAD_SAVE -> RunStore.load(context, slot)?.let { play(it, false) }
++            Act.LOAD_STATE -> RunStore.load(context, slot)?.let { play(it, true) }
 +            Act.DELETE -> { RunStore.delete(context, slot); refreshSlots() }
 +            Act.GENERATE -> generate(slot)
 +            Act.LADDER -> Thread { pendingLadder.set(Array(3) { OnlineLadder.ladderJson(it) }) }.start()
@@ -860,10 +883,12 @@ index 0000000..7d03ba9
 +                        Key.ButtonSelect, Key.Tab -> 8
 +                        else -> return@onKeyEvent false
 +                    }
-+                    press(b); true
++                    if (!(wipe.isRunning && wipe.value < 0.6f)) press(b)   // a new screen takes its time: no skipping through
++                    true
 +                }
 +                .pointerInput(Unit) {
 +                    detectTapGestures { p ->
++                        if (wipe.isRunning && wipe.value < 0.6f) return@detectTapGestures
 +                        val scale = size.width / W
 +                        Smz3Native.uiTouch((p.x / scale).toInt(), (p.y / scale).toInt()); pollActions(); version++; publishSelection()
 +                    }
@@ -871,14 +896,16 @@ index 0000000..7d03ba9
 +        ) {
 +            version.let { }
 +            val scale = size.width / W
-+            val commands = Smz3Native.uiDraw()
++            val held = frozen[0]
++            val commands = if (launching && held != null) held else Smz3Native.uiDraw().also { lastCommands[0] = it }
 +            drawBackdrop(scale)
-+            val screenNow = Smz3Native.uiScreen().toString()
++            if (lastScreen0Reset[0]) { lastScreen0Reset[0] = false; quiet[0] = true }
++            val screenNow = if (launching) lastScreen[0] else Smz3Native.uiScreen().toString()
 +            val changed = screenNow != lastScreen[0] && !quiet[0]
 +            if (screenNow != lastScreen[0]) {   // a different screen (not a cursor move): the seam sweeps across
 +                lastScreen[0] = screenNow
 +                if (quiet[0]) quiet[0] = false
-+                else scope.launch { wipe.snapTo(0f); wipe.animateTo(1f, tween(500, easing = FastOutSlowInEasing)) }
++                else scope.launch { wipe.snapTo(0f); wipe.animateTo(1f, tween(500, delayMillis = 600, easing = FastOutSlowInEasing)) }
 +            }
 +            val hints = ArrayList<String>()
 +            drawIntoCanvas { canvas ->
@@ -923,7 +950,9 @@ index 0000000..7d03ba9
 +                if (hints.isNotEmpty()) drawHintBar(canvas.nativeCanvas, paint, scale, hints.joinToString("  "))
 +            }
 +            // on the frame the screen changes the wipe has not started yet: cover the new screen instead of flashing it
-+            drawWipe(if (changed) 0f else wipe.value)
++            if (launching) {
++                closing.value.let { c -> if (c < 1f) drawWipe(1f - c) else drawRect(Color(0xFF0A0E15), Offset.Zero, size) }
++            } else drawWipe(if (changed) 0f else wipe.value)
 +        }
 +    }
 +}
@@ -4295,10 +4324,10 @@ index 0000000..fb351ef
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Presentation.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Presentation.kt
 new file mode 100644
-index 0000000..4cdf95c
+index 0000000..e218e7a
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Presentation.kt
-@@ -0,0 +1,921 @@
+@@ -0,0 +1,951 @@
 +package com.swordfish.lemuroid.app.shared.game.viewmodel
 +
 +import android.app.Presentation
@@ -4498,6 +4527,36 @@ index 0000000..4cdf95c
 +        }
 +    }
 +
++    /** Square cells as large as the space allows, up to [maxCell]: the column count that gives this many children the biggest cell. */
++    private class FitGrid(context: Context, private val maxCell: Int) : ViewGroup(context) {
++        private var cell = 0
++        private var columns = 1
++
++        override fun onMeasure(widthSpec: Int, heightSpec: Int) {
++            val w = MeasureSpec.getSize(widthSpec)
++            val h = MeasureSpec.getSize(heightSpec)
++            val n = maxOf(childCount, 1)
++            cell = 0
++            for (c in 1..n) {
++                val size = minOf(w / c, h / ((n + c - 1) / c))
++                if (size > cell) { cell = size; columns = c }
++            }
++            cell = minOf(cell, maxCell)
++            val spec = MeasureSpec.makeMeasureSpec(cell, MeasureSpec.EXACTLY)
++            for (i in 0 until childCount) getChildAt(i).measure(spec, spec)
++            setMeasuredDimension(w, h)
++        }
++
++        override fun onLayout(changed: Boolean, l: Int, t: Int, r: Int, b: Int) {
++            val left = (r - l - cell * columns) / 2
++            for (i in 0 until childCount) {
++                val x = left + (i % columns) * cell
++                val y = (i / columns) * cell
++                getChildAt(i).layout(x, y, x + cell, y + cell)
++            }
++        }
++    }
++
 +    private lateinit var shortcutRow: LinearLayout
 +    private lateinit var shortcutOverlay: LinearLayout
 +    private var shortcutShown = ""
@@ -4578,19 +4637,19 @@ index 0000000..4cdf95c
 +        }
 +        box.addView(title)
 +        if (slot != null) {
-+            val grid = GridLayout(context).apply { columnCount = 11 }
-+            box.addView(ScrollView(context).apply { addView(grid) }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
++            val grid = FitGrid(context, dp(120))
++            box.addView(grid, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f).apply { setMargins(0, dp(6), 0, dp(6)) })
 +            fun fill() {
 +                grid.removeAllViews()
 +                val owned = Smz3Shortcuts.items.filter { it.zelda && Smz3Shortcuts.isOwned(it.id) }
 +                if (owned.isEmpty()) grid.addView(TextView(context).apply { textSize = 14f; setTextColor(Color.parseColor("#C8D0D8")); text = "No items yet" })
 +                for (item in owned) {
 +                    val cell = shortcutIcon(item).apply {
-+                        setPadding(dp(2), dp(2), dp(2), dp(2))
++                        setPadding(dp(6), dp(6), dp(6), dp(6))
 +                        if (current()?.id == item.id) setBackgroundColor(Color.argb(160, 255, 213, 74))
 +                        setOnClickListener { Smz3Shortcuts.setSlot(context, slot, item.id); shortcutShown = ""; fill(); refresh() }
 +                    }
-+                    grid.addView(cell, GridLayout.LayoutParams().apply { width = dp(44); height = dp(44); setMargins(dp(1), dp(1), dp(1), dp(1)) })
++                    grid.addView(cell)
 +                }
 +            }
 +            fill()

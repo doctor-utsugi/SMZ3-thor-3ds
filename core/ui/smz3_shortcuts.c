@@ -3,7 +3,7 @@
 
 const SmzShortcut smz_shortcuts[SC_COUNT] = {
     {"Bow", "bow.png"}, {"Blue Boomerang", "blue boomerang.png"}, {"Red Boomerang", "red boomerang.png"},
-    {"Hookshot", "hookshot.png"}, {"Bombs", ""}, {"Mushroom", "mushroom.png"}, {"Powder", "magic powder.png"},
+    {"Hookshot", "hookshot.png"}, {"Bombs", "bombs.png"}, {"Mushroom", "mushroom.png"}, {"Powder", "magic powder.png"},
     {"Fire Rod", "fire rod.png"}, {"Ice Rod", "ice rod.png"}, {"Bombos", "bombos.png"}, {"Ether", "ether.png"},
     {"Quake", "quake.png"}, {"Lamp", "lamp.png"}, {"Hammer", "hammer.png"}, {"Shovel", "shovel.png"}, {"Flute", "flute.png"},
     {"Bug Net", "bug catching net.png"}, {"Book", "book of mudora.png"}, {"Bottle 1", "bottle.png"}, {"Bottle 2", "bottle.png"},

@@ -1783,6 +1783,7 @@ static int daily_begin(char *err, size_t cap)
 
 static void menu_button(UiButton b)
 {
+    if (fx_busy()) return;
     if (settings_active()) settings_nav(b);
     else if (welcome_active()) welcome_nav(b);
     else ui_input(&ui, b);
@@ -1890,7 +1891,7 @@ static void window_main(int start_slot)
                 SDL_GetRendererOutputSize(ren, &ww, &wh);
                 float k = (float)ww / UI_W < (float)wh / UI_H ? (float)ww / UI_W : (float)wh / UI_H;
                 int lx = (int)((e.button.x - (ww - UI_W * k) / 2) / k), ly = (int)((e.button.y - (wh - UI_H * k) / 2) / k);
-                if (welcome_active()) welcome_click(lx, ly); else ui_touch(&ui, lx, ly);
+                if (fx_busy()) {} else if (welcome_active()) welcome_click(lx, ly); else ui_touch(&ui, lx, ly);
             } else if (e.type == SDL_DROPFILE) {
                 note(accept_rom(e.drop.file));
                 g_base_checked = 0;

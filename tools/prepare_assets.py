@@ -15,6 +15,8 @@ icons = set(re.findall(r'"([^"]+\.png)"', (root / "core/smz3_inventory.c").read_
 for icon in sorted(icons):
     shutil.copyfile(src / icon, dst / icon.replace(" ", "_"))
 print(len(icons), "icons copied to", dst)
+for own in sorted((root / "data/icons").glob("*.png")):   # icons drawn for this project (the sprite set has no ALttP bomb)
+    shutil.copyfile(own, dst / own.name)
 
 # Combined SMZ3 map at half size plus the marker positions (halved to match).
 import json
