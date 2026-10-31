@@ -39,6 +39,9 @@ static void flag(SmzUi *u, int x, int y, int color, const char *cc)
     put(u, 2, x, y, 12, 9, color, 0, key);
 }
 
+/* The button legend of a screen, "A Load  B Back": every host draws it as its bar with the buttons of the device in use. */
+static void legend(SmzUi *u, const char *s) { text(u, 6, UI_H - 12, C_DIM, 0, s); }
+
 void ui_init(SmzUi *u)
 {
     memset(u, 0, sizeof *u);
@@ -155,7 +158,7 @@ static void move(int *cur, int *scroll, int n, int dir)
 /* ---- run modes and saved customs */
 
 typedef struct { const char *name, *desc, *spec; } UiPreset;
-static const UiPreset CHILL = {"Cozy run", "Zelda keys shuffled, easy wall jumps", "Keysanity=2,WallJumpDifficulty=0,LightDarkRooms=1,SaveStates=1,ShowReachable=1"};
+static const UiPreset CHILL = {"Cozy run", "Zelda keys shuffled, easy wall jumps", "Keysanity=2,WallJumpDifficulty=0,LightDarkRooms=1,SaveStates=1,ShowReachable=1,ShowFixedKeys=1"};
 static const UiPreset ORIGINAL = {"Original", "The default randomizer rules", ""};
 static const UiPreset WEEKLY = {"Weekly run", "Short run: 2 crystals, 1 boss", "GanonCrystals=2,GtCrystals=2,TourianBosses=1"};
 static void spec_values(int *value, const char *spec);
@@ -1159,6 +1162,7 @@ void ui_draw(SmzUi *u)
     u->cmd_count = 0;
     u->hit_count = 0;
     rect(u, 0, 0, UI_W, UI_H, C_BG);
+    if (u->screen != UI_LOADCHOICE) u->orb_on = 0;
     switch (u->screen) {
     case UI_SLOTS_SCREEN: {
         int more = u->slot_count > slots_shown(u);
@@ -1196,7 +1200,7 @@ void ui_draw(SmzUi *u)
             if (u->slot_scroll > 0) { rect(u, x, top, 20, 44, C_PANEL); text(u, x + 10, top + 14, C_ACCENT, 1, "^"); hit(u, H_CHEVRON, -1, x, top, 20, 44); }
             if (u->slot_scroll + shown < u->slot_count) { rect(u, x, 32 + 3 * 47, 20, 44, C_PANEL); text(u, x + 10, 32 + 3 * 47 + 14, C_ACCENT, 1, "v"); hit(u, H_CHEVRON, 1, x, 32 + 3 * 47, 20, 44); }
         }
-        text(u, 6, UI_H - 16, C_DIM, 0, u->ladder_on ? "A Open  Select Ladder" : "A Open");
+        legend(u, u->ladder_on ? "A Open  Select Ladder" : "A Open");
         break;
     }
     case UI_CONFIRM:
@@ -1211,7 +1215,7 @@ void ui_draw(SmzUi *u)
         text(u, 16, 118, C_TEXT, 0, "Cancel");
         rect(u, 8, 146, UI_W - 16, 30, u->confirm_cursor == 1 ? C_SEL : C_PANEL);
         text(u, 16, 154, C_WARN, 0, "Yes, delete it");
-        text(u, 8, UI_H - 16, C_DIM, 0, "B: back");
+        legend(u, "B Back");
         break;
     case UI_SLOT_MENU:
         snprintf(buf, sizeof buf, "Slot %d  %s", u->active_slot + 1, u->slots[u->active_slot].name);
@@ -1223,7 +1227,7 @@ void ui_draw(SmzUi *u)
         text(u, 16, 78, u->slots[u->active_slot].game == 3 ? C_DIM : C_TEXT, 0, u->slots[u->active_slot].game == 3 ? "Finished: it can't be played again" : "Continue");
         rect(u, 8, 106, UI_W - 16, 30, u->menu_cursor == 1 ? C_SEL : C_PANEL);
         text(u, 16, 114, C_WARN, 0, "Delete");
-        text(u, 8, UI_H - 16, C_DIM, 0, "B: back");
+        legend(u, "B Back");
         break;
     case UI_CREATE: {
         int idx[UI_MAX_OPTS], n = visible(u, u->level, idx);
@@ -1281,7 +1285,7 @@ void ui_draw(SmzUi *u)
                 if (c2 < rl) text(u, 6, UI_H - 28, C_DIM, 0, rest + c2 + (rest[c2] == ' '));
             }
         }
-        text(u, 6, UI_H - 6, C_DIM, 0, "L/R tabs  B back");
+        legend(u, "L R Tabs  B Back");
         break;
     }
     case UI_SPRITES: {
@@ -1322,7 +1326,7 @@ void ui_draw(SmzUi *u)
         char info[48];
         snprintf(info, sizeof info, "%d/%d  %s", u->sprite_cursor + 1, n, u->sprites[g][u->sprite_cursor]);
         text(u, 6, UI_H - 18, C_TEXT, 0, info);
-        text(u, 6, UI_H - 6, C_DIM, 0, "A pick  B back  L/R page");
+        legend(u, "A Pick  L R Page  B Back");
         break;
     }
     case UI_MODE: {
@@ -1347,7 +1351,7 @@ void ui_draw(SmzUi *u)
             text(u, 20, y + dy, C_TEXT, 0, name);
             text(u, 20, y + rh - (rows > 5 ? 13 : 16), C_DIM, 0, desc);
         }
-        text(u, 6, UI_H - 6, C_DIM, 0, "A choose  B back");
+        legend(u, "A Choose  B Back");
         break;
     }
     case UI_SAVED: {
@@ -1371,7 +1375,7 @@ void ui_draw(SmzUi *u)
                 text(u, UI_W - 33, y + 11, C_WARN, 1, "Delete");
             }
         }
-        text(u, 6, UI_H - 6, C_DIM, 0, "A choose  Right: delete  B back");
+        legend(u, "A Choose  Right Delete  B Back");
         break;
     }
     case UI_NAME: {
@@ -1394,7 +1398,7 @@ void ui_draw(SmzUi *u)
             hit(u, H_KEY, KEY_COUNT + k, x, 186, 73, 26);
             text(u, x + 36, 192, k == 2 ? C_ACCENT : C_TEXT, 1, CTRL[k]);
         }
-        text(u, 6, UI_H - 6, C_DIM, 0, "A type  L delete  R space  B back");
+        legend(u, "A Type  L Delete  R Space  B Back");
         break;
     }
     case UI_RULES: {
@@ -1412,7 +1416,7 @@ void ui_draw(SmzUi *u)
             text(u, UI_W - 10, y + 4, C_ACCENT, 2, val);
         }
         if (!n) text(u, UI_W / 2, 110, C_DIM, 1, "The default randomizer rules");
-        text(u, 6, UI_H - 6, C_DIM, 0, n > ROWS_SHOWN ? "Up Down scroll  B back" : "B back");
+        legend(u, n > ROWS_SHOWN ? "Up Down Scroll  B Back" : "B Back");
         break;
     }
     case UI_START: {
@@ -1460,7 +1464,7 @@ void ui_draw(SmzUi *u)
         rect(u, 8, sy, UI_W - 16, sh, u->start_cursor == START_ROW ? C_SEL : C_PANEL);
         hit(u, H_START, 4, 8, sy, UI_W - 16, sh);
         text(u, UI_W / 2, sy + sh / 2 - 6, C_ACCENT, 1, "Start");
-        text(u, 6, UI_H - 6, C_DIM, 0, "A choose  Right: Random  L rules  B back");
+        legend(u, "A Choose  Right Random  L Rules  B Back");
         break;
     }
     case UI_LOADCHOICE: {
@@ -1483,6 +1487,18 @@ void ui_draw(SmzUi *u)
         rect(u, xt - 1, y - 12, 3, 25, C_GREEN);
         rect(u, xt - 6, y - 3, 12, 7, C_GREEN);
         rect(u, xt - 3, y - 6, 6, 13, C_GREEN);
+        {   /* the orb on the line marks what A loads; drawn once a frame, it eases toward the choice */
+            float target = (float)(u->lc.cursor ? xt : xs);
+            if (!u->orb_on) { u->orb_on = 1; u->orb_x = target; u->orb_k = -0.9f; }   /* below 0: waiting out the screen change */
+            u->orb_x += (target - u->orb_x) * 0.16f;
+            if (u->orb_k < 1) u->orb_k += u->orb_k < 0 ? 0.03f : (1.05f - u->orb_k) * 0.12f;
+            float k = u->orb_k < 0 ? 0 : u->orb_k > 1 ? 1 : u->orb_k;
+            int d = (int)(16 * k + 0.5f), ox = (int)(u->orb_x + 0.5f);
+            if (d > 1) {
+                if (u->orbs) put(u, 5, ox - 12, y - 12, 24, 24, u->lc.cursor ? C_GREEN : C_ACCENT, (uint8_t)(k * 100), NULL);
+                else rect(u, ox - d / 4, y - d / 4, d / 2, d / 2, C_CYAN);
+            }
+        }
         text(u, xs, y - 26, C_ACCENT, 1, "GAME SAVE");
         text(u, xt, y - 26, C_GREEN, 1, "SAVE STATE");
         char t[32];
@@ -1510,8 +1526,8 @@ void ui_draw(SmzUi *u)
             if (k && u->lc.state_z > u->lc.save_z) { snprintf(t, sizeof t, "+%d", u->lc.state_z - u->lc.save_z); text(u, x + 140, cy + 66, C_CYAN, 2, t); }
             if (k && u->lc.state_m > u->lc.save_m) { snprintf(t, sizeof t, "+%d", u->lc.state_m - u->lc.save_m); text(u, x + 140, cy + 80, C_CYAN, 2, t); }
         }
-        text(u, 6, UI_H - 24, C_DIM, 0, "Left Right choose  A load  B cancel");
-        text(u, 6, UI_H - 11, C_DIM, 0, "The other is replaced when you quit");
+        text(u, UI_W / 2, 213, C_DIM, 1, "The other is replaced when you quit");
+        legend(u, "Left Right Choose  A Load  B Back");
         break;
     }
     case UI_ONLINE: {
@@ -1529,7 +1545,7 @@ void ui_draw(SmzUi *u)
             text(u, 22, y + 6, C_TEXT, 0, ROW[r]);
             text(u, 22, y + 24, C_DIM, 0, SUB[r]);
         }
-        text(u, 6, UI_H - 6, C_DIM, 0, "A choose  B back");
+        legend(u, "A Choose  B Back");
         break;
     }
     case UI_COUNTRY: {
@@ -1542,7 +1558,7 @@ void ui_draw(SmzUi *u)
             else text(u, 14, y + 6, C_ACCENT, 0, COUNTRIES[i].code[0] ? COUNTRIES[i].code : "--");
             text(u, 54, y + 6, C_TEXT, 0, COUNTRIES[i].name);
         }
-        text(u, 6, UI_H - 6, C_DIM, 0, "A choose  L R page  B back");
+        legend(u, "A Choose  L R Page  B Back");
         break;
     }
     case UI_LADDER: {
@@ -1575,7 +1591,7 @@ void ui_draw(SmzUi *u)
             snprintf(buf, sizeof buf, "%d:%02d:%02d.%02d", (int)(s / 3600), (int)(s / 60 % 60), (int)(s % 60), (int)(l->row[i].ms % 1000 / 10));
             text(u, UI_W - 10, y + 4, C_TEXT, 2, buf);
         }
-        text(u, 6, UI_H - 16, C_DIM, 0, "Select Save list  Left Right Tab  Up Down Scroll");
+        legend(u, "Left Right Tab  Up Down Scroll  Select Save list");
         break;
     }
     case UI_DAILY: daily_screen(u); break;

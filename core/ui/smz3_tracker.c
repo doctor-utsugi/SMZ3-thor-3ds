@@ -230,3 +230,26 @@ int smz_tracker_logic_items(const SmzTracker *t, const uint8_t *wram, size_t wl,
     }
     return n;
 }
+
+/* Read from the game's pot items (bank 01, item 8) and room sprites (an 0xE4 entry at y 0xFE after the enemy that drops it,
+ * 0xFD for a big key). */
+const SmzFixedKey smz_fixed_keys[] = {
+    {0x16, 56, 39, 0}, {0x35, 30, 12, 0}, {0x36, 57, 32, 0}, {0x37, 30, 12, 0}, {0x38, 18, 39, 0}, {0x3F, 14, 46, 0},
+    {0x43, 56, 40, 0}, {0x53, 50, 22, 0}, {0x56, 6, 40, 0}, {0x63, 6, 24, 0}, {0x7B, 32, 8, 0}, {0x8B, 56, 24, 0},
+    {0x9B, 24, 24, 0}, {0x9F, 5, 43, 0}, {0xA1, 11, 13, 0}, {0xAB, 10, 48, 0}, {0xB3, 6, 40, 0}, {0xBA, 56, 12, 0},
+    {0xBC, 51, 8, 0},
+    {0x0E, 10, 52, 0}, {0x13, 44, 48, 0}, {0x21, 10, 12, 0}, {0x39, 10, 42, 0}, {0x3D, 46, 14, 0}, {0x3E, 34, 48, 0},
+    {0x71, 52, 48, 0}, {0x72, 34, 12, 0}, {0x80, 52, 18, 1}, {0x99, 34, 46, 0}, {0xB0, 16, 48, 0}, {0xB6, 14, 42, 0},
+    {0xC0, 40, 22, 0}, {0xC1, 38, 54, 0},
+};
+const int smz_fixed_key_count = sizeof smz_fixed_keys / sizeof smz_fixed_keys[0];
+
+int smz_fixed_key_taken(int i, const uint8_t *flags, size_t flags_len, const uint8_t *wram, size_t wram_len)
+{
+    if (i < 0 || i >= smz_fixed_key_count) return 1;
+    unsigned room = smz_fixed_keys[i].room;
+    if (flags && flags_len > room * 2 + 1 && (flags[room * 2 + 1] & 0x04)) return 1;   /* bit 10 of the room's word */
+    /* the room Link is in keeps its state at 0x0402 until he leaves it (bit 14 there) */
+    if (wram && wram_len > 0x404 && wram[0x1B] && (unsigned)(wram[0xA0] | wram[0xA1] << 8) == room && (wram[0x403] & 0x40)) return 1;
+    return 0;
+}

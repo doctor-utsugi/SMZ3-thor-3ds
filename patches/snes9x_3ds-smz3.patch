@@ -47,7 +47,7 @@ index 970484a..b92dad2 100644
          snprintf(output, bufferSize, "%s/%s/%s%s", settings3DS.RootDir, targetDir, basename, extension);
      } 
 diff --git a/source/3dsimpl.cpp b/source/3dsimpl.cpp
-index d4fca8e..9c6b517 100644
+index d4fca8e..a8ea809 100644
 --- a/source/3dsimpl.cpp
 +++ b/source/3dsimpl.cpp
 @@ -8,6 +8,7 @@
@@ -71,7 +71,7 @@ index d4fca8e..9c6b517 100644
  bool impl3dsSaveStateAuto()
  {
 -    if (!settings3DS.isRomLoaded || !settings3DS.AutoSavestate) 
-+    if (!settings3DS.isRomLoaded || !settings3DS.AutoSavestate || smz3NoStates()) 
++    if (!settings3DS.isRomLoaded || !(smz3IsRun() ? smz3AutoStates() : settings3DS.AutoSavestate) || smz3NoStates())
          return true;
  
      char path[PATH_MAX];
@@ -148,7 +148,7 @@ index c8b5241..4b6972d 100644
          }
      }
 diff --git a/source/3dsmain.cpp b/source/3dsmain.cpp
-index 3692a54..62f20fd 100644
+index 3692a54..1d418f1 100644
 --- a/source/3dsmain.cpp
 +++ b/source/3dsmain.cpp
 @@ -32,6 +32,7 @@
@@ -168,7 +168,7 @@ index 3692a54..62f20fd 100644
  bool slotLoaded = false;
  
  const char* hotkeysData[HOTKEYS_COUNT][3];
-@@ -401,6 +404,17 @@ void makeEmulatorMenu(std::vector<SMenuItem>& items, std::vector<SMenuTab>& menu
+@@ -401,6 +404,21 @@ void makeEmulatorMenu(std::vector<SMenuItem>& items, std::vector<SMenuTab>& menu
              menu3dsHideDialog(dialogTab, isDialog, currentMenuTab, menuTabs);
          }, MenuItemType::Action, "  ROM Info"_s, ""_s);
  
@@ -181,12 +181,16 @@ index 3692a54..62f20fd 100644
 +                menu3dsShowDialog(dialogTab, isDialog, currentMenuTab, menuTabs, "SMZ3 hint", text, Themes[static_cast<int>(settings3DS.Theme)].dialogColorInfo, makeOptionsForOk(), -1, true, 10);
 +                menu3dsHideDialog(dialogTab, isDialog, currentMenuTab, menuTabs);
 +            }, MenuItemType::Action, "  Ask for a hint"_s, ""_s);
++            AddMenuPicker(items, "  Shortcut row"_s, "The item slots or the beams over the tracker's map."_s, makePickerOptions({"Shown", "Hidden"}), smz3ShortcutRowShown(0) ? 0 : 1, DIALOG_TYPE_INFO, true,
++                [](int val) { smz3SetShortcutRowShown(0, val == 0); });
++            AddMenuPicker(items, "  Weapon row"_s, "Missiles, Super Missiles and Power Bombs under the beams."_s, makePickerOptions({"Shown", "Hidden"}), smz3ShortcutRowShown(1) ? 0 : 1, DIALOG_TYPE_INFO, true,
++                [](int val) { smz3SetShortcutRowShown(1, val == 0); });
 +        }
 +
          if (ra3dsIsAvailable())
              ra3dsAppendMenuEntry(items);
  
-@@ -1608,6 +1622,10 @@ bool emulatorLoadRom()
+@@ -1608,6 +1626,10 @@ bool emulatorLoadRom()
  
      char romFileNameFullPath[PATH_MAX];
      snprintf(romFileNameFullPath, sizeof(romFileNameFullPath), "%s%s", file3dsGetCurrentDir(), romFileName);
@@ -197,7 +201,7 @@ index 3692a54..62f20fd 100644
  
      // Block the audio mixing thread from touching APU/memory state while
      // Memory.LoadROM tears down and rebuilds SNES9x globals AND while
-@@ -1788,6 +1806,7 @@ void updateFileMenuTab(const char *selectedItemName, bool showCachingIndicator,
+@@ -1788,6 +1810,7 @@ void updateFileMenuTab(const char *selectedItemName, bool showCachingIndicator,
      fileMenuTab.SubTitle.assign(file3dsGetCurrentDir());
  
      file3dsGetFiles(entries, menuTabs, showCachingIndicator);
@@ -205,7 +209,7 @@ index 3692a54..62f20fd 100644
      fileMenuTab.SubTitleRight = file3dsIsCurrentDirLoadedFromCache()
          ? std::string(1, UI_ICON_CHECKMARK) + " Cached"
          : std::string();
-@@ -2082,6 +2101,22 @@ void onDirectoryEntrySelected(
+@@ -2082,6 +2105,27 @@ void onDirectoryEntrySelected(
      std::vector<SMenuItem>& cheatMenu,
      const DirectoryEntry*& entry
  ) {
@@ -221,6 +225,11 @@ index 3692a54..62f20fd 100644
 +            menu3dsShowDialog(dialogTab, isDialog, currentMenuTab, menuTabs, "Loading Game:", "Oops. Unable to load the run", Themes[static_cast<int>(settings3DS.Theme)].dialogColorWarn, makeOptionsForOk(), -1, false);
 +            menu3dsHideDialog(dialogTab, isDialog, currentMenuTab, menuTabs);
 +        } else {
++            if (smz3RunStarted()) {
++                snd3dsDrainMixing();
++                impl3dsLoadStateAuto();
++                snd3dsResumeMixing();
++            }
 +            GPU3DS.emulatorState = EMUSTATE_EMULATE;
 +        }
 +        return;
@@ -228,7 +237,7 @@ index 3692a54..62f20fd 100644
      if (entry->Type == FileEntryType::File) 
      {
          snprintf(romFileName, sizeof(romFileName), "%s", entry->Filename);
-@@ -2103,7 +2138,7 @@ void onDirectoryEntrySelected(
+@@ -2103,7 +2147,7 @@ void onDirectoryEntrySelected(
              menu3dsRunBadgeCache(dialogTab, currentMenuTab, menuTabs, romFileName);
  
              // Restore after RA identification; pause the mixer while state changes.
@@ -237,7 +246,7 @@ index 3692a54..62f20fd 100644
                  snd3dsDrainMixing();
                  impl3dsLoadStateAuto();
                  snd3dsResumeMixing();
-@@ -2161,6 +2196,12 @@ void showMenu() {
+@@ -2161,6 +2205,12 @@ void showMenu() {
      // Avoid flashing the untouched pre-pause buffer on resume.
      GPU3DS.gameScreenBufferDesync = true;
  
@@ -250,7 +259,7 @@ index 3692a54..62f20fd 100644
      while (aptMainLoop() && GPU3DS.emulatorState == EMUSTATE_PAUSEMENU) {
          int result = menu3dsMenuSelectItem(dialogTab, isDialog, currentMenuTab, menuTabs);
  
-@@ -2508,6 +2549,7 @@ void emulatorLoop()
+@@ -2508,6 +2558,7 @@ void emulatorLoop()
          t3dsStartTimer(TIMER_RUN_ONE_FRAME);
          impl3dsRunOneFrame(firstFrame, skipDrawing);
          t3dsStopTimer(TIMER_RUN_ONE_FRAME);
@@ -899,13 +908,14 @@ index 0000000..322435e
 +#endif
 diff --git a/source/smz3run.cpp b/source/smz3run.cpp
 new file mode 100644
-index 0000000..4513bd4
+index 0000000..7887d21
 --- /dev/null
 +++ b/source/smz3run.cpp
-@@ -0,0 +1,1918 @@
+@@ -0,0 +1,2517 @@
 +// SMZ3 runs: the shared C menu (core/ui) drawn on the second screen, and offline generation (core/gen).
 +#include <3ds.h>
 +#include <dirent.h>
++#include <unistd.h>
 +#include <stdio.h>
 +#include <stdlib.h>
 +#include <string.h>
@@ -937,6 +947,7 @@ index 0000000..4513bd4
 +#include "3dsimpl.h"
 +#include "3dssettings.h"
 +#include "3dsui.h"
++#include "3dsfiles.h"
 +#include "smz3run.h"
 +#include "smz3online.h"
 +
@@ -947,8 +958,9 @@ index 0000000..4513bd4
 +static bool gChallenge = false;   // the run being played is a daily challenge: no fast forward
 +static bool gFinished = false;   // the run being played has ended (now or before): no save states, nothing sent again
 +static int gPlaySlot = -1;   // slot of the run being played
++static bool gRunStates, gNextStates, gNextLoadState;   // the run being played (the next one) keeps an auto state; the next one starts from it
 +
-+static const int PALETTE[] = {0x10141C, 0x1D2430, 0x2E4A6B, 0xE8ECF2, 0x8793A6, 0xE9A23B, 0xE05A4F, 0x4CC38A, 0x4FC3F7};
++static const int PALETTE[] = {0x10141C, 0x1D2430, 0x2E4A6B, 0xE8ECF2, 0x8793A6, 0xE9A23B, 0xE05A4F, 0x4CC38A, 0x4FC3F7, 0x14504A, 0x1B2F6B, 0x4B2A7A, 0x8A6414};
 +
 +static unsigned char *readFile(const char *path, size_t *len)
 +{
@@ -1120,6 +1132,13 @@ index 0000000..4513bd4
 +    }
 +}
 +
++static inline u16 blend565(u16 back, u16 fore, int a)   // a: 0..256
++{
++    int rb = (back & 0xF81F) + ((((fore & 0xF81F) - (back & 0xF81F)) * (a >> 3)) >> 5);
++    int g = (back & 0x07E0) + ((((fore & 0x07E0) - (back & 0x07E0)) * (a >> 3)) >> 5);
++    return (u16)((rb & 0xF81F) | (g & 0x07E0));
++}
++
 +static int mixC(int a, int b, float t)
 +{
 +    if (t < 0) t = 0;
@@ -1138,13 +1157,44 @@ index 0000000..4513bd4
 +    ui3dsDrawRect(x, y + cut, x + w, y + h - cut, color);
 +}
 +
-+static void drawBackdrop()
++/* The menu's wallpaper, also what covers a screen change: dark, with spores rising like in Brinstar (NativeMenuScreen.kt).
++ * Only from left[row] rightwards on each 2-pixel row when left is given. */
++static void fillDisc(float cx, float cy, float r, int color, float alpha = 1.0f);
++
++static void drawBackdrop(const int *left = NULL)
 +{
++    struct Spore { float x, y, speed, size, sway; int color; };
++    static Spore spores[42];
++    static bool made;
++    if (!made) {
++        unsigned seed = 11;
++        auto rnd = [&seed]() { seed = seed * 1664525u + 1013904223u; return (seed >> 8) / 16777216.0f; };
++        for (Spore &s : spores) {
++            s.x = rnd(); s.y = rnd(); s.speed = 1 + (int)(rnd() * 3); s.size = rnd(); s.sway = 1 + (int)(rnd() * 4);
++            s.color = rnd() < 0.5f ? 0x4CC38A : 0x4FC3F7;
++        }
++        made = true;
++    }
 +    for (int y = 0; y < 240; y += 2) {
-+        int c = 0x0A0E15;
++        int c = 0x0A0E15, x0 = left ? left[y / 2] : 0;
++        if (x0 >= UI_W) continue;
 +        if (y < 90) { float f = 1 - y / 90.0f; c = mixC(c, 0x2A2112, f * f * 0.9f); }
 +        else if (y >= 170) { float f = (y - 170) / 70.0f; c = mixC(c, 0x0F2A2C, f * f * 0.8f); }
-+        ui3dsDrawRect(0, y, UI_W, y + 2, c);
++        ui3dsDrawRect(x0, y, UI_W, y + 2, c);
++        for (int i = 0; i <= 20; i++) {   // faint blue columns, strongest in the middle
++            float d = fabsf(i * 16 - 160) / 160.0f;
++            if (i * 16 >= x0) ui3dsDrawRect(i * 16, y, i * 16 + 1, y + 2, 0x4FC3F7, 0.05f * (1 - d * d));
++        }
++    }
++    float drift = (float)(osGetTime() % 60000) / 60000.0f;
++    for (const Spore &s : spores) {   // whole laps and sways per loop, so the loop restarts without a jump
++        float y = 1 - fmodf(s.y + drift * s.speed, 1.0f);
++        float x = s.x * UI_W + sinf((drift * s.sway + s.y) * 6.2831853f) * 9;
++        int row = (int)(y * UI_H) / 2;
++        if (left && (row < 0 || row >= 120 || x < left[row] + 6)) continue;
++        float fade = fminf(1, fminf(y * 6, (1 - y) * 6)), r = 0.6f + 0.9f * s.size;
++        fillDisc(x, y * UI_H, r * 4, s.color, 0.07f * fade);
++        fillDisc(x, y * UI_H, r < 1 ? 1 : r, s.color, (0.25f + 0.4f * s.size) * fade);
 +    }
 +}
 +
@@ -1194,14 +1244,176 @@ index 0000000..4513bd4
 +    }
 +}
 +
++static void fillDisc(float cx, float cy, float r, int color, float alpha)
++{
++    for (int y = (int)floorf(cy - r); y <= (int)ceilf(cy + r); y++) {
++        float dy = y + 0.5f - cy;
++        if (dy * dy > r * r) continue;
++        float half = sqrtf(r * r - dy * dy);
++        ui3dsDrawRect((int)(cx - half + 0.5f), y, (int)(cx + half + 0.5f), y + 1, color, alpha);
++    }
++}
++
++// A ring between radius r - th and r.
++static void fillRing(float cx, float cy, float r, float th, int color, float alpha)
++{
++    float ri = r - th;
++    for (int y = (int)floorf(cy - r); y <= (int)ceilf(cy + r); y++) {
++        float dy = y + 0.5f - cy;
++        if (dy * dy > r * r) continue;
++        float ho = sqrtf(r * r - dy * dy), hi = dy * dy < ri * ri ? sqrtf(ri * ri - dy * dy) : 0;
++        if (hi <= 0) { ui3dsDrawRect((int)(cx - ho + 0.5f), y, (int)(cx + ho + 0.5f), y + 1, color, alpha); continue; }
++        ui3dsDrawRect((int)(cx - ho + 0.5f), y, (int)(cx - hi + 0.5f), y + 1, color, alpha);
++        ui3dsDrawRect((int)(cx + hi + 0.5f), y, (int)(cx + ho + 0.5f), y + 1, color, alpha);
++    }
++}
++
++/* The load choice's marker, a soap bubble (pc_gfx.c kind 5): a faint body, a halo that breathes, a bright rim with three
++ * arcs of colour turning inside it, and highlights. align is its size in percent. */
++static void drawOrb(const UiCmd *c, int color, float pulse)
++{
++    float t = (float)(osGetTime() % 600000) / 1000.0f;
++    float r = 9 * c->align / 100.0f * (1 + 0.035f * sinf(t * 4.2f)), cx = c->x + c->w / 2.0f, cy = c->y + c->h / 2.0f;
++    if (r < 1) return;
++    fillRing(cx, cy, r * 2.1f, r * 1.1f, color, (30 + 25 * pulse) / 255.0f);
++    fillDisc(cx, cy, r, color, 40 / 255.0f);
++    static const int FILM[3] = {0x44E0FF, 0xFF6AD5, 0xFFE07A};
++    for (int s = 0; s < 3; s++) {
++        float a0 = t * 1.6f + s * 2.0943951f;
++        for (int j = 0; j < 10; j++) {
++            float a = a0 + j * 0.09f;
++            fillDisc(cx + cosf(a) * r * 0.82f, cy + sinf(a) * r * 0.82f, 0.9f, FILM[s], 150 / 255.0f * (1 - j / 10.0f));
++        }
++    }
++    fillRing(cx, cy, r, 0.9f, color, 220 / 255.0f);
++    fillDisc(cx - r * 0.38f, cy - r * 0.45f, r * 0.24f, 0xFFFFFF, 210 / 255.0f);
++    fillDisc(cx + r * 0.45f, cy + r * 0.5f, r * 0.1f < 0.6f ? 0.6f : r * 0.1f, 0xFFFFFF, 110 / 255.0f);
++}
++
++/* ---- the menus' legend ("A Load  Left Right Choose  B Back") as a bar of 3DS buttons ---- */
++static const char *const HINT_KEYS[] = {"A", "B", "X", "Y", "L", "R", "Select", "Start", "Up", "Down", "Left", "Right"};
++
++static int hintKey(const char *w)
++{
++    for (unsigned i = 0; i < sizeof HINT_KEYS / sizeof HINT_KEYS[0]; i++) if (!strcmp(HINT_KEYS[i], w)) return (int)i;
++    return -1;
++}
++
++static bool isHint(const UiCmd *c)
++{
++    if (c->kind != 1 || c->y < UI_H - 16) return false;
++    char w[16];
++    int l = 0;
++    while (c->text[l] && c->text[l] != ' ' && l < 15) { w[l] = c->text[l]; l++; }
++    w[l] = 0;
++    return hintKey(w) >= 0;
++}
++
++/* The button's picture at x, centred on cy; returns its width. pad: a key name, "LR" or "UD" for a pair of directions, "LR2" for the shoulders. */
++static int drawHintButton(int x, int cy, const char *pad, bool draw)
++{
++    const int cap = 0xC7D0DE, ink = 0x141B27, dim = 0x4A566B;
++    if (strlen(pad) == 1 && strchr("ABXY", pad[0])) {   // face button: a round cap with its letter
++        if (draw) {
++            fillDisc(x + 6.5f, cy, 6.5f, cap);
++            ui3dsDrawStringWithNoWrapping(settings3DS.SecondScreen, x, cy - 6, x + 13, cy + 7, ink, HALIGN_CENTER, pad);
++        }
++        return 13;
++    }
++    bool dir = !strcmp(pad, "LR") || !strcmp(pad, "UD") || hintKey(pad) >= 8;
++    if (dir) {   // the D-pad, the arms that act lit
++        if (draw) {
++            bool l = !strcmp(pad, "LR") || !strcmp(pad, "Left"), r = !strcmp(pad, "LR") || !strcmp(pad, "Right");
++            bool u = !strcmp(pad, "UD") || !strcmp(pad, "Up"), d = !strcmp(pad, "UD") || !strcmp(pad, "Down");
++            ui3dsDrawRect(x, cy - 2, x + 13, cy + 2, dim);
++            ui3dsDrawRect(x + 4, cy - 6, x + 9, cy + 7, dim);
++            if (l) ui3dsDrawRect(x, cy - 2, x + 5, cy + 2, cap);
++            if (r) ui3dsDrawRect(x + 8, cy - 2, x + 13, cy + 2, cap);
++            if (u) ui3dsDrawRect(x + 4, cy - 6, x + 9, cy - 1, cap);
++            if (d) ui3dsDrawRect(x + 4, cy + 2, x + 9, cy + 7, cap);
++        }
++        return 13;
++    }
++    const char *label = !strcmp(pad, "LR2") ? "L R" : !strcmp(pad, "Select") ? "SELECT" : !strcmp(pad, "Start") ? "START" : pad;
++    int w = ui3dsGetStringWidth(label) + 8;   // shoulders and the small buttons: a cut-corner cap with the name
++    if (draw) {
++        drawChamfer(x, cy - 6, w, 13, 2, cap);
++        ui3dsDrawStringWithNoWrapping(settings3DS.SecondScreen, x, cy - 6, x + w, cy + 7, ink, HALIGN_CENTER, label);
++    }
++    return w;
++}
++
++static void drawHintBar(const char *hint)
++{
++    char words[24][16], labels[10][40], pads[10][8];
++    int nw = 0, n = 0;
++    for (const char *p = hint; *p && nw < 24;) {
++        while (*p == ' ' || *p == ',') p++;
++        int l = 0;
++        while (p[l] && p[l] != ' ' && p[l] != ',') l++;
++        snprintf(words[nw], sizeof words[nw], "%.*s", l < 15 ? l : 15, p);
++        size_t wl = strlen(words[nw]);
++        if (wl && words[nw][wl - 1] == ':') words[nw][wl - 1] = 0;
++        if (l) nw++;
++        p += l;
++    }
++    for (int i = 0; i < nw && n < 10;) {
++        if (hintKey(words[i]) < 0) { i++; continue; }
++        int j = i + 1;
++        snprintf(pads[n], sizeof pads[n], "%s", words[i]);
++        if (j < nw && ((!strcmp(words[i], "Left") && !strcmp(words[j], "Right")) || (!strcmp(words[i], "Up") && !strcmp(words[j], "Down")) || (!strcmp(words[i], "L") && !strcmp(words[j], "R")))) {
++            snprintf(pads[n], sizeof pads[n], "%s", !strcmp(words[i], "Left") ? "LR" : !strcmp(words[i], "Up") ? "UD" : "LR2");
++            j++;
++        }
++        labels[n][0] = 0;
++        while (j < nw && hintKey(words[j]) < 0) {
++            size_t cur = strlen(labels[n]);
++            snprintf(labels[n] + cur, sizeof labels[n] - cur, "%s%s", cur ? " " : "", words[j]);
++            j++;
++        }
++        n++;
++        i = j;
++    }
++    const int y = UI_H - 16, cy = y + 8, gap = 10;
++    int total = 0;
++    for (int i = 0; i < n; i++) total += drawHintButton(0, cy, pads[i], false) + 4 + ui3dsGetStringWidth(labels[i]) + (i ? gap : 0);
++    int x = UI_W - 8 - total;
++    if (x < 4) x = 4;
++    for (int i = 0; i < n; i++) {
++        x += drawHintButton(x, cy, pads[i], true) + 4;
++        int tw = ui3dsGetStringWidth(labels[i]);
++        ui3dsDrawStringWithNoWrapping(settings3DS.SecondScreen, x, cy - 7, x + tw + 2, cy + 7, 0xB8C2D4, HALIGN_LEFT, labels[i]);
++        x += tw + gap;
++    }
++}
++
++#define WIPE_HOLD 600   // ms the new screen stays covered by the wallpaper before the seam opens it
++#define WIPE_OPEN 500
++#define WIPE_FADE 200   // ms the screen that left takes to fade out over the cover
++
++static u64 wipeStart;
++
++// Menu input waits until the seam has opened most of the new screen.
++static bool uiBusy() { return osGetTime() - wipeStart < WIPE_HOLD + WIPE_OPEN * 6 / 10; }
++
++/* The change of screen: the wallpaper covers it for WIPE_HOLD, then a bright diagonal seam crosses it, four bands
++ * locking in one after another. p < 0 while it is still covered. */
 +static void drawWipe(float p)
 +{
 +    if (p >= 1) return;
++    int left[120];
++    bool holding = p < 0;
++    if (holding) p = 0;
++    for (int y = 0; y < UI_H; y += 2) {
++        int b = y / 60;
++        float edge = holding ? -1 : p * (UI_W + UI_H * 0.22f + 0.54f * UI_W) - 0.18f * UI_W * b - y * 0.22f;
++        left[y / 2] = edge < 0 ? 0 : edge > UI_W ? UI_W : (int)edge;
++    }
++    drawBackdrop(left);
++    if (holding) return;
 +    for (int y = 0; y < UI_H; y += 2) {
 +        int b = y / 60;
 +        float edge = p * (UI_W + UI_H * 0.22f + 0.54f * UI_W) - 0.18f * UI_W * b - y * 0.22f;
-+        int cover = edge < 0 ? 0 : (int)edge;
-+        if (cover < UI_W) ui3dsDrawRect(cover, y, UI_W, y + 2, 0x0A0E15);
 +        if (edge > -2 && edge < UI_W) {
 +            int e = (int)edge;
 +            ui3dsDrawRect(e - 2, y, e + 4, y + 2, mixC(0x0A0E15, 0xF2A33A, 0.35f * (1 - p)));
@@ -1214,20 +1426,38 @@ index 0000000..4513bd4
 +{
 +    ui_draw(u);
 +    static int lastScreen = -1;
-+    static u64 wipeStart;
++    static u16 shown[320 * 240], gone[320 * 240];   // the last frame drawn uncovered, and the screen that left
++    static u64 goneAt;
 +    u64 now = osGetTime();
-+    if ((int)u->screen != lastScreen) { lastScreen = (int)u->screen; wipeStart = now; }   // a different screen, not a cursor move: the seam sweeps across
++    if ((int)u->screen != lastScreen) {   // a different screen, not a cursor move: the old one fades, the wallpaper holds, the seam opens
++        bool instant = lastScreen < 0 || lastScreen == UI_BUSY || u->screen == UI_BUSY;   // a busy note shows at once: work blocks right after it
++        if (instant) wipeStart = now - (lastScreen < 0 ? WIPE_HOLD : WIPE_HOLD + WIPE_OPEN);
++        else { wipeStart = now; memcpy(gone, shown, sizeof gone); goneAt = now; }
++        lastScreen = (int)u->screen;
++    }
 +    float pulse = 0.5f + 0.5f * sinf((float)(now % 100000) / 1000.0f * 3.4f);
 +    drawBackdrop();
++    char hint[160] = "";
++    for (int i = 0; i < u->cmd_count; i++) {
++        if (!isHint(&u->cmd[i])) continue;
++        ui3dsDrawRect(0, UI_H - 16, UI_W, UI_H, 0x0C1119);   // under the screen, so text that reaches into the bar still shows
++        ui3dsDrawRect(0, UI_H - 16, UI_W, UI_H - 15, 0x25324A);
++        break;
++    }
 +    for (int i = 0; i < u->cmd_count; i++) {
 +        const UiCmd *c = &u->cmd[i];
-+        int color = PALETTE[c->color < 9 ? c->color : 3];
++        int color = PALETTE[c->color < 13 ? c->color : 3];
 +        if (c->kind == 0) {
 +            drawStyledRect(c, color, pulse);
 +        } else if (c->kind == 2) {
 +            drawPreview(c);
 +        } else if (c->kind == 4) {
 +            drawRing(c, color);
++        } else if (c->kind == 5) {
++            drawOrb(c, color, pulse);
++        } else if (isHint(c)) {
++            size_t n = strlen(hint);
++            snprintf(hint + n, sizeof hint - n, "%s%s", n ? "  " : "", c->text);
 +        } else {
 +            int x0 = c->x, x1 = UI_W;
 +            int align = HALIGN_LEFT;
@@ -1236,7 +1466,15 @@ index 0000000..4513bd4
 +            ui3dsDrawStringWithNoWrapping(settings3DS.SecondScreen, x0, c->y, x1, c->y + 14, color, align, c->text);
 +        }
 +    }
-+    drawWipe((float)(now - wipeStart) / 500.0f);
++    if (hint[0]) drawHintBar(hint);
++    u16 *fb = (u16 *)gfxGetFramebuffer(settings3DS.SecondScreen, GFX_LEFT, NULL, NULL);
++    memcpy(shown, fb, sizeof shown);
++    drawWipe(((float)(now - wipeStart) - WIPE_HOLD) / WIPE_OPEN);
++    if (now - goneAt < WIPE_FADE) {
++        float a = 1 - (float)(now - goneAt) / WIPE_FADE;
++        int k = (int)(256 * a * a);
++        for (int i = 0; i < 320 * 240; i++) fb[i] = blend565(fb[i], gone[i], k);
++    }
 +    impl3dsFlushScreen(settings3DS.SecondScreen, false, false);
 +    gfxScreenSwapBuffers(settings3DS.SecondScreen, false);
 +    gpu3dsWaitForVBlank(settings3DS.SecondScreen);
@@ -1427,12 +1665,17 @@ index 0000000..4513bd4
 +    if (f) { fwrite(buf, 1, strlen(buf), f); fclose(f); }
 +}
 +
++static void makeDungeonMaps(SmzUi *u);
++
 +bool smz3RunMenu(char *romPathOut, size_t cap)
 +{
 +    static SmzUi ui;
 +    static char linkNames[UI_MAX_SPRITES][32], samusNames[UI_MAX_SPRITES][32];
++    if (smz3IsRun()) impl3dsSaveStateAuto();   // now, while the flags still belong to the run that was being played
++    gRunStates = false;
 +    ui_init(&ui);
 +    ui.rings = 1;   // the run list's percent sits in a progress ring (drawRing)
++    ui.orbs = 1;    // and the load choice's marker is an orb (drawOrb)
 +    ui.flags = 1;   // countries as flags (romfs:/smz3/flags)
 +    const char *list[UI_MAX_SPRITES];
 +    int n = listSprites(SPRITE_DIR "/link", linkNames, UI_MAX_SPRITES - 1);
@@ -1478,6 +1721,7 @@ index 0000000..4513bd4
 +        else if (down & KEY_R) b = BTN_R;
 +        else if (down & KEY_SELECT) b = BTN_SELECT;
 +        else have = false;
++        if (uiBusy()) have = false, down &= ~KEY_TOUCH;   // a new screen takes its time: no skipping through
 +        if (have) ui_input(&ui, b);
 +        if (down & KEY_TOUCH) {
 +            touchPosition t;
@@ -1509,14 +1753,23 @@ index 0000000..4513bd4
 +            else if (act == ACT_DELETE) { deleteRun(slot); refreshSlots(&ui); }
 +            else if (act == ACT_DAILY && !dailyBegin(&ui, note, sizeof note)) { ui_busy(&ui, note); drawUi(&ui); svcSleepThread(2500000000LL); ui_idle(&ui); }
 +            if (act == ACT_DAILY && dailyKept(ui.daily.window)) { act = ACT_CONTINUE; slot = SMZ_DAILY_SLOT; }
-+            if (act == ACT_CONTINUE) {
-+                char path[96];
++            if (act == ACT_CONTINUE || act == ACT_LOAD_SAVE || act == ACT_LOAD_STATE) {
++                char path[96], state[PATH_MAX];
 +                SmzRun r;
 +                snprintf(path, sizeof path, RUN_DIR "/slot%d.run", slot);
-+                if (smz_run_load(path, &r) == 0 && r.game == 3) {   // a finished run is not played again
++                bool loaded = smz_run_load(path, &r) == 0;
++                bool states = loaded && strstr(r.settings, "\"saveStates\":true") && smzOnlineSlotKind(slot) < 1 && slot != SMZ_DAILY_SLOT;
++                if (states) file3dsGetRelatedPath(r.rom_path, state, sizeof state, ".auto.frz", "savestates");
++                bool hasState = states && access(state, F_OK) == 0;
++                if (loaded && r.game == 3) {   // a finished run is not played again
 +                    ui_busy(&ui, "Finished: it can't be played again"); drawUi(&ui); svcSleepThread(2500000000LL); ui_idle(&ui);
-+                } else if (smz_run_load(path, &r) == 0) {
++                } else if (act == ACT_CONTINUE && hasState && r.save_ms > 0 && r.play_ms - r.save_ms > 10000) {
++                    ui_load_choice(&ui, slot, r.save_ms, r.save_zelda, r.save_metroid, r.play_ms, r.zelda_cleared, r.metroid_cleared, r.zelda_total, r.metroid_total);
++                } else if (loaded) {
++                    makeDungeonMaps(&ui);
 +                    gFinished = false;
++                    gNextStates = states;
++                    gNextLoadState = hasState && act != ACT_LOAD_SAVE;
 +                    // The run's screen shape picks the scaling: wide fills the 400x240 screen, pixel is 8:7, original is 4:3.
 +                    settings3DS.ScreenStretch = strstr(r.settings, "\"screenShape\":\"wide\"") ? Setting::ScreenStretch::Full
 +                        : strstr(r.settings, "\"screenShape\":\"pixel\"") ? Setting::ScreenStretch::CrtAspect
@@ -1542,6 +1795,7 @@ index 0000000..4513bd4
 +extern "C" {
 +#include "smz3_discovery.h"
 +#include "smz3_shortcuts.h"
++#include "smz3_dungeonmaps.h"
 +extern const SmzMapData SMZ3_MAP_DATA;
 +}
 +
@@ -1560,13 +1814,6 @@ index 0000000..4513bd4
 +static int clipX0, clipY0, clipX1 = 320, clipY1 = 240;
 +
 +static inline u16 to565(int rgb) { return (u16)(((rgb >> 8) & 0xF800) | ((rgb >> 5) & 0x07E0) | ((rgb >> 3) & 0x1F)); }
-+
-+static inline u16 blend565(u16 back, u16 fore, int a)   // a: 0..256
-+{
-+    int rb = (back & 0xF81F) + ((((fore & 0xF81F) - (back & 0xF81F)) * (a >> 3)) >> 5);
-+    int g = (back & 0x07E0) + ((((fore & 0x07E0) - (back & 0x07E0)) * (a >> 3)) >> 5);
-+    return (u16)((rb & 0xF81F) | (g & 0x07E0));
-+}
 +
 +static void setClip(int x0, int y0, int x1, int y1)
 +{
@@ -2073,8 +2320,9 @@ index 0000000..4513bd4
 +
 +static int runMiniTop, runMiniBottom;   // where the RUN tab's map is, for a tap
 +
-+// ---- item shortcuts (core/ui/smz3_shortcuts.h): the row over the RUN tab's map. In ALttP five slots, the same for every
-+// run, equip their item on Y; in Super Metroid each beam owned turns on or off. Only in normal play, silently.
++// ---- item shortcuts (core/ui/smz3_shortcuts.h): the rows over the RUN tab's map. In ALttP five slots, the same for every
++// run, equip their item on Y; in Super Metroid each beam owned turns on or off, and under them each HUD weapon owned is
++// picked. Only in normal play, silently.
 +
 +#define SC_SLOTS 5
 +#define SC_FILE SMZ_DIR "/shortcuts.txt"
@@ -2083,7 +2331,9 @@ index 0000000..4513bd4
 +#define SC_ROW_H 30
 +
 +static int scSlots[SC_SLOTS] = {-1, -1, -1, -1, -1};
++static int scShown[2] = {1, 1};   // the slot/beam row and the weapon row; saved after the slots
 +static int scPick = -1;   // the slot whose item picker is open, -1 none
++static int scRowY[2] = {-1, -1};   // where each row was drawn, -1 hidden
 +
 +static void scLoad()
 +{
@@ -2092,6 +2342,7 @@ index 0000000..4513bd4
 +    loaded = true;
 +    if (FILE *f = fopen(SC_FILE, "r")) {
 +        for (int i = 0; i < SC_SLOTS; i++) if (fscanf(f, "%d", &scSlots[i]) != 1 || scSlots[i] < -1 || scSlots[i] >= SC_ZELDA_COUNT) scSlots[i] = -1;
++        for (int i = 0; i < 2; i++) if (fscanf(f, "%d", &scShown[i]) != 1) scShown[i] = 1;
 +        fclose(f);
 +    }
 +}
@@ -2101,6 +2352,7 @@ index 0000000..4513bd4
 +    mkdir(SMZ_DIR, 0777);
 +    if (FILE *f = fopen(SC_FILE, "w")) {
 +        for (int i = 0; i < SC_SLOTS; i++) fprintf(f, "%d\n", scSlots[i]);
++        for (int i = 0; i < 2; i++) fprintf(f, "%d\n", scShown[i]);
 +        fclose(f);
 +    }
 +}
@@ -2115,14 +2367,23 @@ index 0000000..4513bd4
 +    for (int i = 0; i < n; i++) if (pk[i].offset < 0x20000) Memory.RAM[pk[i].offset] = pk[i].value;
 +}
 +
-+// The ids in the row now: the five slots in ALttP (-1 empty), the beams owned in Super Metroid. Returns how many cells.
-+static int scCells(int *ids)
++bool smz3ShortcutRowShown(int row) { scLoad(); return scShown[row] != 0; }
++void smz3SetShortcutRowShown(int row, bool shown) { scLoad(); scShown[row] = shown; scSave(); dirty = true; }
++
++// The ids in a row now: row 0 the five slots in ALttP (-1 empty) or the beams owned in Super Metroid, row 1 the weapons
++// owned in Super Metroid. Returns how many cells, 0 when the row is hidden.
++static int scCells(int *ids, int row)
 +{
 +    scLoad();
-+    if (!trk.started) return 0;
-+    if (trk.game == SMZ3_GAME_ZELDA) { for (int i = 0; i < SC_SLOTS; i++) ids[i] = scSlots[i]; return SC_SLOTS; }
++    if (!trk.started || !scShown[row]) return 0;
++    if (trk.game == SMZ3_GAME_ZELDA) {
++        if (row) return 0;
++        for (int i = 0; i < SC_SLOTS; i++) ids[i] = scSlots[i];
++        return SC_SLOTS;
++    }
 +    int n = 0;
-+    if (trk.game == SMZ3_GAME_METROID) for (int id = SC_ZELDA_COUNT; id < SC_COUNT; id++) if (scOwned(id)) ids[n++] = id;
++    if (trk.game == SMZ3_GAME_METROID)
++        for (int id = row ? SC_WEAPON_FIRST : SC_ZELDA_COUNT; id < (row ? SC_COUNT : SC_WEAPON_FIRST); id++) if (scOwned(id)) ids[n++] = id;
 +    return n;
 +}
 +
@@ -2144,9 +2405,9 @@ index 0000000..4513bd4
 +    }
 +}
 +
-+static void drawShortcutRow(int y)
++static void drawShortcutRow(int y, int row)
 +{
-+    int ids[SC_COUNT], n = scCells(ids), w = scCellW();
++    int ids[SC_COUNT], n = scCells(ids, row), w = scCellW();
 +    for (int i = 0; i < n; i++) {
 +        int x = SC_ROW_X + i * (w + 3), id = ids[i];
 +        bool on = id >= 0 && scActive(id);
@@ -2158,10 +2419,10 @@ index 0000000..4513bd4
 +}
 +
 +// Cell of the row under (x, y), or -1.
-+static int scCellAt(int x, int y, int rowY)
++static int scCellAt(int x, int y, int row)
 +{
-+    int ids[SC_COUNT], n = scCells(ids), w = scCellW();
-+    if (y < rowY || y >= rowY + SC_ROW_H) return -1;
++    int ids[SC_COUNT], n = scCells(ids, row), w = scCellW(), rowY = scRowY[row];
++    if (rowY < 0 || y < rowY || y >= rowY + SC_ROW_H) return -1;
 +    for (int i = 0; i < n; i++) if (x >= SC_ROW_X + i * (w + 3) && x < SC_ROW_X + i * (w + 3) + w) return i;
 +    return -1;
 +}
@@ -2210,15 +2471,309 @@ index 0000000..4513bd4
 +    }
 +}
 +
-+// A tap on the row: an empty ALttP slot opens its picker, a filled one equips its item, a beam turns on or off.
++// A tap on a row: an empty ALttP slot opens its picker, a filled one equips its item, a beam turns on or off, a weapon is
++// picked (again: back to the beam).
 +static bool shortcutTap(int x, int y, bool hold)
 +{
-+    int ids[SC_COUNT], i = scCellAt(x, y, runMiniTop);
++    int ids[SC_COUNT], row = 0, i = scCellAt(x, y, 0);
++    if (i < 0) i = scCellAt(x, y, row = 1);
 +    if (i < 0) return false;
-+    scCells(ids);
++    scCells(ids, row);
 +    if (trk.game == SMZ3_GAME_ZELDA && (hold || ids[i] < 0)) scPick = i;
 +    else if (!hold && ids[i] >= 0) scUse(ids[i]);
 +    return true;
++}
++
++// ---- the game's own dungeon maps (pc_dungeon.c): read from the user's ALttP ROM once, kept as RGB565 (0 = empty) in DUNGEON_FILE
++
++#define DUNGEON_FILE SMZ_DIR "/derived/dungeons.bin"
++#define DM_PIXELS (SMZ_DM_ATLAS_W * SMZ_DM_ATLAS_H)
++
++static SmzDungeonMeta dmeta;
++static u16 *dmFull, *dmHint;
++static int dmState;   // 0 not tried, 1 ready, -1 missing
++static bool fixedKeys;   // the run marks the keys under pots and on enemies (ShowFixedKeys)
++
++struct DungeonLive { int d, idx, cell, lx, ly; };   // dungeon, floor index, room cell on the 5 x 5 grid (-1 unknown), spot in the room (0..15)
++struct DungeonView { bool world, picked; int d, idx; };
++static DungeonView dv = {false, false, 2, 0};
++static DungeonLive dlive;
++static bool haveLive;
++
++static const int BOSS_ROOM[14] = {15, 15, 200, 51, 32, 6, 90, 144, 41, 222, 7, 172, 164, 13};
++static const int BOSS_FLOOR[14] = {-1, -1, 1, 1, 6, -1, -1, -1, -2, -7, 5, -1, -3, 6};
++static const int BOSS_SPOT[14] = {-1, -1, 0x808, 8, 0, 8, 0x808, 8, 0x808, 0x800, 0x404, 0x808, 8, 8};
++static const char *const DUNGEON_NAMES[14] = {"Sewers", "Hyrule Castle", "Eastern Palace", "Desert Palace", "Castle Tower", "Swamp Palace", "Palace of Darkness",
++                                              "Misery Mire", "Skull Woods", "Ice Palace", "Tower of Hera", "Thieves' Town", "Turtle Rock", "Ganon's Tower"};
++
++// Reads the pictures out of the ALttP ROM the first time a run is played; quick afterwards.
++static void makeDungeonMaps(SmzUi *u)
++{
++    struct stat st;
++    if (stat(DUNGEON_FILE, &st) == 0) return;
++    static bool tried;
++    if (tried) return;
++    tried = true;
++    ui_busy(u, "Reading the dungeon maps ...");
++    drawUi(u);
++    unsigned char *sm, *z3;
++    bool ok = findBaseRoms(&sm, &z3);
++    free(sm);
++    u8 *rgba = ok ? (u8 *)malloc((size_t)DM_PIXELS * 8) : NULL;
++    u16 *out = rgba ? (u16 *)malloc((size_t)DM_PIXELS * 4) : NULL;
++    if (out && smz_dungeon_maps(z3, 0x100000, &dmeta, rgba, rgba + (size_t)DM_PIXELS * 4)) {
++        for (size_t k = 0; k < (size_t)DM_PIXELS * 2; k++) {
++            const u8 *px = rgba + k * 4;
++            u16 c = (u16)(((px[0] >> 3) << 11) | ((px[1] >> 2) << 5) | (px[2] >> 3));
++            out[k] = px[3] < 128 ? 0 : c ? c : 1;
++        }
++        mkdir(SMZ_DIR "/derived", 0777);
++        FILE *f = fopen(DUNGEON_FILE, "wb");
++        if (f) { fwrite(&dmeta, sizeof dmeta, 1, f); fwrite(out, 2, (size_t)DM_PIXELS * 2, f); fclose(f); }
++    }
++    free(out); free(rgba); free(z3);
++    ui_idle(u);
++}
++
++static bool dungeonAvailable()
++{
++    if (dmState) return dmState > 0;
++    dmState = -1;
++    FILE *f = fopen(DUNGEON_FILE, "rb");
++    if (!f) return false;
++    dmFull = (u16 *)malloc((size_t)DM_PIXELS * 4);
++    if (dmFull && fread(&dmeta, sizeof dmeta, 1, f) == 1 && fread(dmFull, 2, (size_t)DM_PIXELS * 2, f) == (size_t)DM_PIXELS * 2) { dmHint = dmFull + DM_PIXELS; dmState = 1; }
++    else { free(dmFull); dmFull = NULL; }
++    fclose(f);
++    return dmState > 0;
++}
++
++static int floorsOf(int d) { return dmeta.below[d] + dmeta.above[d]; }
++static int rd16(const u8 *w, int a) { return w[a] | w[a + 1] << 8; }
++
++static bool dungeonPlace(const u8 *w, DungeonLive *out)
++{
++    int d = w[0x040C] / 2;
++    if (w[0x1B] == 0 || w[0x040C] >= 28 || d >= 14) return false;
++    int fl = floorsOf(d), idx = (int8_t)w[0xA4] + dmeta.below[d];
++    if (fl < 1) return false;
++    idx = idx < 0 ? 0 : idx > fl - 1 ? fl - 1 : idx;
++    int room = rd16(w, 0xA0);
++    if (room == 137) room = 169; else if (room == 167) room = 119; else if (room == 79) room = 190;
++    int here = -1;
++    for (int c = 0; c < 25; c++) if (dmeta.grid[d][idx][c] == room) { here = c; break; }
++    *out = {d, idx, here, here < 0 ? 0 : (rd16(w, 0x22) & 0x1E0) >> 5, here < 0 ? 0 : (rd16(w, 0x20) & 0x1E0) >> 5};
++    return true;
++}
++
++// Link's place while ALttP runs; in the middle of a room change the room and the coordinates disagree, so the last settled place stays.
++static void dungeonReadLive()
++{
++    static DungeonLive stable;
++    static bool have;
++    haveLive = false;
++    if (!dungeonAvailable() || trk.game != SMZ3_GAME_ZELDA) { have = false; return; }
++    DungeonLive now;
++    bool ok = dungeonPlace(Memory.RAM, &now);
++    bool moving = Memory.RAM[0x10] == 0x07 && Memory.RAM[0x11] != 0;
++    if (moving && ok && have && stable.d == now.d) { dlive = stable; haveLive = true; return; }
++    have = ok;
++    if (ok) stable = now;
++    dlive = now;
++    haveLive = ok;
++}
++
++static bool dungeonShowing(const DungeonView &v) { return dmState > 0 && !v.world && (v.picked || haveLive); }
++
++static void dungeonShown(const DungeonView &v, int *d, int *idx)
++{
++    if (v.picked || !haveLive) { *d = v.d; *idx = v.idx; }
++    else { *d = dlive.d; *idx = dlive.idx; }
++}
++
++static void dungeonPick(DungeonView &v, int d, int idx)
++{
++    v.picked = true; v.world = false;
++    v.d = (d + 14) % 14;
++    int fl = floorsOf(v.d);
++    v.idx = idx < 0 ? 0 : idx > fl - 1 ? fl - 1 : idx;
++}
++
++static void dungeonStep(DungeonView &v, int delta)
++{
++    int d, idx;
++    dungeonShown(v, &d, &idx);
++    int nd = (d + delta + 14) % 14;
++    dungeonPick(v, nd, dmeta.below[nd]);
++}
++
++// Draws the pixels of one 8 x 8 quarter of a room from an atlas, scaled to (x0, y0)-(x1, y1); faint: blended at 100/255.
++static void blitQuarter(const u16 *atlas, int sx, int sy, float x0, float y0, float x1, float y1, bool faint)
++{
++    int ix0 = (int)x0, iy0 = (int)y0, ix1 = (int)x1, iy1 = (int)y1;
++    float k = 8 / (x1 - x0);
++    for (int x = ix0 < clipX0 ? clipX0 : ix0; x < ix1 && x < clipX1; x++) {
++        int u = sx + (int)((x - x0 + 0.5f) * k);
++        u16 *p = trkFb + x * 240 + 239 - iy0;
++        for (int y = iy0; y < iy1; y++, p--) {
++            if (y < clipY0 || y >= clipY1) continue;
++            u16 c = atlas[(sy + (int)((y - y0 + 0.5f) * k)) * SMZ_DM_ATLAS_W + u];
++            if (c) *p = faint ? blend565(*p, c, 100) : c;
++        }
++    }
++}
++
++// A key standing up, its bow at the top: gold, a big key larger and paler.
++static void keyMark(float x, float y, float s, bool big)
++{
++    int gold = big ? 0xFFE08A : 0xF2C14E, ink = 0x1A1408;
++    if (big) s *= 1.25f;
++    auto box = [](float l, float t, float w, float h, int c) { fill((int)lroundf(l), (int)lroundf(t), (int)lroundf(l + w), (int)lroundf(t + h), c); };
++    dot(x, y - s * 0.55f, s * 0.62f, ink);
++    box(x - s * 0.3f, y - s * 0.3f, s * 0.6f, s * 1.5f, ink);
++    dot(x, y - s * 0.55f, s * 0.45f, gold);
++    dot(x, y - s * 0.55f, s * 0.18f, ink);
++    box(x - s * 0.13f, y - s * 0.15f, s * 0.26f, s * 1.2f, gold);
++    box(x + s * 0.13f, y + s * 0.6f, s * 0.32f, s * 0.2f, gold);
++    box(x + s * 0.13f, y + s * 0.85f, s * 0.24f, s * 0.18f, gold);
++}
++
++static void checkDot(float x, float y, float r)
++{
++    dot(x, y, r + 1, 0xFFFFFF);
++    dot(x, y, r, 0x000000);
++    dot(x, y, r - 0.6f, 0xFFB300);
++}
++
++static int dungeonLeft(int d)   // checks still to get in a dungeon (the sewers belong to Hyrule Castle)
++{
++    const char *region = d == 0 ? "Hyrule Castle" : DUNGEON_NAMES[d];
++    int left = 0;
++    for (unsigned j = 0; j < smz3_location_count && j < SMZ_TRK_MAX_LOCS; j++)
++        if (!strcmp(smz3_locations[j].region, region) && !trk.cleared[j]) left++;
++    return left;
++}
++
++#define FLOOR_W 30
++#define FLOOR_H 18
++
++/* The floor picture with the unopened checks, the fixed keys, the boss and Link. mini: just the picture (the RUN tab). */
++static void drawDungeon(const DungeonView &v, int ax, int ay, int aw, int ah, bool mini)
++{
++    int d, idx;
++    dungeonShown(v, &d, &idx);
++    int sx0 = clipX0, sy0 = clipY0, sx1 = clipX1, sy1 = clipY1;
++    setClip(ax, ay, ax + aw, ay + ah);
++    fill(ax, ay, ax + aw, ay + ah, 0x0B0E12);
++    int fl = floorsOf(d), below = dmeta.below[d];
++    int x0 = 5, y0 = 5, x1 = -1, y1 = -1;   // the cells any floor of the dungeon uses, so floors line up
++    for (int f = 0; f < fl; f++)
++        for (int k = 0; k < 25; k++)
++            if (dmeta.grid[d][f][k] != 0xF) { int cx = k % 5, cy = k / 5; x0 = cx < x0 ? cx : x0; x1 = cx > x1 ? cx : x1; y0 = cy < y0 ? cy : y0; y1 = cy > y1 ? cy : y1; }
++    if (x1 < 0) { x0 = y0 = 0; x1 = y1 = 4; }
++    int cols = x1 - x0 + 1, rows = y1 - y0 + 1;
++
++    // what the game remembers: room quadrants visited, the dungeon's map and compass
++    bool zelda = trk.game == SMZ3_GAME_ZELDA;
++    const u8 *src = zelda ? Memory.RAM : Memory.SRAM;
++    int base = zelda ? 0xF000 : 0;
++    const u8 *flags = src + base;
++    int mapMask = rd16(src, base + 0x368), compassMask = rd16(src, base + 0x364);
++    bool haveMap = mapMask & (0x8000 >> d), showAll = !discoveredOnly;
++
++    int top0 = mini ? ay + 2 : ay + 18, left0 = mini ? ax + 2 : ax + FLOOR_W + 6, right0 = ax + aw - 2, bottom0 = mini ? ay + ah - 2 : ay + ah - 26;
++    float scale = fminf((float)(right0 - left0) / (cols * SMZ_DM_ROOM), (float)(bottom0 - top0) / (rows * SMZ_DM_ROOM));
++    float left = left0 + ((right0 - left0) - cols * SMZ_DM_ROOM * scale) / 2, top = top0 + ((bottom0 - top0) - rows * SMZ_DM_ROOM * scale) / 2;
++
++    for (int c = 0; c < 25; c++) {
++        int room = dmeta.grid[d][idx][c];
++        if (room == 0xF) continue;
++        int seen = flags[room * 2] & 0xF;
++        for (int q = 0; q < 4; q++) {
++            bool visited = seen & (8 >> q);
++            const u16 *atlas = visited || showAll ? dmFull : haveMap ? dmHint : NULL;
++            if (!atlas) continue;
++            int ox = (c % 5) * SMZ_DM_ROOM + (q & 1) * 8, oy = (c / 5) * SMZ_DM_ROOM + (q >> 1) * 8;
++            float dx = left + (ox - x0 * SMZ_DM_ROOM) * scale, dy = top + (oy - y0 * SMZ_DM_ROOM) * scale;
++            blitQuarter(atlas, idx * SMZ_DM_CELL + ox, d * SMZ_DM_CELL + oy, dx, dy, dx + 8 * scale, dy + 8 * scale, !visited && showAll);
++        }
++    }
++
++    // unopened checks: at their chest when the room data places it, else one dot at the room's centre
++    for (int c = 0; c < 25; c++) {
++        int room = dmeta.grid[d][idx][c];
++        if (room == 0xF) continue;
++        float ox = left + (c % 5 - x0) * SMZ_DM_ROOM * scale, oy = top + (c / 5 - y0) * SMZ_DM_ROOM * scale;
++        bool loose = false;
++        for (unsigned i = 0; i < smz3_location_count && i < SMZ_TRK_MAX_LOCS; i++) {
++            const smz3_location &l = smz3_locations[i];
++            if (l.game != SMZ3_GAME_ZELDA || l.zelda_misc || (int)l.addr != room || trk.cleared[i]) continue;
++            int k = (int)l.flag - 4;
++            if (k >= 0 && k < SMZ_DM_CHESTS && k < dmeta.chest_n[room]) checkDot(ox + (dmeta.chest_xy[room][k][0] + 0.5f) / 4 * scale, oy + (dmeta.chest_xy[room][k][1] + 0.5f) / 4 * scale, fmaxf(1.6f, scale * 2));
++            else loose = true;
++        }
++        if (loose) checkDot(ox + 8 * scale, oy + 8 * scale, fmaxf(2, scale * 2.6f));
++    }
++
++    // keys under pots and on enemies, until taken, on runs that ask for them
++    for (int i = 0; fixedKeys && i < smz_fixed_key_count; i++) {
++        const SmzFixedKey &fk = smz_fixed_keys[i];
++        if (smz_fixed_key_taken(i, flags, 0x20000 - base, zelda ? Memory.RAM : NULL, zelda ? 0x20000 : 0)) continue;
++        for (int c = 0; c < 25; c++) {
++            if (dmeta.grid[d][idx][c] != fk.room) continue;
++            float ox = left + (c % 5 - x0) * SMZ_DM_ROOM * scale, oy = top + (c / 5 - y0) * SMZ_DM_ROOM * scale;
++            keyMark(ox + (fk.x + 0.5f) / 4 * scale, oy + (fk.y + 0.5f) / 4 * scale, fmaxf(2.5f, scale * 1.6f), fk.big);
++        }
++    }
++
++    // the boss, once the compass says where (or on all-map runs), until it is beaten
++    int spot = BOSS_SPOT[d];
++    if (spot >= 0 && idx == BOSS_FLOOR[d] + below) {
++        bool known = showAll || (compassMask & (0x8000 >> d)), beaten = flags[BOSS_ROOM[d] * 2 + 1] & 0x08;
++        int c = -1;
++        for (int k = 0; k < 25; k++) if (dmeta.grid[d][idx][k] == BOSS_ROOM[d]) c = k;
++        if (known && !beaten && c >= 0) {
++            float x = left + ((c % 5 - x0) * SMZ_DM_ROOM + (spot >> 8) + 4) * scale, y = top + ((c / 5 - y0) * SMZ_DM_ROOM + (spot & 0xFF) + 4) * scale, r = fmaxf(4, scale * 2.8f);
++            dot(x, y, r + 1, 0xFFFFFF);
++            dot(x, y, r, 0xD32F2F);
++            if (r >= 6) text((int)x - 10, (int)y - 7, 0xFFFFFF, "B", HALIGN_CENTER, (int)x + 10);
++        }
++    }
++
++    // Link, blinking, only on the floor he is on
++    if (haveLive && dlive.d == d && dlive.idx == idx && dlive.cell >= 0 && (osGetTime() / 350) % 2 == 0) {
++        float x = left + ((dlive.cell % 5 - x0) * SMZ_DM_ROOM + dlive.lx + 0.5f) * scale, y = top + ((dlive.cell / 5 - y0) * SMZ_DM_ROOM + dlive.ly + 0.5f) * scale;
++        dot(x, y, fmaxf(2.5f, scale * 1.9f), 0x000000);
++        dot(x, y, fmaxf(1.6f, scale * 1.3f), 0xFFFFFF);
++    }
++
++    if (!mini) {   // the name with what is left, and the floor list (top floor first)
++        char s[64];
++        int n = dungeonLeft(d);
++        if (n) snprintf(s, sizeof s, "%s  %d left", DUNGEON_NAMES[d], n); else snprintf(s, sizeof s, "%s  done", DUNGEON_NAMES[d]);
++        text(ax + 6, ay + 2, n ? theme.text : 0x4CC38A, s);
++        for (int i = fl - 1; i >= 0; i--) {
++            int fn = i - below, y = ay + 18 + (fl - 1 - i) * (FLOOR_H + 2);
++            if (fn >= 0) snprintf(s, sizeof s, "%dF", fn + 1); else snprintf(s, sizeof s, "B%d", -fn);
++            fill(ax + 4, y, ax + 4 + FLOOR_W, y + FLOOR_H, i == idx ? 0x3A4A66 : 0x1D2430);
++            text(ax + 4, y + 2, i == idx ? 0xE9A23B : 0xE8ECF2, s, HALIGN_CENTER, ax + 4 + FLOOR_W);
++        }
++    }
++    setClip(sx0, sy0, sx1, sy1);
++}
++
++// Taps on the floor list of the dungeon picture in the MAP tab; true when one was hit.
++static bool dungeonFloorTap(int x, int y, int ay)
++{
++    int d, idx;
++    dungeonShown(dv, &d, &idx);
++    int fl = floorsOf(d);
++    if (x < 4 || x >= 4 + FLOOR_W) return false;
++    for (int i = fl - 1; i >= 0; i--) {
++        int by = ay + 18 + (fl - 1 - i) * (FLOOR_H + 2);
++        if (y >= by && y < by + FLOOR_H) { dungeonPick(dv, d, i); return true; }
++    }
++    return false;
 +}
 +
 +static void drawRun(int y0, int y1)
@@ -2279,8 +2834,13 @@ index 0000000..4513bd4
 +    }
 +    runMiniTop = y0 + 4; runMiniBottom = y1 - 4;
 +    int ids[SC_COUNT], mapTop = runMiniTop;
-+    if (scCells(ids) > 0) { drawShortcutRow(runMiniTop); mapTop += SC_ROW_H + 4; }
-+    drawMap(miniMap, 162, mapTop, 154, runMiniBottom - mapTop, true);
++    for (int row = 0; row < 2; row++) {
++        scRowY[row] = scCells(ids, row) > 0 ? mapTop : -1;
++        if (scRowY[row] >= 0) { drawShortcutRow(mapTop, row); mapTop += SC_ROW_H + 4; }
++    }
++    static const DungeonView here = {false, false, 0, 0};
++    if (haveLive) drawDungeon(here, 162, mapTop, 154, runMiniBottom - mapTop, true);   // inside a dungeon: its floor, as on the Thor
++    else drawMap(miniMap, 162, mapTop, 154, runMiniBottom - mapTop, true);
 +    if (trk.game != SMZ3_GAME_ZELDA) scPick = -1;
 +    if (scPick >= 0) drawPicker(y0, y1);
 +}
@@ -2352,26 +2912,40 @@ index 0000000..4513bd4
 +    contentH[TAB_CHECKS] = y + scrollY[TAB_CHECKS] - y0;
 +}
 +
-+static const char *const MAP_BUTTONS[4] = {"-", "+", "FOLLOW", "CENTER"};
++// The buttons under the map: the world map's, or the dungeon picture's (dungeon and floor are picked by hand there).
++static const char *const WORLD_BUTTONS[5] = {"DUNGEON", "-", "+", "FOLLOW", "CENTER"};
++static const char *const DUNGEON_BUTTONS[4] = {"<", ">", "HERE", "WORLD"};
++static const int WORLD_W[5] = {64, 24, 24, 58, 58}, DUNGEON_W[4] = {24, 24, 58, 58};
 +
-+static void mapButtonRect(int i, int y1, int *x0, int *bx1)
++static int mapButtons(const char *const **names, const int **widths)
 +{
-+    static const int W[4] = {24, 24, 58, 58};
++    if (dungeonShowing(dv)) { *names = DUNGEON_BUTTONS; *widths = DUNGEON_W; return 4; }
++    bool dungeons = dungeonAvailable();
++    *names = WORLD_BUTTONS + !dungeons; *widths = WORLD_W + !dungeons;
++    return dungeons ? 5 : 4;
++}
++
++static void mapButtonRect(int i, int n, const int *w, int *x0, int *bx1)
++{
 +    int x = 316;
-+    for (int k = 3; k >= i; k--) x -= W[k] + 4;
-+    *x0 = x + 4; *bx1 = x + 4 + W[i];
-+    (void)y1;
++    for (int k = n - 1; k >= i; k--) x -= w[k] + 4;
++    *x0 = x + 4; *bx1 = x + 4 + w[i];
 +}
 +
 +static void drawMapTab(int y0, int y1)
 +{
-+    drawMap(bigMap, 0, y0, 320, y1 - y0, false);
-+    for (int i = 0; i < 4; i++) {
++    bool inDungeon = dungeonShowing(dv);
++    if (inDungeon) drawDungeon(dv, 0, y0, 320, y1 - y0, false);
++    else drawMap(bigMap, 0, y0, 320, y1 - y0, false);
++    const char *const *names;
++    const int *w;
++    int n = mapButtons(&names, &w);
++    for (int i = 0; i < n; i++) {
 +        int bx0, bx1;
-+        mapButtonRect(i, y1, &bx0, &bx1);
-+        bool on = i == 2 && bigMap.follow;
++        mapButtonRect(i, n, w, &bx0, &bx1);
++        bool on = !inDungeon && !strcmp(names[i], "FOLLOW") && bigMap.follow;
 +        fillAlpha(bx0, y1 - 22, bx1, y1 - 4, 0x000000, 180);
-+        text(bx0, y1 - 21, on ? theme.accent : 0xFFFFFF, MAP_BUTTONS[i], HALIGN_CENTER, bx1);
++        text(bx0, y1 - 21, on ? theme.accent : 0xFFFFFF, names[i], HALIGN_CENTER, bx1);
 +    }
 +}
 +
@@ -2508,7 +3082,7 @@ index 0000000..4513bd4
 +    int y0 = topOfTabs() + TAB_H, y1 = 240;
 +    if (tab == TAB_RUN && scPick >= 0) { pickerTap(x, y, y0, y1); return; }
 +    if (tab == TAB_RUN && shortcutTap(x, y, false)) return;
-+    if (tab == TAB_RUN && x >= 162 && y >= runMiniTop && y < runMiniBottom) { tab = TAB_MAP; bigMap = miniMap; bigMap.zoom = 0.45f; return; }
++    if (tab == TAB_RUN && x >= 162 && y >= runMiniTop && y < runMiniBottom) { tab = TAB_MAP; bigMap = miniMap; bigMap.zoom = 0.45f; dv.picked = false; dv.world = false; return; }
 +    if (tab == TAB_CHECKS) {
 +        int r = -1;
 +        drawChecks(y0, y1, &r, y);
@@ -2516,17 +3090,27 @@ index 0000000..4513bd4
 +        return;
 +    }
 +    if (tab == TAB_MAP && y >= y1 - 24) {
-+        for (int i = 0; i < 4; i++) {
++        const char *const *names;
++        const int *w;
++        int n = mapButtons(&names, &w);
++        for (int i = 0; i < n; i++) {
 +            int bx0, bx1;
-+            mapButtonRect(i, y1, &bx0, &bx1);
++            mapButtonRect(i, n, w, &bx0, &bx1);
 +            if (x < bx0 || x >= bx1) continue;
-+            if (i == 0 && bigMap.zoom > 0.2f) bigMap.zoom /= 1.5f;
-+            if (i == 1 && bigMap.zoom < 1.5f) bigMap.zoom *= 1.5f;
-+            if (i == 2) bigMap.follow = !bigMap.follow;
-+            if (i == 3) { if (disc.has_position) { bigMap.cx = disc.x; bigMap.cy = disc.y; } else { bigMap.cx = 811; bigMap.cy = 479; bigMap.zoom = 0.19f; } }
++            const char *b = names[i];
++            if (!strcmp(b, "-") && bigMap.zoom > 0.2f) bigMap.zoom /= 1.5f;
++            else if (!strcmp(b, "+") && bigMap.zoom < 1.5f) bigMap.zoom *= 1.5f;
++            else if (!strcmp(b, "FOLLOW")) bigMap.follow = !bigMap.follow;
++            else if (!strcmp(b, "CENTER")) { if (disc.has_position) { bigMap.cx = disc.x; bigMap.cy = disc.y; } else { bigMap.cx = 811; bigMap.cy = 479; bigMap.zoom = 0.19f; } }
++            else if (!strcmp(b, "DUNGEON")) { if (haveLive) { dv.picked = false; dv.world = false; } else dungeonPick(dv, dv.d, dv.picked ? dv.idx : dmeta.below[dv.d]); }
++            else if (!strcmp(b, "<")) dungeonStep(dv, -1);
++            else if (!strcmp(b, ">")) dungeonStep(dv, 1);
++            else if (!strcmp(b, "HERE")) { dv.picked = false; dv.world = !haveLive; }
++            else if (!strcmp(b, "WORLD")) dv.world = true;
 +            return;
 +        }
 +    }
++    if (tab == TAB_MAP && dungeonShowing(dv) && dungeonFloorTap(x, y, y0)) return;
 +    if (tab == TAB_HELP && hintButtonY >= 0) {
 +        int by = hintButtonY - scrollY[TAB_HELP];
 +        if (x >= 8 && x < 160 && y >= by && y < by + 22) {
@@ -2550,6 +3134,7 @@ index 0000000..4513bd4
 +
 +static void dragBy(int dx, int dy)
 +{
++    if (tab == TAB_MAP && dungeonShowing(dv)) return;
 +    if (tab == TAB_MAP) { bigMap.follow = false; bigMap.cx -= dx / bigMap.zoom; bigMap.cy -= dy / bigMap.zoom; dirty = true; }
 +    else if (tab == TAB_CHECKS || tab == TAB_HELP || tab == TAB_DAILY) { scrollY[tab] -= dy; clampScroll(tab); dirty = true; }
 +}
@@ -2603,6 +3188,9 @@ index 0000000..4513bd4
 +
 +// ---- reading the run once a second
 +
++static u64 turboWallMs;   // wall time spent in fast forward since the last reading, and the SNES time it emulated
++static double turboEmuMs;
++
 +static void trackerUpdate()
 +{
 +    static u64 startedAt = 0;
@@ -2645,6 +3233,8 @@ index 0000000..4513bd4
 +        gFinished = finishedBefore = r0.game == 3;
 +        cardState = 0;
 +        discoveredOnly = strstr(r0.settings, "\"mapMode\":\"discovered\"") != NULL;
++        fixedKeys = strstr(r0.settings, "\"showFixedKeys\"") ? strstr(r0.settings, "\"showFixedKeys\":true") != NULL : !strcmp(r0.name, "Cozy run");
++        dv = {false, false, 2, 0};
 +        smz_disc_init(&disc, &SMZ3_MAP_DATA);
 +        size_t dn = 0;
 +        char *dt = (char *)readFile(discPath, &dn);
@@ -2672,9 +3262,13 @@ index 0000000..4513bd4
 +    int dt = (int)(nowMs - lastMs);
 +    lastMs = nowMs;
 +    if (dt < 0 || dt > 3000) dt = 1000;   // a pause in between is not play time
++    else if (turboWallMs > 0) dt += (int)lround(turboEmuMs) - (int)turboWallMs;   // fast forward runs unpaced: its frames count at the SNES rate
++    if (dt < 0) dt = 0;
++    turboWallMs = 0; turboEmuMs = 0;
 +    if (deadBosses) smz_prepared_apply(deadBosses, Memory.RAM, 0x20000, Memory.SRAM, 0x20000);   // a mid-game daily start
 +    smz_tracker_tick(&trk, Memory.RAM, 0x20000, Memory.SRAM, 0x20000, dt, 1);
 +    if (trk.started) smz_disc_update(&disc, Memory.RAM, 0x20000, (int)trk.game);
++    dungeonReadLive();
 +    if (trk.game == 3) { gFinished = true; if (!cardState && !finishedBefore) cardState = 1; }
 +    if (daily && trk.started && smz_daily_note_began(&dr, smzDailyNowMs())) smzDailySave(&dr);   // the clock starts with the game, as in the ladder
 +    int online = curSlot >= 0 ? smzOnlineSlotKind(curSlot) : 0;
@@ -2778,6 +3372,10 @@ index 0000000..4513bd4
 +    static int sinceDraw = 0;
 +    if (strncmp(Memory.ROMFilename, RUN_DIR "/", sizeof RUN_DIR) != 0 || !Memory.RAM || !Memory.SRAM) return;
 +    sinceDraw++;
++    static u64 lastFrameMs;
++    u64 now = osGetTime();
++    if (settings3DS.TurboMode && now - lastFrameMs < 3000) { turboWallMs += now - lastFrameMs; turboEmuMs += 1000 / 60.0988; }
++    lastFrameMs = now;
 +    if (tick || curSlot != gPlaySlot) { trackerUpdate(); debugTouches(); dirty = true; }
 +    if (dirty && (tick || sinceDraw >= 3)) { trackerDraw(); sinceDraw = 0; }   // a drag redraws at most every third frame
 +}
@@ -2785,6 +3383,16 @@ index 0000000..4513bd4
 +// ---- helps of the run being played (the pause menu asks for them)
 +
 +bool smz3IsRun(void) { return strncmp(Memory.ROMFilename, RUN_DIR "/", sizeof RUN_DIR) == 0; }
++
++// Runs that allow save states keep an auto state, saved on leaving and offered on Continue (the load choice).
++bool smz3AutoStates(void) { return smz3IsRun() && gRunStates && !smz3NoStates(); }
++
++// The run chosen in the menu is loaded: its flags take over. True when it starts from its auto state.
++bool smz3RunStarted(void)
++{
++    gRunStates = gNextStates;
++    return gNextLoadState && smz3AutoStates();
++}
 +
 +// Monthly and weekly runs allow no save states of any kind.
 +bool smz3NoFastForward(void) { return smz3IsRun() && gChallenge; }
@@ -2823,10 +3431,10 @@ index 0000000..4513bd4
 +}
 diff --git a/source/smz3run.h b/source/smz3run.h
 new file mode 100644
-index 0000000..ab815db
+index 0000000..5257d48
 --- /dev/null
 +++ b/source/smz3run.h
-@@ -0,0 +1,34 @@
+@@ -0,0 +1,41 @@
 +#ifndef SMZ3RUN_H
 +#define SMZ3RUN_H
 +
@@ -2855,9 +3463,16 @@ index 0000000..ab815db
 +bool smz3IsRun(void);
 +// True when the run being played is a monthly or weekly ladder run: save states are not allowed.
 +bool smz3NoStates(void);
++// True when the run being played keeps an auto state (its settings allow save states).
++bool smz3AutoStates(void);
++// The run chosen in the SMZ3 menu has been loaded; true when it should start from its auto state.
++bool smz3RunStarted(void);
 +// True when the run being played is a daily challenge: no fast forward.
 +bool smz3NoFastForward(void);
 +// Pause menu: spends a help (limited mode) and writes the next hint, or why there is none, into out.
 +void smz3AskHelp(char *out, size_t cap);
++// The tracker's shortcut rows: 0 the ALttP slots or the beams, 1 the Super Metroid weapons.
++bool smz3ShortcutRowShown(int row);
++void smz3SetShortcutRowShown(int row, bool shown);
 +
 +#endif

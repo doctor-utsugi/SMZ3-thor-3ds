@@ -9,7 +9,7 @@ if [ -f "$ROOT/patches/snes9x_3ds-smz3.patch" ] && ! grep -q smz3run Makefile; t
 fi
 # the shared C core is copied next to the emulator sources (tests and CLIs stay out)
 rm -rf source/smz3 source/smz3_*.[ch] && mkdir -p romfs/smz3/ips
-for f in smz3_generate smz3_fill smz3_world smz3_world_gen smz3_rng smz3_patch smz3_rom smz3_text smz3_sprite smz3_hints smz3_itemopts smz3_plando smz3_md5 smz3_romsetup; do
+for f in smz3_generate smz3_fill smz3_world smz3_world_gen smz3_rng smz3_patch smz3_rom smz3_text smz3_sprite smz3_hints smz3_itemopts smz3_plando smz3_md5 smz3_romsetup smz3_dungeonmaps; do
     cp "$ROOT/core/gen/$f.c" source/
 done
 cp "$ROOT"/core/gen/smz3_*.h source/

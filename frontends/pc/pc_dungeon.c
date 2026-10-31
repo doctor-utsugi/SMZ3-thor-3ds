@@ -145,6 +145,23 @@ static void dot(SDL_Renderer *r, float x, float y, float rad, int st)
     }
 }
 
+static int fixed_keys;
+void dungeon_set_fixed_keys(int on) { fixed_keys = on; }
+
+/* A key standing up, its bow at the top: gold, a big key larger and paler. */
+static void key_mark(SDL_Renderer *r, float x, float y, float s, int big)
+{
+    SDL_Color gold = big ? (SDL_Color){0xFF, 0xE0, 0x8A, 255} : (SDL_Color){0xF2, 0xC1, 0x4E, 255}, ink = {0x1A, 0x14, 0x08, 255};
+    if (big) s *= 1.25f;
+    map_circle(r, x, y - s * 0.55f, s * 0.62f, ink, 0);
+    gfx_rect(x - s * 0.3f, y - s * 0.3f, s * 0.6f, s * 1.5f, ink);
+    map_circle(r, x, y - s * 0.55f, s * 0.45f, gold, 0);
+    map_circle(r, x, y - s * 0.55f, s * 0.18f, ink, 0);
+    gfx_rect(x - s * 0.13f, y - s * 0.15f, s * 0.26f, s * 1.2f, gold);
+    gfx_rect(x + s * 0.13f, y + s * 0.6f, s * 0.32f, s * 0.2f, gold);
+    gfx_rect(x + s * 0.13f, y + s * 0.85f, s * 0.24f, s * 0.18f, gold);
+}
+
 void dungeon_draw(SDL_Renderer *r, DungeonView *v, SDL_Rect area, const SmzTracker *t, const uint8_t *in_logic, const DungeonLive *live,
                   const uint8_t *wram, size_t wram_len, const uint8_t *sram, size_t sram_len, int show_all, Uint32 ticks)
 {
@@ -206,6 +223,17 @@ void dungeon_draw(SDL_Renderer *r, DungeonView *v, SDL_Rect area, const SmzTrack
             float rad = scale * 2.6f, off = loose == 3 ? rad * 0.9f : 0;
             if (loose & 2) dot(r, ox + 8 * scale + off, oy + 8 * scale, rad, 2);
             if (loose & 1) dot(r, ox + 8 * scale - off, oy + 8 * scale, rad, 1);
+        }
+    }
+
+    /* keys under pots and on enemies, until taken, on runs that ask for them */
+    for (int i = 0; fixed_keys && i < smz_fixed_key_count; i++) {
+        const SmzFixedKey *fk = &smz_fixed_keys[i];
+        if (smz_fixed_key_taken(i, flags, have_data ? srclen - base : 0, zelda ? wram : NULL, zelda ? wram_len : 0)) continue;
+        for (int c = 0; c < 25; c++) {
+            if (meta.grid[d][idx][c] != fk->room) continue;
+            float ox = left + (c % 5 - x0) * SMZ_DM_ROOM * scale, oy = top + (c / 5 - y0) * SMZ_DM_ROOM * scale;
+            key_mark(r, ox + (fk->x + 0.5f) / 4 * scale, oy + (fk->y + 0.5f) / 4 * scale, scale * 1.6f, fk->big);
         }
     }
 

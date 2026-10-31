@@ -23,7 +23,7 @@ static const char *const N_JINGLE[] = {"Random", "Vanilla", "Blue Badger", "Batt
 _Static_assert(sizeof N_JINGLE / sizeof N_JINGLE[0] == SMZ_JINGLE_COUNT + 1, "jingle names");
 
 /* Order matters: ui_settings reads the first block by index (see enum below). */
-enum { O_SEED, O_KEYS, O_PLACE, O_GANON, O_GT, O_TOURIAN, O_LINK, O_SAMUS, O_MAP, O_DARK, O_FILTER, O_SHAPE, O_HELP, O_HELPS, O_PYRAMID, O_DOOR, O_WALL, O_MODE, O_PLANDO, O_JINGLE, O_SPAZ_POOL, O_SPAZ_REQ, O_NERF, O_SAVES, O_MORPH, O_MUSIC, O_REACH, O_ITEM0, O_LOGIC0 = O_ITEM0 + SMZ_ITEMOPT_GROUP_COUNT };
+enum { O_SEED, O_KEYS, O_PLACE, O_GANON, O_GT, O_TOURIAN, O_LINK, O_SAMUS, O_MAP, O_DARK, O_FILTER, O_SHAPE, O_HELP, O_HELPS, O_PYRAMID, O_DOOR, O_WALL, O_MODE, O_PLANDO, O_JINGLE, O_SPAZ_POOL, O_SPAZ_REQ, O_NERF, O_SAVES, O_MORPH, O_MUSIC, O_REACH, O_FKEYS, O_ITEM0, O_LOGIC0 = O_ITEM0 + SMZ_ITEMOPT_GROUP_COUNT };
 
 #define B(k, l, t) {k, l, t, OPT_BOOL, LEVEL_RUN, 0, 1, 0, 0}
 #define Q(k, l, t) {k, l, t, OPT_BOOL, LEVEL_RUN, 0, 1, 0, 0}
@@ -55,6 +55,7 @@ const UiOptDef UI_OPTS[] = {
     {"QuickMorph", "Quick morph", "Super Metroid: the aim-down button turns Samus into a ball; aim up and down share one button.", OPT_BOOL, LEVEL_RUN, 0, 1, 0, 0},
     {"MusicPackage", "Music package", "Original, random, or a pack from /sdcard/SMZ3/music (MSU-1). Android only.", OPT_SPRITE, LEVEL_RUN, 0, 1, 0, 0},
     {"ShowReachable", "Reachable checks", "The tracker map marks the checks you can reach now.", OPT_BOOL, LEVEL_RUN, 0, 1, 0, 0},
+    {"ShowFixedKeys", "Fixed keys", "The dungeon maps mark the keys under pots and on enemies until you take them.", OPT_BOOL, LEVEL_RUN, 0, 1, 0, 0},
     ITEM_OPT_DEFS
     Q("PreventScrewAttackSoftLock", "No Screw Attack soft locks", "Screw Attack is not expected without the morph ball."),
     Q("PreventFivePowerBombSeed", "No five power bomb seeds", "Expects at least two power bomb upgrades."),
@@ -87,7 +88,7 @@ const char *const UI_TABS[LEVEL_ITEMS][24] = {
      "SpazersInPool", "SpazersRequired", "PreventScrewAttackSoftLock", "PreventFivePowerBombSeed", "LeftSandPitRequiresSpringBall",
      "LaunchPadRequiresIceBeam", "WaterwayNeedsGravitySuit", "EasyEastCrateriaSkyItem", "EasyBlueBrinstarTop", "ParlorSpeedBooster",
      "MockBall", NULL},
-    {"ScreenFilter", "ScreenShape", "SaveStates", "ShowReachable", "MusicPackage", NULL},
+    {"ScreenFilter", "ScreenShape", "SaveStates", "ShowReachable", "ShowFixedKeys", "MusicPackage", NULL},
 };
 _Static_assert((int)O_LINK == UIO_LINK && (int)O_SAMUS == UIO_SAMUS && (int)O_PLANDO == UIO_PLANDO && (int)O_JINGLE == UIO_JINGLE && (int)O_MAP == UIO_MAP && (int)O_SHAPE == UIO_SHAPE && (int)O_HELP == UIO_HELP && (int)O_HELPS == UIO_HELPS && (int)O_MODE == UIO_MODE, "option indices");
 
@@ -184,7 +185,7 @@ static int ui_is_default(const SmzUi *u)
     int want[UI_MAX_OPTS];
     ui_expected_values(u, want);
     for (int i = 0; i < UI_OPT_COUNT; i++) {
-        if (i == O_SEED || i == O_LINK || i == O_SAMUS || i == O_MAP || i == O_FILTER || i == O_SHAPE || i == O_JINGLE || i == O_MORPH || i == O_MUSIC || i == O_REACH) continue;
+        if (i == O_SEED || i == O_LINK || i == O_SAMUS || i == O_MAP || i == O_FILTER || i == O_SHAPE || i == O_JINGLE || i == O_MORPH || i == O_MUSIC || i == O_REACH || i == O_FKEYS) continue;
         if (UI_OPTS[i].kind == OPT_SPRITE) { if (u->value[i] != 0) return 0; continue; }
         if (u->value[i] != want[i]) return 0;
     }
@@ -213,10 +214,10 @@ int ui_settings_json(const SmzUi *u, int32_t seed_if_random, char *out, size_t c
     int n = snprintf(out, cap,
         "{\"seed\":\"%d\",\"keysanity\":\"%s\",\"itemPlacement\":\"%s\",\"gameMode\":\"%s\",\"ganonCrystals\":%d,"
         "\"ganonsTowerCrystals\":%d,\"tourianBosses\":%d,\"pyramidHole\":\"%s\",\"tourianBossDoor\":\"%s\","
-        "\"mapMode\":\"%s\",\"lightDarkRooms\":%s,\"nerfedCharge\":%s,\"saveStates\":%s,\"quickMorph\":%s,\"musicPackage\":\"%s\",\"defaultRules\":%s,\"screenFilter\":\"%s\",\"screenShape\":\"%s\",\"helpMode\":\"%s\",\"helpCount\":%d,\"linkSprite\":\"%s\",\"samusSprite\":\"%s\",\"plando\":\"%s\",\"etecoonsJingle\":%d,\"showReachable\":%s,",
+        "\"mapMode\":\"%s\",\"lightDarkRooms\":%s,\"nerfedCharge\":%s,\"saveStates\":%s,\"quickMorph\":%s,\"musicPackage\":\"%s\",\"defaultRules\":%s,\"screenFilter\":\"%s\",\"screenShape\":\"%s\",\"helpMode\":\"%s\",\"helpCount\":%d,\"linkSprite\":\"%s\",\"samusSprite\":\"%s\",\"plando\":\"%s\",\"etecoonsJingle\":%d,\"showReachable\":%s,\"showFixedKeys\":%s,",
         s.seed, KEYS[s.keysanity], PLACE[s.placement_rule], MODE[s.game_mode], s.ganon_crystals, s.gt_crystals, s.tourian_bosses,
         pc.pyramid_open ? "Open" : "Closed", pc.tourian_door_open ? "Open" : "Closed",
-        u->value[O_MAP] ? "discovered" : "all", u->value[O_DARK] ? "true" : "false", u->value[O_NERF] ? "true" : "false", u->value[O_SAVES] ? "true" : "false", u->value[O_MORPH] ? "true" : "false", music, ui_is_default(u) ? "true" : "false", FILTER[u->value[O_FILTER]], SHAPE[u->value[O_SHAPE]], HELP[u->value[O_HELP]], u->value[O_HELPS], link, samus, g_plando_loaded ? plando : "", u->value[O_JINGLE], u->value[O_REACH] ? "true" : "false");
+        u->value[O_MAP] ? "discovered" : "all", u->value[O_DARK] ? "true" : "false", u->value[O_NERF] ? "true" : "false", u->value[O_SAVES] ? "true" : "false", u->value[O_MORPH] ? "true" : "false", music, ui_is_default(u) ? "true" : "false", FILTER[u->value[O_FILTER]], SHAPE[u->value[O_SHAPE]], HELP[u->value[O_HELP]], u->value[O_HELPS], link, samus, g_plando_loaded ? plando : "", u->value[O_JINGLE], u->value[O_REACH] ? "true" : "false", u->value[O_FKEYS] ? "true" : "false");
     /* options that differ from the defaults, as "Label: value" lines for the run's info on the bottom screen */
     n += snprintf(out + n, n < (int)cap ? cap - n : 0, "\"diff\":[");
     for (int i = 0, first = 1; i < UI_OPT_COUNT && n < (int)cap; i++) {

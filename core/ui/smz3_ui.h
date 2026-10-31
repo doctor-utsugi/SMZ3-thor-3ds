@@ -47,6 +47,7 @@ typedef struct {
 typedef struct { char name[24]; char spec[UI_SPEC_LEN]; } UiSaved;
 
 /* kind 0 rectangle, 1 text, 3 gradient to the colour in align, 4 progress ring (align: percent; only hosts that set rings get it),
+ * 5 glowing orb of diameter w centred in its box (only hosts that set orbs get it),
  * 2 sprite preview: draw the picture of text ("link/<name>" or "samus/<name>", file <name>.pv beside the
  * .rdc: u8 width, u8 height, then width*height RGBA bytes) centred and scaled to fit the x, y, w, h box. */
 typedef struct { uint8_t kind; int16_t x, y, w, h; uint8_t color; uint8_t align; char text[64]; } UiCmd;
@@ -79,6 +80,9 @@ typedef struct {
     struct { int64_t save_ms, state_ms; int save_z, save_m, state_z, state_m, zt, mt, cursor; } lc;   /* the load choice shown by UI_LOADCHOICE */
     int online_mode, online_cursor, online_gen; /* 0 ask before each run, 1 upload, 2 never; the prompt's row; 1 when the prompt came from Start */
     int rings;                   /* the host draws progress rings (kind 4): the run list shows its percent inside one */
+    int orbs;                    /* the host draws orbs (kind 5): the load choice's marker on its time line */
+    float orb_x, orb_k;          /* that marker as drawn: it eases to the choice and grows in when the screen opens */
+    int orb_on;
     int flags;                   /* the host draws "flag/<CC>" pictures; without them countries show as their code */
     int ladder_on, ladder_tab, ladder_scroll;   /* the host can show the online tables / the tab shown (0 original, 1 monthly, 2 weekly) / first row shown */
     struct { int loaded; char label[16]; int n; struct { char name[24]; char cc[3]; int64_t ms; } row[UI_LADDER_ROWS]; } ladder[3];   /* loaded: 0 not yet, 1 ok, -1 failed */

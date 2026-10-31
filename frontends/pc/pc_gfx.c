@@ -248,6 +248,25 @@ float gfx_ui(const SmzUi *u, int win_w, int win_h, float *ox, float *oy)
             SDL_Color glow = col; glow.a = 60;
             ring(cx, cy, r + 1.5f * k, th + 3 * k, c->align / 100.0f, glow);
             ring(cx, cy, r, th, c->align / 100.0f, col);
+        } else if (c->kind == 5) {   /* orb: a soap bubble, a faint body, a bright rim with colours that turn, highlights */
+            float t = SDL_GetTicks() / 1000.0f, r = 9 * k * c->align / 100.0f * (1 + 0.035f * sinf(t * 4.2f));
+            float cx = x + c->w * k / 2, cy = y + c->h * k / 2;
+            SDL_Color halo = col, body = col, rim = col;
+            halo.a = (Uint8)(30 + 25 * pulse); body.a = 40; rim.a = 220;
+            ring(cx, cy, r * 2.1f, r * 1.1f, 1, halo);
+            ring(cx, cy, r, r, 1, body);
+            static const SDL_Color film[3] = {{0x44, 0xE0, 0xFF, 150}, {0xFF, 0x6A, 0xD5, 150}, {0xFF, 0xE0, 0x7A, 150}};
+            for (int s = 0; s < 3; s++) {   /* three arcs of colour circling just inside the rim */
+                float a0 = t * 1.6f + s * 2.0943951f;
+                for (int j = 0; j < 10; j++) {
+                    float a = a0 + j * 0.09f, ca = cosf(a), sa = sinf(a);
+                    SDL_Color fc = film[s]; fc.a = (Uint8)(fc.a * (1 - j / 10.0f));
+                    ring(cx + ca * r * 0.82f, cy + sa * r * 0.82f, 0.9f * k, 0.9f * k, 1, fc);
+                }
+            }
+            ring(cx, cy, r, 0.9f * k, 1, rim);
+            ring(cx - r * 0.38f, cy - r * 0.45f, r * 0.24f, r * 0.24f, 1, (SDL_Color){0xFF, 0xFF, 0xFF, 210});
+            ring(cx + r * 0.45f, cy + r * 0.5f, r * 0.1f, r * 0.1f, 1, (SDL_Color){0xFF, 0xFF, 0xFF, 110});
         } else if (c->kind == 2 && !strcmp(c->text, "logo")) {
             gfx_logo(x, y, c->w * k, 1);
         } else if (c->kind == 2) {

@@ -358,6 +358,7 @@ void fx_draw(int win_w, int win_h)
 {
     float t = (since(fade_start) - FX_HOLD) / FX_OPEN;
     if (t >= 1) return;
+    int holding = t <= 0;   /* still covered: no seam yet */
     if (t < 0) t = 0;
     float p = ease(t), w = (float)win_w, h = (float)win_h, band = h / 4, slope = 0.22f;
     for (float y = 0; y < h; y += 2) {
@@ -365,7 +366,7 @@ void fx_draw(int win_w, int win_h)
         float edge = p * (w + h * slope + 0.18f * w * 3) - 0.18f * w * b - y * slope;
         float cover = edge < 0 ? 0 : edge;
         if (cover < w) gfx_rect(cover, y, w - cover, 2, rgba(0x0A, 0x0E, 0x15, 0.96f));
-        if (edge > -8 && edge < w) {
+        if (!holding && edge > -8 && edge < w) {
             gfx_rect(edge - 5, y, 14, 2, rgba(0xF2, 0xA3, 0x3A, 0.22f * (1 - t)));
             gfx_rect(edge, y, 3, 2, rgba(0xFF, 0xE7, 0xA8, 1 - t * 0.6f));
         }

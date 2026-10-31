@@ -98,7 +98,7 @@ index 0000000..3b74ae7
 +{"Castle Tower": [239, 192, 239, 192], "Dark World Mire": [18, 860, 18, 860], "Dark World North East": [224, 561, 432, 711], "Dark World North West": [23, 560, 163, 768], "Dark World South": [23, 806, 286, 851], "Dark World Death Mountain East": [398, 509, 404, 548], "Dark World Death Mountain West": [274, 549, 274, 549], "Desert Palace": [34, 378, 34, 378], "Eastern Palace": [459, 188, 459, 188], "Ganon's Tower": [268, 495, 268, 495], "Hyrule Castle": [239, 216, 239, 216], "Ice Palace": [381, 893, 381, 893], "Light World Death Mountain East": [381, 9, 413, 103], "Light World Death Mountain West": [194, 9, 233, 90], "Light World North East": [383, 65, 458, 214], "Light World North West": [11, 24, 288, 273], "Light World South": [9, 312, 428, 450], "Misery Mire": [35, 877, 35, 877], "Palace of Darkness": [459, 669, 459, 669], "Skull Woods": [18, 510, 18, 510], "Swamp Palace": [224, 927, 224, 927], "Thieves' Town": [59, 710, 59, 710], "Tower of Hera": [268, 23, 268, 23], "Turtle Rock": [451, 513, 451, 513]}
 \ No newline at end of file
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/main/MainActivity.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/main/MainActivity.kt
-index 57f2e76..08cafe0 100644
+index 57f2e76..be76322 100644
 --- a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/main/MainActivity.kt
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/main/MainActivity.kt
 @@ -1,5 +1,10 @@
@@ -150,9 +150,9 @@ index 57f2e76..08cafe0 100644
 +        com.swordfish.lemuroid.app.shared.game.viewmodel.Smz3Idle.show(this)
 +    }
 +
-+    override fun onPause() {
++    override fun onStop() {   // not on pause: the game's black stand-in is up by now, so the display never goes blank
 +        com.swordfish.lemuroid.app.shared.game.viewmodel.Smz3Idle.hide()
-+        super.onPause()
++        super.onStop()
 +    }
 +
      @OptIn(ExperimentalMaterial3Api::class)
@@ -464,16 +464,17 @@ index 0000000..cbd6dbc
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/NativeMenuScreen.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/NativeMenuScreen.kt
 new file mode 100644
-index 0000000..78623de
+index 0000000..b3da92d
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/mobile/feature/runs/NativeMenuScreen.kt
-@@ -0,0 +1,614 @@
+@@ -0,0 +1,675 @@
 +package com.swordfish.lemuroid.app.mobile.feature.runs
 +
 +import android.graphics.Paint
 +import android.graphics.Typeface
 +import androidx.compose.animation.core.Animatable
 +import androidx.compose.animation.core.FastOutSlowInEasing
++import androidx.compose.animation.core.LinearEasing
 +import androidx.compose.animation.core.RepeatMode
 +import androidx.compose.animation.core.animateFloat
 +import androidx.compose.animation.core.infiniteRepeatable
@@ -482,7 +483,10 @@ index 0000000..78623de
 +import androidx.compose.foundation.Canvas
 +import androidx.compose.ui.graphics.Brush
 +import androidx.compose.ui.graphics.Path
++import androidx.compose.ui.graphics.drawscope.clipPath
 +import androidx.compose.ui.graphics.drawscope.DrawScope
++import androidx.compose.ui.graphics.drawscope.Stroke
++import androidx.compose.ui.graphics.drawscope.rotate
 +import androidx.compose.foundation.background
 +import androidx.compose.foundation.focusable
 +import androidx.compose.foundation.gestures.detectTapGestures
@@ -521,6 +525,8 @@ index 0000000..78623de
 +import com.swordfish.lemuroid.app.shared.game.viewmodel.Smz3MenuSelection
 +import com.swordfish.lemuroid.app.shared.game.viewmodel.Smz3Native
 +import com.swordfish.lemuroid.lib.library.db.RetrogradeDatabase
++import kotlin.math.PI
++import kotlin.math.sin
 +import kotlinx.coroutines.Dispatchers
 +import kotlinx.coroutines.launch
 +import kotlinx.coroutines.withContext
@@ -862,7 +868,10 @@ index 0000000..78623de
 +    fun press(button: Int) { Smz3Native.uiInput(button); pollActions(); version++; publishSelection() }
 +
 +    val pulse by rememberInfiniteTransition(label = "pulse").animateFloat(0f, 1f, infiniteRepeatable(tween(1850, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "pulse")
++    val drift by rememberInfiniteTransition(label = "drift").animateFloat(0f, 1f, infiniteRepeatable(tween(60000, easing = LinearEasing), RepeatMode.Restart), label = "drift")
 +    val wipe = remember { Animatable(1f) }
++    val leave = remember { Animatable(0f) }
++    val leaving = remember { arrayOf<Array<String>?>(null) }
 +    val lastScreen = remember { arrayOf("") }
 +
 +    Box(modifier.fillMaxSize().background(palette[0]), contentAlignment = Alignment.Center) {
@@ -897,19 +906,25 @@ index 0000000..78623de
 +            version.let { }
 +            val scale = size.width / W
 +            val held = frozen[0]
++            val before = lastCommands[0]
 +            val commands = if (launching && held != null) held else Smz3Native.uiDraw().also { lastCommands[0] = it }
-+            drawBackdrop(scale)
++            drawBackdrop(scale, drift)
 +            if (lastScreen0Reset[0]) { lastScreen0Reset[0] = false; quiet[0] = true }
 +            val screenNow = if (launching) lastScreen[0] else Smz3Native.uiScreen().toString()
 +            val changed = screenNow != lastScreen[0] && !quiet[0]
 +            if (screenNow != lastScreen[0]) {   // a different screen (not a cursor move): the seam sweeps across
 +                lastScreen[0] = screenNow
 +                if (quiet[0]) quiet[0] = false
-+                else scope.launch { wipe.snapTo(0f); wipe.animateTo(1f, tween(500, delayMillis = 600, easing = FastOutSlowInEasing)) }
++                else {
++                    leaving[0] = before
++                    scope.launch { wipe.snapTo(0f); wipe.animateTo(1f, tween(500, delayMillis = 600, easing = FastOutSlowInEasing)) }
++                    scope.launch { leave.snapTo(1f); leave.animateTo(0f, tween(200, easing = FastOutSlowInEasing)) }
++                }
 +            }
++            val drawCommands: (Array<String>) -> Unit = { cmds ->
 +            val hints = ArrayList<String>()
 +            drawIntoCanvas { canvas ->
-+                for (line in commands) {
++                for (line in cmds) {
 +                    val f = line.split(",", limit = 8)
 +                    val kind = f[0].toInt(); val x = f[1].toFloat() * scale; val y = f[2].toFloat() * scale
 +                    val color = palette[f[5].toInt().coerceIn(0, palette.lastIndex)]
@@ -931,6 +946,17 @@ index 0000000..78623de
 +                        val sweep = 360f * f[6].toInt() / 100f
 +                        drawArc(color.copy(alpha = 0.25f), -90f, sweep, false, Offset(tl.x - th * 0.4f, tl.y - th * 0.4f), Size(sz.width + th * 0.8f, sz.height + th * 0.8f), style = androidx.compose.ui.graphics.drawscope.Stroke(width = th * 1.8f))
 +                        drawArc(color, -90f, sweep, false, tl, sz, style = stroke)
++                    } else if (kind == 5) {   // orb: a soap bubble, its rim catching colours that turn, scaled by the align field (percent)
++                        val c = Offset(x + f[3].toFloat() * scale / 2, y + f[4].toFloat() * scale / 2)
++                        val r = 9f * scale * f[6].toInt() / 100f * (1f + 0.035f * sin(drift * 2f * PI.toFloat() * 40f))
++                        drawCircle(Brush.radialGradient(listOf(color.copy(alpha = 0.22f + 0.12f * pulse), color.copy(alpha = 0f)), c, r * 2.3f), r * 2.3f, c)
++                        drawCircle(Brush.radialGradient(0.55f to Color.White.copy(alpha = 0.02f), 0.88f to color.copy(alpha = 0.22f), 1f to color.copy(alpha = 0.55f), center = c, radius = r), r, c)
++                        rotate(drift * 360f * 8f, c) {
++                            drawCircle(Brush.sweepGradient(listOf(Color(0x9944E0FF), Color(0x00FFFFFF), Color(0x99FF6AD5), Color(0x00FFFFFF), Color(0x99FFE07A), Color(0x00FFFFFF), Color(0x9944E0FF)), c), r * 0.9f, c, style = Stroke(width = 1.4f * scale))
++                        }
++                        drawCircle(color.copy(alpha = 0.85f), r, c, style = Stroke(width = 0.8f * scale))
++                        drawOval(Color.White.copy(alpha = 0.85f), Offset(c.x - r * 0.62f, c.y - r * 0.66f), Size(r * 0.55f, r * 0.32f))
++                        drawCircle(Color.White.copy(alpha = 0.45f), r * 0.1f, Offset(c.x + r * 0.45f, c.y + r * 0.5f))
 +                    } else if (kind == 2) {
 +                        preview(f[7], context)?.let { img ->
 +                            val bw = f[3].toFloat() * scale; val bh = f[4].toFloat() * scale
@@ -949,15 +975,27 @@ index 0000000..78623de
 +                }
 +                if (hints.isNotEmpty()) drawHintBar(canvas.nativeCanvas, paint, scale, hints.joinToString("  "))
 +            }
++            }
++            drawCommands(commands)
 +            // on the frame the screen changes the wipe has not started yet: cover the new screen instead of flashing it
 +            if (launching) {
-+                closing.value.let { c -> if (c < 1f) drawWipe(1f - c) else drawRect(Color(0xFF0A0E15), Offset.Zero, size) }
-+            } else drawWipe(if (changed) 0f else wipe.value)
++                closing.value.let { c -> drawWipe(1f - c, scale, drift) }
++            } else {
++                drawWipe(if (changed) 0f else wipe.value, scale, drift)
++                val fade = if (changed) 1f else leave.value   // the screen that left fades out over the wallpaper
++                val gone = leaving[0]
++                if (fade > 0f && gone != null) {
++                    drawContext.canvas.saveLayer(androidx.compose.ui.geometry.Rect(Offset.Zero, size), androidx.compose.ui.graphics.Paint().apply { alpha = fade })
++                    drawCommands(gone)
++                    drawContext.canvas.restore()
++                }
++            }
 +        }
 +    }
 +}
 +
-+private fun DrawScope.drawBackdrop(scale: Float) {
++/** The menu's wallpaper, also what a screen change shows between screens: dark, with spores rising like in Brinstar. */
++private fun DrawScope.drawBackdrop(scale: Float, drift: Float) {
 +    drawRect(Color(0xFF0A0E15), Offset.Zero, size)
 +    drawRect(Brush.verticalGradient(listOf(Color(0xE62A2112), Color(0x002A2112)), startY = 0f, endY = 90f * scale), Offset.Zero, Size(size.width, 90f * scale))
 +    drawRect(Brush.verticalGradient(listOf(Color(0x000F2A2C), Color(0xCC0F2A2C)), startY = size.height - 70f * scale, endY = size.height), Offset(0f, size.height - 70f * scale), Size(size.width, 70f * scale))
@@ -965,6 +1003,20 @@ index 0000000..78623de
 +        val d = Math.abs(i * 16 - 160) / 160f
 +        drawRect(Color(0xFF4FC3F7).copy(alpha = 0.05f * (1 - d * d)), Offset(i * 16 * scale, 0f), Size(1f, size.height))
 +    }
++    for (s in SPORES) {
++        // whole laps and sways per loop, so the loop restarts without a jump
++        val y = 1f - (s[1] + drift * s[2]) % 1f
++        val x = s[0] * size.width + sin((drift * s[4] + s[1]) * 2f * PI.toFloat()) * 9f * scale
++        val fade = minOf(1f, y * 6f, (1f - y) * 6f)
++        val c = if (s[5] < 0.5f) Color(0xFF4CC38A) else Color(0xFF4FC3F7)
++        val r = (0.6f + 0.9f * s[3]) * scale
++        drawCircle(c.copy(alpha = 0.07f * fade), r * 4f, Offset(x, y * size.height))
++        drawCircle(c.copy(alpha = (0.25f + 0.4f * s[3]) * fade), r, Offset(x, y * size.height))
++    }
++}
++
++private val SPORES = kotlin.random.Random(11).let { rnd ->
++    List(42) { floatArrayOf(rnd.nextFloat(), rnd.nextFloat(), (1 + rnd.nextInt(3)).toFloat(), rnd.nextFloat(), (1 + rnd.nextInt(4)).toFloat(), rnd.nextFloat()) }
 +}
 +
 +private fun DrawScope.chamfer(l: Float, t: Float, w: Float, h: Float, cut: Float): Path = Path().apply {
@@ -992,16 +1044,25 @@ index 0000000..78623de
 +    } else drawRect(color, Offset(l, t), Size(w, h))
 +}
 +
-+/** The transition between screens: a bright diagonal seam crosses the screen, four bands locking in one after another. */
-+private fun DrawScope.drawWipe(progress: Float) {
++/** The transition between screens: the wallpaper covers the screen, then a bright diagonal seam opens it, four bands
++ * locking in one after another. */
++private fun DrawScope.drawWipe(progress: Float, scale: Float, drift: Float) {
 +    if (progress >= 1f) return
 +    val w = size.width; val h = size.height; val band = h / 4f; val slope = 0.22f; val rows = 90
 +    val p = progress
++    val cover = Path()
++    val edges = FloatArray(rows)
 +    for (r in 0 until rows) {
 +        val y = r * h / rows; val b = (y / band).toInt()
-+        val edge = p * (w + h * slope + 0.54f * w) - 0.18f * w * b - y * slope
-+        val cover = if (edge < 0f) 0f else edge
-+        if (cover < w) drawRect(Color(0xFF0A0E15).copy(alpha = 0.96f), Offset(cover, y), Size(w - cover, h / rows + 1f))
++        val edge = if (p <= 0f) -1f else p * (w + h * slope + 0.54f * w) - 0.18f * w * b - y * slope
++        edges[r] = edge
++        val left = if (edge < 0f) 0f else edge
++        if (left < w) cover.addRect(androidx.compose.ui.geometry.Rect(left, y, w, y + h / rows + 1f))
++    }
++    clipPath(cover) { drawBackdrop(scale, drift) }
++    if (p <= 0f) return
++    for (r in 0 until rows) {
++        val y = r * h / rows; val edge = edges[r]
 +        if (edge > -8f && edge < w) {
 +            drawRect(Color(0xFFF2A33A).copy(alpha = 0.22f * (1 - p)), Offset(edge - 5f, y), Size(14f, h / rows + 1f))
 +            drawRect(Color(0xFFFFE7A8).copy(alpha = 1 - p * 0.6f), Offset(edge, y), Size(3f, h / rows + 1f))
@@ -1957,7 +2018,7 @@ index 7985ccc..df2281c 100644
  
      suspend fun hdMode() = booleanPreference(R.string.pref_key_hd_mode, false)
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/BaseGameActivity.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/BaseGameActivity.kt
-index 6d06420..954898e 100644
+index 6d06420..00d1381 100644
 --- a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/BaseGameActivity.kt
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/BaseGameActivity.kt
 @@ -21,6 +21,7 @@ import com.swordfish.lemuroid.app.shared.ImmersiveActivity
@@ -1968,7 +2029,7 @@ index 6d06420..954898e 100644
  import com.swordfish.lemuroid.app.shared.input.InputDeviceManager
  import com.swordfish.lemuroid.app.shared.rumble.RumbleManager
  import com.swordfish.lemuroid.app.shared.settings.ControllerConfigsManager
-@@ -87,6 +88,8 @@ abstract class BaseGameActivity : ImmersiveActivity() {
+@@ -87,13 +88,20 @@ abstract class BaseGameActivity : ImmersiveActivity() {
      private lateinit var baseGameScreenViewModel: BaseGameScreenViewModel
  
      private val startGameTime = System.currentTimeMillis()
@@ -1977,7 +2038,8 @@ index 6d06420..954898e 100644
      private var finishTriggered = false
  
      override fun onCreate(savedInstanceState: Bundle?) {
-@@ -94,6 +97,10 @@ abstract class BaseGameActivity : ImmersiveActivity() {
+         super.onCreate(savedInstanceState)
++        com.swordfish.lemuroid.app.shared.game.viewmodel.Smz3Idle.showBlack(this)
          setUpExceptionsHandler()
          GameService.startService(applicationContext, intent)
          game = intent.getSerializableExtra(EXTRA_GAME) as Game
@@ -1988,7 +2050,7 @@ index 6d06420..954898e 100644
          systemCoreConfig = intent.getSerializableExtra(EXTRA_SYSTEM_CORE_CONFIG) as SystemCoreConfig
          system = GameSystem.findById(game.systemId)
  
-@@ -126,6 +133,7 @@ abstract class BaseGameActivity : ImmersiveActivity() {
+@@ -126,6 +134,7 @@ abstract class BaseGameActivity : ImmersiveActivity() {
                  }
              }
          }
@@ -1996,7 +2058,7 @@ index 6d06420..954898e 100644
  
          lifecycleScope.launch {
              baseGameScreenViewModel.loadGame(
-@@ -209,7 +217,7 @@ abstract class BaseGameActivity : ImmersiveActivity() {
+@@ -209,7 +218,7 @@ abstract class BaseGameActivity : ImmersiveActivity() {
                      GameMenuContract.EXTRA_AUDIO_ENABLED,
                      baseGameScreenViewModel.retroGameView.retroGameView?.audioEnabled,
                  )
@@ -2005,7 +2067,7 @@ index 6d06420..954898e 100644
                  this.putExtra(
                      GameMenuContract.EXTRA_FAST_FORWARD,
                      (baseGameScreenViewModel.retroGameView.retroGameView?.frameSpeed ?: 1) > 1,
-@@ -244,7 +252,7 @@ abstract class BaseGameActivity : ImmersiveActivity() {
+@@ -244,7 +253,7 @@ abstract class BaseGameActivity : ImmersiveActivity() {
                              it.currentTiltConfiguration,
                              it.tiltConfigurations,
                          )
@@ -2014,7 +2076,7 @@ index 6d06420..954898e 100644
                      is GameViewModelSideEffects.UiEffect.SuccessfulFinish -> performSuccessfulActivityFinish()
                      is GameViewModelSideEffects.UiEffect.FailureFinish -> performErrorFinish(it.message)
                      is GameViewModelSideEffects.UiEffect.SaveQuickSave -> performSaveQuickSave()
-@@ -262,6 +270,62 @@ abstract class BaseGameActivity : ImmersiveActivity() {
+@@ -262,6 +271,62 @@ abstract class BaseGameActivity : ImmersiveActivity() {
          baseGameScreenViewModel.loadQuickSave()
      }
  
@@ -2077,10 +2139,11 @@ index 6d06420..954898e 100644
      private fun performToggleFastForward() {
          baseGameScreenViewModel.toggleFastForward()
      }
-@@ -351,6 +415,9 @@ abstract class BaseGameActivity : ImmersiveActivity() {
+@@ -351,6 +416,10 @@ abstract class BaseGameActivity : ImmersiveActivity() {
      }
  
      override fun onDestroy() {
++        com.swordfish.lemuroid.app.shared.game.viewmodel.Smz3Idle.hideBlack()
 +        com.swordfish.lemuroid.app.shared.game.viewmodel.Smz3Tracker.onRunComplete = null
 +        com.swordfish.lemuroid.app.shared.game.viewmodel.Smz3Tracker.onDailyResult = null
 +        dailyOverlay?.stop()
@@ -2563,10 +2626,10 @@ index 0000000..7cf2d86
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3DungeonMaps.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3DungeonMaps.kt
 new file mode 100644
-index 0000000..9f0b95e
+index 0000000..d5c4d50
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3DungeonMaps.kt
-@@ -0,0 +1,169 @@
+@@ -0,0 +1,171 @@
 +package com.swordfish.lemuroid.app.shared.game.viewmodel
 +
 +import android.content.Context
@@ -2580,7 +2643,8 @@ index 0000000..9f0b95e
 +class DungeonLive(val d: Int, val idx: Int, val cell: Int, val lx: Int, val ly: Int)
 +
 +/** What the game remembers about the dungeons: the visited quadrants of every room (`$7EF000`) and the owned dungeon maps. */
-+class DungeonData(val roomFlags: ByteArray, val mapMask: Int, val compassMask: Int)
++/** keys: the fixed keys still to take, {room, x, y, big} each, when the run marks them; else empty. */
++class DungeonData(val roomFlags: ByteArray, val mapMask: Int, val compassMask: Int, val keys: IntArray = IntArray(0))
 +
 +/**
 + * The game's own dungeon maps (the screen the pause menu shows), rendered from the ROM by tools/zelda-dungeon-maps.py into two
@@ -2675,11 +2739,12 @@ index 0000000..9f0b95e
 +    }
 +
 +    /** The remembered dungeon state from the Zelda work RAM (Zelda running) or from the parked save RAM (Super Metroid running). */
-+    fun data(wram: ByteArray, sram: ByteArray, zeldaRunning: Boolean): DungeonData? {
++    fun data(wram: ByteArray, sram: ByteArray, zeldaRunning: Boolean, fixedKeys: Boolean = false): DungeonData? {
 +        val src = if (zeldaRunning) wram else sram
 +        val base = if (zeldaRunning) 0xF000 else 0
 +        if (src.size < base + 0x370) return null
-+        return DungeonData(src.copyOfRange(base, base + 0x200), u16(src, base + 0x368), u16(src, base + 0x364))
++        return DungeonData(src.copyOfRange(base, base + 0x200), u16(src, base + 0x368), u16(src, base + 0x364),
++            if (fixedKeys) Smz3Native.fixedKeysLeft(wram, sram, zeldaRunning) else IntArray(0))
 +    }
 +
 +    private val cache = HashMap<String, Bitmap>()
@@ -2738,10 +2803,10 @@ index 0000000..9f0b95e
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3DungeonPanel.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3DungeonPanel.kt
 new file mode 100644
-index 0000000..9d072d4
+index 0000000..d71c7a9
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3DungeonPanel.kt
-@@ -0,0 +1,243 @@
+@@ -0,0 +1,269 @@
 +package com.swordfish.lemuroid.app.shared.game.viewmodel
 +
 +import android.graphics.Canvas
@@ -2792,6 +2857,9 @@ index 0000000..9d072d4
 +    private val dimFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#E6243038") }
 +    private val dimRim = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; color = Color.parseColor("#F0F4F8"); strokeWidth = 2.5f }
 +    private val bossFill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#D32F2F") }
++    private val keyGold = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#F2C14E") }
++    private val keyBig = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#FFE08A") }
++    private val keyInk = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Color.parseColor("#1A1408") }
 +    private val blackRim = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; color = Color.BLACK; strokeWidth = 3f }
 +
 +    /** True when the view should draw the dungeon picture rather than the world map. */
@@ -2938,6 +3006,16 @@ index 0000000..9d072d4
 +            }
 +        }
 +
++        // keys under pots and on enemies, until taken, on runs that ask for them
++        val keys = data?.keys
++        if (grid != null && keys != null) for (k in keys.indices step 4) {
++            val c = grid.indexOf(keys[k])
++            if (c < 0) continue
++            val x = left + ((c % 5 - b[0]) * Smz3DungeonMaps.ROOM + (keys[k + 1] + 0.5f) / 4f) * scale
++            val y = top + ((c / 5 - b[1]) * Smz3DungeonMaps.ROOM + (keys[k + 2] + 0.5f) / 4f) * scale
++            keyMark(canvas, x, y, scale * 1.6f, keys[k + 3] != 0)
++        }
++
 +        // the boss, once the compass says where (or on all-map runs), until it is beaten
 +        val spot = Smz3DungeonMaps.BOSS_SPOT[dn]
 +        val bossIdx = Smz3DungeonMaps.BOSS_FLOOR[dn] + maps.below(dn)
@@ -2968,6 +3046,19 @@ index 0000000..9d072d4
 +        }
 +    }
 +
++    /** A key standing up, its bow at the top: gold, a big key larger and paler. */
++    private fun keyMark(canvas: Canvas, x: Float, y: Float, size: Float, big: Boolean) {
++        val s = if (big) size * 1.25f else size
++        val gold = if (big) keyBig else keyGold
++        canvas.drawCircle(x, y - s * 0.55f, s * 0.62f, keyInk)
++        canvas.drawRect(x - s * 0.3f, y - s * 0.3f, x + s * 0.3f, y + s * 1.2f, keyInk)
++        canvas.drawCircle(x, y - s * 0.55f, s * 0.45f, gold)
++        canvas.drawCircle(x, y - s * 0.55f, s * 0.18f, keyInk)
++        canvas.drawRect(x - s * 0.13f, y - s * 0.15f, x + s * 0.13f, y + s * 1.05f, gold)
++        canvas.drawRect(x + s * 0.13f, y + s * 0.6f, x + s * 0.45f, y + s * 0.8f, gold)
++        canvas.drawRect(x + s * 0.13f, y + s * 0.85f, x + s * 0.37f, y + s * 1.03f, gold)
++    }
++
 +    private fun dot(canvas: Canvas, x: Float, y: Float, r: Float, state: Int) {
 +        if (state == 2) {
 +            canvas.drawCircle(x, y, r * 0.8f, dimFill)
@@ -2987,10 +3078,10 @@ index 0000000..9d072d4
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Help.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Help.kt
 new file mode 100644
-index 0000000..9595fe8
+index 0000000..eaebc9d
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Help.kt
-@@ -0,0 +1,110 @@
+@@ -0,0 +1,123 @@
 +package com.swordfish.lemuroid.app.shared.game.viewmodel
 +
 +import android.content.Context
@@ -3006,6 +3097,8 @@ index 0000000..9595fe8
 +    val mode: String = "all",
 +    /** The map marks the checks reachable now ("showReachable"; runs made before the option: only the Cozy ones). */
 +    val reachable: Boolean = false,
++    /** The dungeon maps mark the keys under pots and on enemies ("showFixedKeys"; runs made before the option: only the Cozy ones). */
++    val fixedKeys: Boolean = false,
 +    val total: Int = 0,
 +    val used: Int = 0,
 +    /** Hints already given, oldest first. */
@@ -3029,6 +3122,16 @@ index 0000000..9595fe8
 +    @Synchronized
 +    fun current(): HelpInfo = info
 +
++    /** Turns the fixed keys on the dungeon maps on or off for the run being played, kept in its settings. */
++    @Synchronized
++    fun setFixedKeys(context: Context, on: Boolean) {
++        val s = slot ?: return
++        val run = RunStore.load(context, s) ?: return
++        val json = runCatching { JSONObject(run.settings.ifBlank { "{}" }) }.getOrDefault(JSONObject()).put("showFixedKeys", on)
++        RunStore.save(context, run.copy(settings = json.toString()))
++        info = info.copy(fixedKeys = on)
++    }
++
 +    private fun file(context: Context, slot: Int) = File(File(context.filesDir, "runs").apply { mkdirs() }, "slot$slot.help.json")
 +
 +    /** Loads the run's help mode and what was already asked. */
@@ -3041,7 +3144,8 @@ index 0000000..9595fe8
 +        val run = slotNow?.let { RunStore.load(context, it) } ?: return
 +        val s = runCatching { JSONObject(run.settings.ifBlank { "{}" }) }.getOrDefault(JSONObject())
 +        var next = HelpInfo(mode = s.optString("helpMode", "all"), total = s.optInt("helpCount", 3),
-+            reachable = !s.optBoolean("challenge") && if (s.has("showReachable")) s.optBoolean("showReachable") else run.name == "Cozy run")
++            reachable = !s.optBoolean("challenge") && if (s.has("showReachable")) s.optBoolean("showReachable") else run.name == "Cozy run",
++            fixedKeys = if (s.has("showFixedKeys")) s.optBoolean("showFixedKeys") else run.name == "Cozy run")
 +        runCatching {
 +            val saved = JSONObject(file(context, slotNow).readText())
 +            val hints = saved.optJSONArray("hints") ?: JSONArray()
@@ -3103,10 +3207,10 @@ index 0000000..9595fe8
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Hotkeys.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Hotkeys.kt
 new file mode 100644
-index 0000000..c2d75a2
+index 0000000..0e5166b
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Hotkeys.kt
-@@ -0,0 +1,174 @@
+@@ -0,0 +1,175 @@
 +package com.swordfish.lemuroid.app.shared.game.viewmodel
 +
 +import android.content.Context
@@ -3231,10 +3335,11 @@ index 0000000..c2d75a2
 +        return runCatching { org.json.JSONObject(run.settings).optBoolean("challenge", false) }.getOrDefault(false)
 +    }
 +
-+    /** Runs on any online ladder (original, monthly, weekly) allow no save state of any kind: no hotkeys, no autosave, Continue loads the game's own save. */
++    /** Runs that send a time online (the ladders: original, monthly, weekly; and the daily challenge) allow no save state of any
++     * kind, whatever their options say: no hotkeys, no autosave, Continue loads the game's own save. */
 +    fun noAutosave(context: Context): Boolean {
 +        val slot = RunStore.activeSlot(context) ?: return false
-+        return com.swordfish.lemuroid.app.mobile.feature.runs.OnlineLadder.slotKind(context, slot).let { it >= 1 }
++        return com.swordfish.lemuroid.app.mobile.feature.runs.OnlineLadder.slotKind(context, slot) >= 1 || challengeRun(context)
 +    }
 +
 +    fun resetAll(context: Context) = prefs(context).edit().clear().apply()
@@ -3440,19 +3545,24 @@ index 0000000..3d11f48
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3IdlePresentation.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3IdlePresentation.kt
 new file mode 100644
-index 0000000..f779b28
+index 0000000..1723e4d
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3IdlePresentation.kt
-@@ -0,0 +1,210 @@
+@@ -0,0 +1,345 @@
 +package com.swordfish.lemuroid.app.shared.game.viewmodel
 +
 +import android.animation.ValueAnimator
 +import android.app.Presentation
 +import android.content.Context
++import android.graphics.Bitmap
++import android.graphics.BitmapFactory
 +import android.graphics.Canvas
 +import android.graphics.Color
 +import android.graphics.LinearGradient
 +import android.graphics.Paint
++import android.graphics.Path
++import android.graphics.RectF
++import android.graphics.Typeface
 +import android.graphics.Shader
 +import android.hardware.display.DisplayManager
 +import android.os.Bundle
@@ -3467,15 +3577,28 @@ index 0000000..f779b28
 +import kotlin.math.sin
 +import kotlin.random.Random
 +
-+/** Decorative waiting screen for the secondary display while no game is running: a drifting starfield under the title. */
++/** The secondary display while the run menu is in front: the logo, the selected run and the ladders. */
 +internal class Smz3IdlePresentation(context: Context, display: Display) : Presentation(context, display) {
 +    private var animator: ValueAnimator? = null
++    private var view: IdleView? = null
++
++    fun clearFade() { view?.let { it.dark = 0f; it.invalidate() } }
++
++    /** A game is starting: the screen goes to black, which the game's black stand-in then takes over. */
++    fun fadeOut() {
++        val v = view ?: return
++        ValueAnimator.ofFloat(v.dark, 1f).apply {
++            duration = 350
++            addUpdateListener { v.dark = it.animatedValue as Float; v.invalidate() }
++            start()
++        }
++    }
 +
 +    override fun onCreate(savedInstanceState: Bundle?) {
 +        super.onCreate(savedInstanceState)
 +        window?.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(Color.BLACK))
 +        window?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_DIM_BEHIND)
-+        val view = IdleView(context)
++        val view = IdleView(context).also { this.view = it }
 +        setContentView(view, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
 +        animator = ValueAnimator.ofFloat(0f, 1f).apply {
 +            duration = 40000
@@ -3491,33 +3614,39 @@ index 0000000..f779b28
 +        super.onStop()
 +    }
 +
++    /** Drawn on the run menu's 320-wide grid and in its colours, so both screens read as one device. */
 +    private class IdleView(context: Context) : View(context) {
 +        var phase = 0f
++        var dark = 0f
 +        private val rnd = Random(7)
-+        private val stars = List(90) { floatArrayOf(rnd.nextFloat(), rnd.nextFloat(), 0.3f + rnd.nextFloat() * 0.7f) }
++        private val stars = List(70) { floatArrayOf(rnd.nextFloat(), rnd.nextFloat(), 0.3f + rnd.nextFloat() * 0.7f) }
 +        private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
-+        private val density = context.resources.displayMetrics.density
++        private val face = runCatching { Typeface.createFromAsset(context.assets, "smz3/menu_font.ttf") }.getOrDefault(Typeface.MONOSPACE)
++        private val logo: Bitmap? = runCatching { context.assets.open("smz3/logo.png").use { BitmapFactory.decodeStream(it) } }.getOrNull()
 +        private var online = OnlineLadder.cached(context).isNotEmpty()
-+        private var defaultLadder = if (online) OnlineLadder.cached(context).take(5) else Leaderboard.top(context, true)
-+        private val customLadder = Leaderboard.top(context, false)
-+        private var page = 0   // 0 the selected run or the top 3, then one page per table: 1 original, 2 monthly, 3 weekly (online), 4 custom runs of this device
-+        private var monthlyLadder = OnlineLadder.cached(context, 1)
-+        private var weeklyLadder = OnlineLadder.cached(context, 2)
-+        private val button = android.graphics.RectF()
++        private var ladders = loadLadders(context)
++        private var tab = 0
++        private val tabRects = List(TABS.size) { RectF() }
++        private var u = 1f
 +
 +        init {
 +            Smz3MenuSelection.onChange = { postInvalidate() }
 +            Thread {
 +                OnlineLadder.flush(context)
 +                if (OnlineLadder.refresh(context)) {
-+                    defaultLadder = OnlineLadder.cached(context).take(5)
-+                    monthlyLadder = OnlineLadder.cached(context, 1)
-+                    weeklyLadder = OnlineLadder.cached(context, 2)
++                    ladders = loadLadders(context)
 +                    online = true
 +                    postInvalidate()
 +                }
 +            }.start()
 +        }
++
++        private fun loadLadders(context: Context): List<List<LeaderboardEntry>> = listOf(
++            OnlineLadder.cached(context).ifEmpty { Leaderboard.top(context, true, ROWS) },
++            OnlineLadder.cached(context, 1),
++            OnlineLadder.cached(context, 2),
++            Leaderboard.top(context, false, ROWS),
++        )
 +
 +        override fun onDetachedFromWindow() {
 +            if (Smz3MenuSelection.onChange != null) Smz3MenuSelection.onChange = null
@@ -3525,20 +3654,56 @@ index 0000000..f779b28
 +        }
 +
 +        override fun onTouchEvent(event: android.view.MotionEvent): Boolean {
-+            if (event.action == android.view.MotionEvent.ACTION_UP && button.contains(event.x, event.y)) {
-+                page = (page + 1) % 5
-+                invalidate()
++            if (event.action == android.view.MotionEvent.ACTION_UP) {
++                tabRects.indexOfFirst { it.contains(event.x, event.y) }.takeIf { it >= 0 }?.let { tab = it; invalidate() }
 +            }
 +            return true
++        }
++
++        private fun text(canvas: Canvas, s: String, x: Float, y: Float, size: Float, color: Int, align: Paint.Align = Paint.Align.LEFT) {
++            paint.style = Paint.Style.FILL
++            paint.typeface = face
++            paint.textSize = size * u
++            paint.textAlign = align
++            paint.color = color
++            canvas.drawText(s, x * u, y * u, paint)
++        }
++
++        /** [s] cut with an ellipsis to fit [width] grid units at [size]. */
++        private fun fit(s: String, width: Float, size: Float): String {
++            paint.typeface = face
++            paint.textSize = size * u
++            if (paint.measureText(s) <= width * u) return s
++            var n = s.length
++            while (n > 1 && paint.measureText(s.take(n) + "…") > width * u) n--
++            return s.take(n) + "…"
++        }
++
++        private fun panel(canvas: Canvas, l: Float, t: Float, w: Float, h: Float) {
++            fun chamfer(l: Float, t: Float, w: Float, h: Float, c: Float) = Path().apply {
++                moveTo((l + c) * u, t * u); lineTo((l + w) * u, t * u); lineTo((l + w) * u, (t + h - c) * u)
++                lineTo((l + w - c) * u, (t + h) * u); lineTo(l * u, (t + h) * u); lineTo(l * u, (t + c) * u); close()
++            }
++            paint.style = Paint.Style.FILL
++            paint.color = BORDER
++            canvas.drawPath(chamfer(l, t, w, h, 6f), paint)
++            paint.color = PANEL
++            canvas.drawPath(chamfer(l + 0.7f, t + 0.7f, w - 1.4f, h - 1.4f, 5.3f), paint)
 +        }
 +
 +        override fun onDraw(canvas: Canvas) {
 +            val w = width.toFloat()
 +            val h = height.toFloat()
-+            paint.shader = LinearGradient(0f, 0f, 0f, h, Color.parseColor("#0B1A12"), Color.parseColor("#05080C"), Shader.TileMode.CLAMP)
++            u = w / 320f
++            val gh = h / u
++            paint.style = Paint.Style.FILL
++            paint.shader = LinearGradient(0f, 0f, 0f, h, Color.parseColor("#0C1220"), BG, Shader.TileMode.CLAMP)
 +            canvas.drawRect(0f, 0f, w, h, paint)
 +            paint.shader = null
-+            paint.alpha = 255
++            for (i in 0..20) {   // the menu's faint grid
++                paint.color = Color.argb(10, 79, 195, 247)
++                canvas.drawRect(i * 16f * u, 0f, i * 16f * u + 1f, h, paint)
++            }
 +            for (s in stars) {
 +                // whole numbers of screen crossings and twinkles per loop, so the loop restarts without a jump
 +                val laps = 1 + (s[2] * 3f).toInt().coerceAtMost(2)
@@ -3546,94 +3711,143 @@ index 0000000..f779b28
 +                val cycles = 2 + (s[2] * 8f).toInt()
 +                val twinkle = 0.5f + 0.5f * sin((phase * cycles + s[0] * 10f) * 2f * PI.toFloat())
 +                val edge = minOf(1f, y * 12f, (1f - y) * 12f)   // fade in at the top and out at the bottom instead of popping
-+                paint.color = Color.argb(((90 + 150 * twinkle * s[2]) * edge).toInt().coerceIn(0, 255), 243, 235, 200)
-+                canvas.drawCircle(s[0] * w, y * h, (1f + 1.6f * s[2]) * density, paint)
++                paint.color = Color.argb(((40 + 110 * twinkle * s[2]) * edge).toInt().coerceIn(0, 255), 200, 220, 255)
++                canvas.drawCircle(s[0] * w, y * h, (0.25f + 0.35f * s[2]) * u, paint)
 +            }
-+            paint.textAlign = Paint.Align.CENTER
-+            paint.color = Color.parseColor("#E8C14A")
-+            paint.typeface = android.graphics.Typeface.create(android.graphics.Typeface.SERIF, android.graphics.Typeface.BOLD)
-+            paint.textSize = 34f * density
-+            canvas.drawText("SMZ3", w / 2f, h * 0.14f, paint)
-+            paint.color = Color.parseColor("#FF9A1F")
-+            paint.textSize = 12f * density
-+            canvas.drawText("A LINK TO THE PAST  ·  SUPER METROID", w / 2f, h * 0.14f + 22f * density, paint)
-+            paint.typeface = android.graphics.Typeface.DEFAULT
++            drawHeader(canvas)
 +            val info = Smz3MenuSelection.info
-+            val tag = if (online) "  ·  ONLINE" else ""
-+            if (page == 1) {
-+                drawLadder(canvas, "ORIGINAL" + tag, defaultLadder, w / 2f, h * 0.36f, 5)
-+            } else if (page == 2) {
-+                drawLadder(canvas, "MONTHLY" + tag, monthlyLadder, w / 2f, h * 0.36f, 5)
-+            } else if (page == 3) {
-+                drawLadder(canvas, "WEEKLY" + tag, weeklyLadder, w / 2f, h * 0.36f, 5)
-+            } else if (page == 4) {
-+                drawLadder(canvas, "CUSTOM (THIS DEVICE)", customLadder, w / 2f, h * 0.36f, 5)
-+            } else if (info != null) {
-+                drawRunInfo(canvas, info, w, h)
-+            } else {
-+                drawLadder(canvas, "ORIGINAL  ·  TOP 3" + tag, defaultLadder, w / 2f, h * 0.36f, 3)
++            val top = 52f
++            val bodyH = gh - top - 8f
++            if (info != null) {
++                drawRunCard(canvas, info, 12f, top, 140f, bodyH)
++                drawLadder(canvas, 158f, top, 150f, bodyH)
++            } else drawLadder(canvas, 12f, top, 296f, bodyH)
++            if (dark > 0f) {
++                paint.color = Color.argb((dark * 255).toInt().coerceIn(0, 255), 0, 0, 0)
++                canvas.drawRect(0f, 0f, w, h, paint)
 +            }
-+            drawButton(canvas, when (page) { 0 -> "SHOW LADDERS"; 1 -> "MONTHLY"; 2 -> "WEEKLY"; 3 -> "CUSTOM RUNS"; else -> "BACK" }, w, h)
 +        }
 +
-+        private fun drawButton(canvas: Canvas, label: String, w: Float, h: Float) {
-+            button.set(w / 2f - 90f * density, h - 62f * density, w / 2f + 90f * density, h - 22f * density)
-+            paint.style = Paint.Style.FILL
-+            paint.color = Color.argb(160, 40, 70, 60)
-+            canvas.drawRoundRect(button, 10f * density, 10f * density, paint)
-+            paint.color = Color.parseColor("#E8C14A")
-+            paint.textAlign = Paint.Align.CENTER
-+            paint.textSize = 14f * density
-+            canvas.drawText(label, button.centerX(), button.centerY() + 5f * density, paint)
++        private fun drawHeader(canvas: Canvas) {
++            paint.typeface = face
++            paint.textSize = 20f * u
++            val title = paint.measureText("SMZ3") / u
++            val size = 22f
++            val x = 160f - (size + 6f + title) / 2f   // the logo and the name centred as one row, the subtitle centred below
++            logo?.let { canvas.drawBitmap(it, null, RectF(x * u, 6f * u, (x + size) * u, (6f + size) * u), Paint(Paint.FILTER_BITMAP_FLAG)) }
++            text(canvas, "SMZ3", x + size + 6f, 24.5f, 20f, ACCENT)
++            text(canvas, SUBTITLE, 160f, 39f, 6f, DIM, Paint.Align.CENTER)
++            text(canvas, if (online) "ONLINE" else "OFFLINE", 304f, 13f, 5f, if (online) GREEN else DIM, Paint.Align.RIGHT)
++            paint.color = if (online) GREEN else DIM
++            paint.textSize = 5f * u
++            canvas.drawCircle((304f - paint.measureText(if (online) "ONLINE" else "OFFLINE") / u - 4f) * u, 11.3f * u, 1.3f * u, paint)
++            paint.color = BORDER
++            canvas.drawRect(12f * u, 45f * u, 308f * u, 45f * u + 1f, paint)
++            paint.color = ACCENT
++            canvas.drawRect(148f * u, 45f * u - 1f, 172f * u, 45f * u + 1f, paint)
 +        }
 +
-+        private fun drawRunInfo(canvas: Canvas, info: RunInfo, w: Float, h: Float) {
-+            var y = h * 0.34f
-+            paint.textAlign = Paint.Align.CENTER
-+            paint.color = Color.parseColor("#D8F6FF")
-+            paint.textSize = 15f * density
-+            canvas.drawText("SLOT ${info.slot + 1}  ·  ${info.name}", w / 2f, y, paint)
-+            y += 30f * density
-+            paint.textSize = 20f * density
-+            paint.color = if (info.isDefault) Color.parseColor("#7FE08A") else Color.parseColor("#FF9A1F")
-+            canvas.drawText(if (info.isDefault) "DEFAULT RUN" else "CUSTOM RUN", w / 2f, y, paint)
-+            paint.textSize = 12f * density
-+            paint.color = Color.parseColor("#8FA0A8")
-+            y += 24f * density
-+            val lines = if (info.diff.isEmpty()) listOf(if (info.isDefault) "Every option at its default" else "No option list stored for this run") else info.diff.take(7)
++        private fun drawRunCard(canvas: Canvas, info: RunInfo, l: Float, t: Float, w: Float, h: Float) {
++            panel(canvas, l, t, w, h)
++            val x = l + 9f
++            text(canvas, "SLOT ${info.slot + 1}", x, t + 13f, 5.5f, DIM)
++            text(canvas, fit(info.name, w - 18f, 11f), x, t + 27f, 11f, TEXT)
++            val badge = if (info.isDefault) "DEFAULT RULES" else "CUSTOM RULES"
++            val tint = if (info.isDefault) GREEN else ACCENT
++            paint.typeface = face
++            paint.textSize = 5.5f * u
++            val bw = paint.measureText(badge) / u + 8f
++            paint.color = Color.argb(40, Color.red(tint), Color.green(tint), Color.blue(tint))
++            canvas.drawRoundRect(RectF(x * u, (t + 33f) * u, (x + bw) * u, (t + 42f) * u), 2f * u, 2f * u, paint)
++            text(canvas, badge, x + 4f, t + 39.6f, 5.5f, tint)
++            text(canvas, if (info.finished) "FINISHED IN" else "PLAY TIME", x, t + 55f, 5.5f, DIM)
++            text(canvas, clock(info.playTimeMs), x, t + 68f, 12f, if (info.finished) GREEN else TEXT)
++            bar(canvas, "ZELDA", info.zelda, x, t + 82f, w - 18f, GREEN)
++            bar(canvas, "METROID", info.metroid, x, t + 100f, w - 18f, BLUE)
++            var y = t + 124f
++            val room = ((h - 141f) / 10f).toInt().coerceAtLeast(0)
++            val lines = info.diff.take(if (info.diff.size > room) maxOf(0, room - 1) else room)
 +            for (line in lines) {
-+                paint.color = Color.parseColor("#D8F6FF")
-+                canvas.drawText(line, w / 2f, y, paint)
-+                y += 19f * density
++                paint.color = ACCENT
++                canvas.drawRect(x * u, (y - 3f) * u, (x + 1.5f) * u, (y - 1.5f) * u, paint)
++                text(canvas, fit(line, w - 22f, 6f), x + 5f, y, 6f, TEXT)
++                y += 10f
 +            }
-+            if (info.diff.size > 7) {
-+                paint.color = Color.parseColor("#8FA0A8")
-+                canvas.drawText("+ ${info.diff.size - 7} more", w / 2f, y, paint)
-+                y += 19f * density
-+            }
-+            paint.color = Color.parseColor("#8FA0A8")
-+            canvas.drawText("Music: ${info.music}", w / 2f, y + 6f * density, paint)
++            if (info.diff.size > lines.size && room > 0) text(canvas, "+ ${info.diff.size - lines.size} more", x + 5f, y, 6f, DIM)
++            paint.color = BORDER
++            canvas.drawRect((l + 6f) * u, (t + h - 17f) * u, (l + w - 6f) * u, (t + h - 17f) * u + 1f, paint)
++            text(canvas, fit(info.logic, w / 2f - 12f, 6f), x, t + h - 7f, 6f, TEXT)
++            text(canvas, fit("♪ " + info.music, w / 2f - 6f, 6f), l + w - 9f, t + h - 7f, 6f, DIM, Paint.Align.RIGHT)
 +        }
 +
-+        private fun drawLadder(canvas: Canvas, title: String, entries: List<LeaderboardEntry>, cx: Float, top: Float, rows: Int) {
-+            paint.textAlign = Paint.Align.CENTER
-+            paint.color = Color.parseColor("#E8C14A")
-+            paint.textSize = 13f * density
-+            canvas.drawText(title, cx, top, paint)
-+            paint.textSize = 12f * density
++        private fun clock(ms: Long): String {
++            val m = ms / 60000
++            return "%d:%02d:%02d".format(m / 60, m % 60, ms / 1000 % 60)
++        }
++
++        private fun bar(canvas: Canvas, label: String, v: Pair<Int, Int>, x: Float, y: Float, w: Float, color: Int) {
++            text(canvas, label, x, y, 5.5f, DIM)
++            text(canvas, if (v.second > 0) "${v.first}/${v.second}" else "-", x + w, y, 6f, TEXT, Paint.Align.RIGHT)
++            paint.color = BORDER
++            canvas.drawRect(x * u, (y + 3f) * u, (x + w) * u, (y + 5f) * u, paint)
++            if (v.second > 0) {
++                paint.color = color
++                canvas.drawRect(x * u, (y + 3f) * u, (x + w * v.first / v.second) * u, (y + 5f) * u, paint)
++            }
++        }
++
++        private fun drawLadder(canvas: Canvas, l: Float, t: Float, w: Float, h: Float) {
++            panel(canvas, l, t, w, h)
++            val tw = (w - 12f) / TABS.size
++            for ((i, name) in TABS.withIndex()) {
++                val tx = l + 6f + i * tw
++                tabRects[i].set(tx * u, t * u, (tx + tw) * u, (t + 18f) * u)
++                text(canvas, fit(name, tw - 2f, 5.5f), tx + tw / 2f, t + 12f, 5.5f, if (i == tab) ACCENT else DIM, Paint.Align.CENTER)
++                if (i == tab) {
++                    paint.color = ACCENT
++                    canvas.drawRect((tx + 4f) * u, (t + 15.5f) * u, (tx + tw - 4f) * u, (t + 17f) * u, paint)
++                }
++            }
++            paint.color = BORDER
++            canvas.drawRect((l + 6f) * u, (t + 17f) * u, (l + w - 6f) * u, (t + 17f) * u + 1f, paint)
++            val entries = ladders[tab]
 +            if (entries.isEmpty()) {
-+                paint.color = Color.parseColor("#8FA0A8")
-+                canvas.drawText("No finished runs yet", cx, top + 26f * density, paint)
++                text(canvas, if (tab == 3) "No finished custom runs" else "No times yet", l + w / 2f, t + h / 2f + 6f, 6.5f, DIM, Paint.Align.CENTER)
 +                return
 +            }
++            val rowH = 14f
++            val rows = minOf(entries.size, ((h - 24f) / rowH).toInt())
 +            for ((i, e) in entries.take(rows).withIndex()) {
-+                val y = top + (26f + 22f * i) * density
-+                paint.color = if (i == 0) Color.parseColor("#FFE08A") else Color.parseColor("#D8F6FF")
-+                paint.textAlign = Paint.Align.LEFT
-+                canvas.drawText("${i + 1}. ${e.name.take(14)}", cx - 100f * density, y, paint)
-+                paint.textAlign = Paint.Align.RIGHT
-+                canvas.drawText(Leaderboard.format(e.timeMs), cx + 100f * density, y, paint)
++                val y = t + 22f + i * rowH
++                if (i == 0) {
++                    paint.color = Color.argb(22, 242, 163, 58)
++                    canvas.drawRect((l + 3f) * u, y * u, (l + w - 3f) * u, (y + rowH - 1f) * u, paint)
++                }
++                val medal = MEDALS.getOrElse(i) { DIM }
++                text(canvas, "${i + 1}", l + 14f, y + 9.5f, 7f, medal, Paint.Align.CENTER)
++                val time = Leaderboard.format(e.timeMs)
++                paint.typeface = face
++                paint.textSize = 6.5f * u
++                val timeW = paint.measureText(time) / u
++                text(canvas, fit(e.name, w - 34f - timeW, 6.5f), l + 24f, y + 9.5f, 6.5f, if (i == 0) TEXT_HI else TEXT)
++                text(canvas, time, l + w - 8f, y + 9.5f, 6.5f, if (i == 0) ACCENT else TEXT, Paint.Align.RIGHT)
 +            }
++        }
++
++        companion object {
++            const val ROWS = 12
++            const val SUBTITLE = "A LINK TO THE PAST · SUPER METROID"
++            val TABS = listOf("ORIGINAL", "MONTHLY", "WEEKLY", "CUSTOM")
++            val BG = Color.parseColor("#0A0E15")
++            val PANEL = Color.parseColor("#E6141B27")
++            val BORDER = Color.parseColor("#25324A")
++            val TEXT = Color.parseColor("#E8ECF2")
++            val TEXT_HI = Color.parseColor("#FFF4DC")
++            val DIM = Color.parseColor("#8793A6")
++            val ACCENT = Color.parseColor("#F2A33A")
++            val GREEN = Color.parseColor("#4CC38A")
++            val BLUE = Color.parseColor("#4FC3F7")
++            val MEDALS = listOf(Color.parseColor("#F2C14E"), Color.parseColor("#C7D0DE"), Color.parseColor("#C98A55"))
 +        }
 +    }
 +}
@@ -3643,7 +3857,7 @@ index 0000000..f779b28
 +    private var presentation: Smz3IdlePresentation? = null
 +
 +    fun show(context: Context) {
-+        if (presentation != null) return
++        presentation?.let { it.clearFade(); return }   // back from a game that never started
 +        val displays = context.getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
 +        val target = displays.getDisplays(DisplayManager.DISPLAY_CATEGORY_PRESENTATION).firstOrNull() ?: return
 +        runCatching { presentation = Smz3IdlePresentation(context, target).also { it.show() } }
@@ -3652,6 +3866,32 @@ index 0000000..f779b28
 +    fun hide() {
 +        runCatching { presentation?.dismiss() }
 +        presentation = null
++    }
++
++    fun fadeOut() = presentation?.fadeOut()
++
++    private var black: Presentation? = null
++
++    /** Keeps the display black from the game's start until its tracker shows, instead of a gap with no picture. */
++    fun showBlack(context: Context) {
++        if (black != null) return
++        val displays = context.getSystemService(Context.DISPLAY_SERVICE) as DisplayManager
++        val target = displays.getDisplays(DisplayManager.DISPLAY_CATEGORY_PRESENTATION).firstOrNull() ?: return
++        runCatching {
++            black = Presentation(context, target).apply {
++                val cover = View(context).apply { setBackgroundColor(Color.BLACK); alpha = 0f }
++                setContentView(cover)
++                window?.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(Color.TRANSPARENT))   // fades in over the menu's screen
++                cover.animate().alpha(1f).setDuration(300).start()
++                window?.clearFlags(android.view.WindowManager.LayoutParams.FLAG_DIM_BEHIND)
++                show()
++            }
++        }
++    }
++
++    fun hideBlack() {
++        runCatching { black?.dismiss() }
++        black = null
 +    }
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3MapView.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3MapView.kt
@@ -4186,10 +4426,10 @@ index 0000000..494a59b
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3MenuSelection.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3MenuSelection.kt
 new file mode 100644
-index 0000000..dc5944a
+index 0000000..a5aaa3c
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3MenuSelection.kt
-@@ -0,0 +1,29 @@
+@@ -0,0 +1,33 @@
 +package com.swordfish.lemuroid.app.shared.game.viewmodel
 +
 +import android.content.Context
@@ -4197,7 +4437,10 @@ index 0000000..dc5944a
 +import org.json.JSONObject
 +
 +/** What the secondary screen says about the run highlighted in the menu: its rules and the options that differ from the defaults. */
-+class RunInfo(val slot: Int, val name: String, val isDefault: Boolean, val diff: List<String>, val music: String)
++class RunInfo(
++    val slot: Int, val name: String, val isDefault: Boolean, val diff: List<String>, val music: String,
++    val playTimeMs: Long = 0, val zelda: Pair<Int, Int> = 0 to 0, val metroid: Pair<Int, Int> = 0 to 0, val logic: String = "", val finished: Boolean = false,
++)
 +
 +object Smz3MenuSelection {
 +    var info: RunInfo? = null
@@ -4206,7 +4449,7 @@ index 0000000..dc5944a
 +
 +    fun select(context: Context, slot: Int?) {
 +        val next = slot?.let { load(context, it) }
-+        if (next?.slot == info?.slot && next?.name == info?.name && next?.diff == info?.diff) return
++        if (next?.slot == info?.slot && next?.name == info?.name && next?.diff == info?.diff && next?.playTimeMs == info?.playTimeMs) return
 +        info = next
 +        onChange?.invoke()
 +    }
@@ -4216,15 +4459,16 @@ index 0000000..dc5944a
 +        val s = runCatching { JSONObject(run.settings) }.getOrNull() ?: JSONObject()
 +        val diff = s.optJSONArray("diff")?.let { a -> List(a.length()) { a.getString(it) } } ?: emptyList()
 +        val music = s.optString("musicPackage").let { if (it.isEmpty()) "Original" else if (it == "*") "Random" else it }
-+        return RunInfo(slot, run.name, s.optBoolean("defaultRules", true), diff, music)
++        return RunInfo(slot, run.name, s.optBoolean("defaultRules", true), diff, music, run.playTimeMs, run.zeldaCleared to run.zeldaTotal,
++            run.metroidCleared to run.metroidTotal, run.logic + if (run.keysanity) " · Keysanity" else "", run.completedAt > 0)
 +    }
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Native.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Native.kt
 new file mode 100644
-index 0000000..fb351ef
+index 0000000..3ec4c14
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Native.kt
-@@ -0,0 +1,97 @@
+@@ -0,0 +1,99 @@
 +package com.swordfish.lemuroid.app.shared.game.viewmodel
 +
 +/** JNI bridge to the shared C core (core/smz3_state.c). */
@@ -4241,7 +4485,9 @@ index 0000000..fb351ef
 +    @JvmStatic external fun addShortcutHooks(rom: ByteArray): ByteArray?
 +
 +    @JvmStatic external fun shortcutList(): Array<String>
-+    @JvmStatic external fun shortcutState(wram: ByteArray, sram: ByteArray): IntArray
++    @JvmStatic external fun shortcutState(wram: ByteArray, sram: ByteArray): LongArray
++    /** The fixed keys not taken yet, {room, x, y, big} each. */
++    @JvmStatic external fun fixedKeysLeft(wram: ByteArray, sram: ByteArray, zelda: Boolean): IntArray
 +    @JvmStatic external fun shortcutPokes(id: Int, wram: ByteArray, sram: ByteArray): IntArray
 +
 +    @JvmStatic external fun clearedLocations(wram: ByteArray, sram: ByteArray): IntArray
@@ -4324,10 +4570,10 @@ index 0000000..fb351ef
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Presentation.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Presentation.kt
 new file mode 100644
-index 0000000..e218e7a
+index 0000000..9855d9a
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Presentation.kt
-@@ -0,0 +1,951 @@
+@@ -0,0 +1,966 @@
 +package com.swordfish.lemuroid.app.shared.game.viewmodel
 +
 +import android.app.Presentation
@@ -4417,6 +4663,9 @@ index 0000000..e218e7a
 +        setContentView(root)
 +        select(0)
 +        applyTheme(theme)
++        window?.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(Color.BLACK))
++        root.alpha = 0f   // comes up from the black stand-in
++        root.animate().alpha(1f).setStartDelay(120).setDuration(450).start()
 +    }
 +
 +    private fun select(index: Int) {
@@ -4516,6 +4765,8 @@ index 0000000..e218e7a
 +        val right = LinearLayout(context).apply { orientation = LinearLayout.VERTICAL }
 +        shortcutRow = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL; visibility = View.GONE; setPadding(0, dp(2), 0, dp(2)) }
 +        right.addView(shortcutRow, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)))
++        weaponRow = LinearLayout(context).apply { orientation = LinearLayout.HORIZONTAL; visibility = View.GONE; weightSum = 4f; setPadding(0, 0, 0, dp(2)) }
++        right.addView(weaponRow, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(46)))
 +        miniMap = Smz3MapView(context, follow = true).also {
 +            right.addView(it, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
 +        }
@@ -4558,6 +4809,7 @@ index 0000000..e218e7a
 +    }
 +
 +    private lateinit var shortcutRow: LinearLayout
++    private lateinit var weaponRow: LinearLayout
 +    private lateinit var shortcutOverlay: LinearLayout
 +    private var shortcutShown = ""
 +
@@ -4577,17 +4829,21 @@ index 0000000..e218e7a
 +        return box
 +    }
 +
-+    /** The row over the mini map: five ALttP slots or the beams owned, after the game being played. */
++    /** The rows over the mini map: five ALttP slots, or the beams owned and under them the HUD weapons owned. */
 +    private fun renderShortcuts(game: Int) {
 +        val on = (game == 1 || game == 2) && Smz3Shortcuts.rowShown(context)
++        val weaponsOn = game == 2 && Smz3Shortcuts.weaponRowShown(context)
 +        val slots = List(Smz3Shortcuts.SLOTS) { Smz3Shortcuts.slot(context, it) }
-+        val key = "$on $game $slots ${Smz3Shortcuts.owned} ${Smz3Shortcuts.active} ${theme.accent}"
++        val key = "$on $weaponsOn $game $slots ${Smz3Shortcuts.owned} ${Smz3Shortcuts.active} ${theme.accent}"
 +        if (key == shortcutShown) return
 +        shortcutShown = key
++        val weapons = if (weaponsOn) Smz3Shortcuts.items.filter { it.weapon && Smz3Shortcuts.isOwned(it.id) } else emptyList()
++        weaponRow.visibility = if (weapons.isNotEmpty()) View.VISIBLE else View.GONE
++        weaponRow.removeAllViews()
 +        shortcutRow.visibility = if (on) View.VISIBLE else View.GONE
 +        shortcutRow.removeAllViews()
-+        if (!on) return
-+        fun cell(content: View?, active: Boolean, owned: Boolean, tap: () -> Unit, hold: () -> Unit) {
++        shortcutRow.weightSum = if (game == 2) 4f else 0f   // the beams and the weapons line up in columns of four
++        fun cell(content: View?, active: Boolean, owned: Boolean, tap: () -> Unit, hold: () -> Unit, row: LinearLayout = shortcutRow) {
 +            val box = FrameLayout(context).apply {
 +                setPadding(dp(4), dp(3), dp(4), dp(3))
 +                setBackgroundColor(if (active) Color.argb(110, Color.red(theme.accent), Color.green(theme.accent), Color.blue(theme.accent)) else Color.argb(150, 0, 0, 0))
@@ -4600,8 +4856,10 @@ index 0000000..e218e7a
 +            } else {
 +                box.addView(TextView(context).apply { textSize = 18f; setTextColor(theme.dim); gravity = Gravity.CENTER; text = "+" })
 +            }
-+            shortcutRow.addView(box, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply { setMargins(dp(2), 0, dp(2), 0) })
++            row.addView(box, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f).apply { setMargins(dp(2), 0, dp(2), 0) })
 +        }
++        weapons.forEach { w -> cell(shortcutIcon(w), Smz3Shortcuts.isActive(w.id), true, { Smz3Shortcuts.request(w.id) }, { showShortcutPanel(null, w.id) }, weaponRow) }
++        if (!on) return
 +        if (game == 1) {
 +            slots.forEachIndexed { i, id ->
 +                val item = Smz3Shortcuts.items.getOrNull(id)
@@ -4609,7 +4867,7 @@ index 0000000..e218e7a
 +                    { if (item == null) showShortcutPanel(i, null) else Smz3Shortcuts.request(id) }, { showShortcutPanel(i, null) })
 +            }
 +        } else {
-+            Smz3Shortcuts.items.filter { !it.zelda && Smz3Shortcuts.isOwned(it.id) }.forEach { beam ->
++            Smz3Shortcuts.items.filter { !it.zelda && !it.weapon && Smz3Shortcuts.isOwned(it.id) }.forEach { beam ->
 +                cell(shortcutIcon(beam), Smz3Shortcuts.isActive(beam.id), true, { Smz3Shortcuts.request(beam.id) }, { showShortcutPanel(null, beam.id) })
 +            }
 +        }
@@ -4996,9 +5254,12 @@ index 0000000..e218e7a
 +            LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(18) },
 +        )
 +        column.addView(label(12f, Role.DIM).apply { text = "The hotkeys work in game on the main screen. The state is saved in the active slot."; setPadding(0, dp(12), 0, 0) })
++        column.addView(label(13f, Role.DIM).apply { text = "DUNGEON MAPS"; setPadding(0, dp(18), 0, 0) })
++        spinRow("Fixed keys", { if (Smz3Help.current().fixedKeys) "Shown" else "Hidden" }) { Smz3Help.setFixedKeys(context, !Smz3Help.current().fixedKeys) }
 +        column.addView(label(13f, Role.DIM).apply { text = "ITEM SHORTCUTS  (the row over the RUN tab's map)"; setPadding(0, dp(18), 0, 0) })
 +        spinRow("Shortcut row", { if (Smz3Shortcuts.rowShown(context)) "Shown" else "Hidden" }) { Smz3Shortcuts.setRowShown(context, !Smz3Shortcuts.rowShown(context)); shortcutShown = "" }
-+        column.addView(label(12f, Role.DIM).apply { text = "Tap a slot to equip its item on Y, or a beam to turn it on or off. Hold one to change it or bind a pad button to it."; setPadding(0, dp(6), 0, 0) })
++        spinRow("Weapon row", { if (Smz3Shortcuts.weaponRowShown(context)) "Shown" else "Hidden" }) { Smz3Shortcuts.setWeaponRowShown(context, !Smz3Shortcuts.weaponRowShown(context)); shortcutShown = "" }
++        column.addView(label(12f, Role.DIM).apply { text = "Tap a slot to equip its item on Y, a beam to turn it on or off, or a weapon to pick it (again: back to the beam). Hold one to change it or bind a pad button to it."; setPadding(0, dp(6), 0, 0) })
 +        column.addView(label(13f, Role.DIM).apply { text = "DAILY CHALLENGE  (the strip over the tabs)"; setPadding(0, dp(18), 0, 0) })
 +        val daily = com.swordfish.lemuroid.app.mobile.feature.runs.DailyChallenge
 +        daily.SHOW_TITLES.forEachIndexed { i, title ->
@@ -5469,10 +5730,10 @@ index 0000000..378f91a
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Tracker.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Tracker.kt
 new file mode 100644
-index 0000000..da1d115
+index 0000000..3c003cf
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Tracker.kt
-@@ -0,0 +1,411 @@
+@@ -0,0 +1,412 @@
 +package com.swordfish.lemuroid.app.shared.game.viewmodel
 +
 +import android.app.Presentation
@@ -5633,9 +5894,9 @@ index 0000000..da1d115
 +                }
 +                val sram = view.readMemory(GLRetroView.MEMORY_SAVE_RAM, 0, SRAM_SIZE)
 +                Smz3Native.shortcutState(wram, sram).let { st ->
-+                    Smz3Shortcuts.ready = st[0] != 0
-+                    Smz3Shortcuts.owned = st[1].toLong() and 0xFFFFFFFFL
-+                    Smz3Shortcuts.active = st[2].toLong() and 0xFFFFFFFFL
++                    Smz3Shortcuts.ready = st[0] != 0L
++                    Smz3Shortcuts.owned = st[1]
++                    Smz3Shortcuts.active = st[2]
 +                }
 +                // a mid-game daily start keeps its dead bosses dead (nothing to write for any other run)
 +                val pokes = Smz3Native.preparedPokes(wram, sram)
@@ -5774,7 +6035,7 @@ index 0000000..da1d115
 +                    help = help,
 +                    position = discovery.position,
 +                    dungeonLive = discovery.dungeonLive,
-+                    dungeonData = if (started) Smz3DungeonMaps.get(context).data(wram, sram, s[0] == 1) else null,
++                    dungeonData = if (started) Smz3DungeonMaps.get(context).data(wram, sram, s[0] == 1, help.fixedKeys) else null,
 +                    areaBox = discovery.areaBox(s[0]),
 +                    seen = seenRects,
 +                    discoveredOnly = discoveredOnly,
@@ -5876,6 +6137,7 @@ index 0000000..da1d115
 +        val target = displays.getDisplays(DisplayManager.DISPLAY_CATEGORY_PRESENTATION).firstOrNull() ?: return
 +        runCatching {
 +            presentation = Smz3Presentation(context, target).also { it.show() }
++            Smz3Idle.hideBlack()
 +        }.onFailure { Timber.e(it, "Cannot show the SMZ3 tracker on display ${target.displayId}") }
 +    }
 +
@@ -8732,10 +8994,10 @@ index 0000000..8b05461
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Shortcuts.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Shortcuts.kt
 new file mode 100644
-index 0000000..e561eda
+index 0000000..cd98374
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Shortcuts.kt
-@@ -0,0 +1,129 @@
+@@ -0,0 +1,135 @@
 +package com.swordfish.lemuroid.app.shared.game.viewmodel
 +
 +import android.content.Context
@@ -8747,7 +9009,7 @@ index 0000000..e561eda
 +import java.util.concurrent.ConcurrentLinkedQueue
 +
 +/**
-+ * Item shortcuts: five ALttP slots that equip an item on Y and the Super Metroid beams, from the tracker's RUN tab or from
++ * Item shortcuts: five ALttP slots that equip an item on Y, the Super Metroid beams and its HUD weapons, from the tracker's RUN tab or from
 + * a pad button bound to one. The ids and the memory writes come from the core (smz3_shortcuts.c); the tracker loop makes
 + * the writes, only in normal play.
 + */
@@ -8755,15 +9017,16 @@ index 0000000..e561eda
 +    const val SLOTS = 5
 +    private const val FILE = "smz3_shortcuts"
 +
-+    class Item(val id: Int, val name: String, val icon: String, val zelda: Boolean)
++    class Item(val id: Int, val name: String, val icon: String, val zelda: Boolean, val weapon: Boolean)
 +
 +    val items: List<Item> by lazy {
 +        Smz3Native.shortcutList().mapIndexed { id, s ->
 +            val (name, icon) = s.split("|", limit = 2)
-+            Item(id, name, icon, name !in BEAMS)
++            Item(id, name, icon, name !in BEAMS && name !in WEAPONS, name in WEAPONS)
 +        }
 +    }
 +    private val BEAMS = setOf("Wave", "Ice", "Spazer", "Plasma")
++    private val WEAPONS = setOf("Missiles", "Super Missiles", "Power Bombs")
 +
 +    /** The pad mapping and Lemuroid's own shortcuts, kept current by the game's input, to tell a free button. */
 +    @Volatile var padBindings: ((InputDevice?) -> Map<InputKey, RetroKey>)? = null
@@ -8789,6 +9052,11 @@ index 0000000..e561eda
 +    fun rowShown(context: Context): Boolean = prefs(context).getBoolean("row", true)
 +
 +    fun setRowShown(context: Context, on: Boolean) = prefs(context).edit().putBoolean("row", on).apply()
++
++    /** The second Super Metroid row, under the beams: missiles, super missiles and power bombs. */
++    fun weaponRowShown(context: Context): Boolean = prefs(context).getBoolean("weapons", true)
++
++    fun setWeaponRowShown(context: Context, on: Boolean) = prefs(context).edit().putBoolean("weapons", on).apply()
 +
 +    /** The button bound to [id], or null. */
 +    fun key(context: Context, id: Int): Int? = prefs(context).all.entries

@@ -325,7 +325,7 @@ void settings_draw(float k, float ox, float oy)
             int r = scroll + i;
             if (r == SC_COUNT) { row(k, ox, oy, i, "Back", NULL, r == cursor); continue; }
             char lab[48], val[64];
-            snprintf(lab, sizeof lab, "%s%s", r >= SC_ZELDA_COUNT ? "Beam: " : "", smz_shortcuts[r].name);
+            snprintf(lab, sizeof lab, "%s%s", r >= SC_ZELDA_COUNT && r < SC_WEAPON_FIRST ? "Beam: " : "", smz_shortcuts[r].name);
             snprintf(val, sizeof val, "%s  /  %s", sc_key(r) != SDLK_UNKNOWN ? SDL_GetKeyName(sc_key(r)) : "-", sc_pad(r) >= 0 ? pad_code_name(sc_pad(r)) : "-");
             row(k, ox, oy, i, lab, val, r == cursor);
         }

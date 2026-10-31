@@ -21,6 +21,8 @@ void dungeon_floor(DungeonView *v, const DungeonLive *live, int delta);
 void dungeon_here(DungeonView *v);
 /* Switches between the dungeon pictures and the world map (picks a dungeon when Link is in none). */
 void dungeon_toggle(DungeonView *v, const DungeonLive *live);
+/* The run marks the keys under pots and on enemies (ShowFixedKeys). */
+void dungeon_set_fixed_keys(int on);
 void dungeon_draw(SDL_Renderer *r, DungeonView *v, SDL_Rect area, const SmzTracker *t, const uint8_t *in_logic, const DungeonLive *live,
                   const uint8_t *wram, size_t wram_len, const uint8_t *sram, size_t sram_len, int show_all, Uint32 ticks);
 

@@ -59,7 +59,7 @@ JNIEXPORT jbyteArray JNICALL NATIVE(addShortcutHooks)(JNIEnv *env, jclass cls, j
     return ok ? rom : NULL;
 }
 
-/* The item shortcuts (core/ui/smz3_shortcuts.h): "name|icon" of each id, ALttP items first, then the beams. */
+/* The item shortcuts (core/ui/smz3_shortcuts.h): "name|icon" of each id, ALttP items first, then the beams and the weapons. */
 JNIEXPORT jobjectArray JNICALL NATIVE(shortcutList)(JNIEnv *env, jclass cls)
 {
     jobjectArray r = (*env)->NewObjectArray(env, SC_COUNT, (*env)->FindClass(env, "java/lang/String"), NULL);
@@ -72,19 +72,40 @@ JNIEXPORT jobjectArray JNICALL NATIVE(shortcutList)(JNIEnv *env, jclass cls)
 }
 
 /* {ready, owned bits, active bits}: bit i is shortcut id i. */
-JNIEXPORT jintArray JNICALL NATIVE(shortcutState)(JNIEnv *env, jclass cls, jbyteArray wram, jbyteArray sram)
+JNIEXPORT jlongArray JNICALL NATIVE(shortcutState)(JNIEnv *env, jclass cls, jbyteArray wram, jbyteArray sram)
 {
     jsize wl = (*env)->GetArrayLength(env, wram), sl = (*env)->GetArrayLength(env, sram);
     jbyte *w = (*env)->GetByteArrayElements(env, wram, NULL), *s = (*env)->GetByteArrayElements(env, sram, NULL);
-    jint out[3] = {smz_shortcut_ready((const uint8_t *)w, (size_t)wl, (const uint8_t *)s, (size_t)sl), 0, 0};
+    jlong out[3] = {smz_shortcut_ready((const uint8_t *)w, (size_t)wl, (const uint8_t *)s, (size_t)sl), 0, 0};
     for (int i = 0; i < SC_COUNT; i++) {
-        if (smz_shortcut_owned(i, (const uint8_t *)w, (size_t)wl, (const uint8_t *)s, (size_t)sl)) out[1] |= 1 << i;
-        if (smz_shortcut_active(i, (const uint8_t *)w, (size_t)wl, (const uint8_t *)s, (size_t)sl)) out[2] |= 1 << i;
+        if (smz_shortcut_owned(i, (const uint8_t *)w, (size_t)wl, (const uint8_t *)s, (size_t)sl)) out[1] |= (jlong)1 << i;
+        if (smz_shortcut_active(i, (const uint8_t *)w, (size_t)wl, (const uint8_t *)s, (size_t)sl)) out[2] |= (jlong)1 << i;
     }
     (*env)->ReleaseByteArrayElements(env, wram, w, JNI_ABORT);
     (*env)->ReleaseByteArrayElements(env, sram, s, JNI_ABORT);
-    jintArray r = (*env)->NewIntArray(env, 3);
-    (*env)->SetIntArrayRegion(env, r, 0, 3, out);
+    jlongArray r = (*env)->NewLongArray(env, 3);
+    (*env)->SetLongArrayRegion(env, r, 0, 3, out);
+    return r;
+}
+
+/* The fixed keys not taken yet, {room, x, y, big} each: from the Zelda work RAM while it runs, else the parked save RAM. */
+JNIEXPORT jintArray JNICALL NATIVE(fixedKeysLeft)(JNIEnv *env, jclass cls, jbyteArray wram, jbyteArray sram, jboolean zelda)
+{
+    jsize wl = (*env)->GetArrayLength(env, wram), sl = (*env)->GetArrayLength(env, sram);
+    jbyte *w = (*env)->GetByteArrayElements(env, wram, NULL), *s = (*env)->GetByteArrayElements(env, sram, NULL);
+    const uint8_t *flags = zelda ? (const uint8_t *)w + 0xF000 : (const uint8_t *)s;
+    size_t fl = zelda ? (wl > 0xF000 ? (size_t)wl - 0xF000 : 0) : (size_t)sl;
+    jint out[4 * 64];
+    int n = 0;
+    for (int i = 0; i < smz_fixed_key_count && n < 64; i++) {
+        if (smz_fixed_key_taken(i, flags, fl, zelda ? (const uint8_t *)w : NULL, zelda ? (size_t)wl : 0)) continue;
+        out[4 * n] = smz_fixed_keys[i].room; out[4 * n + 1] = smz_fixed_keys[i].x; out[4 * n + 2] = smz_fixed_keys[i].y; out[4 * n + 3] = smz_fixed_keys[i].big;
+        n++;
+    }
+    (*env)->ReleaseByteArrayElements(env, wram, w, JNI_ABORT);
+    (*env)->ReleaseByteArrayElements(env, sram, s, JNI_ABORT);
+    jintArray r = (*env)->NewIntArray(env, 4 * n);
+    (*env)->SetIntArrayRegion(env, r, 0, 4 * n, out);
     return r;
 }
 
@@ -443,7 +464,7 @@ JNIEXPORT jobjectArray JNICALL NATIVE(helpTexts)(JNIEnv *env, jclass cls, jintAr
 
 static SmzUi g_ui;
 
-JNIEXPORT void JNICALL NATIVE(uiInit)(JNIEnv *env, jclass cls) { ui_init(&g_ui); g_ui.flags = 1; g_ui.rings = 1; }
+JNIEXPORT void JNICALL NATIVE(uiInit)(JNIEnv *env, jclass cls) { ui_init(&g_ui); g_ui.flags = 1; g_ui.rings = 1; g_ui.orbs = 1; }
 
 JNIEXPORT void JNICALL NATIVE(uiSetSlot)(JNIEnv *env, jclass cls, jint i, jboolean used, jstring name, jstring summary)
 {

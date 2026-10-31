@@ -62,4 +62,13 @@ int smz_boss_mask(const uint8_t *wram, size_t wram_len, const uint8_t *sram, siz
 int smz_prepared_apply(int dead_mask, uint8_t *wram, size_t wram_len, uint8_t *sram, size_t sram_len);
 int smz_crystal_mask(const uint8_t *wram, size_t wram_len, const uint8_t *sram, size_t sram_len, int game);
 
+/* The keys A Link to the Past always has in the same place, under a pot or dropped by an enemy: not checks, so the map only
+ * marks them on runs that ask for it. x and y: their tile in the room's 64 x 64 tiles (an enemy's: where it starts). */
+typedef struct { uint16_t room; uint8_t x, y, big; } SmzFixedKey;
+extern const SmzFixedKey smz_fixed_keys[];
+extern const int smz_fixed_key_count;
+/* 1 once the key of smz_fixed_keys[i] is taken: from the room flags (flags: the ALttP save's room words, WRAM 0x7EF000 while
+ * ALttP runs, else the start of the SRAM) and, while ALttP runs, the state of the room Link is in (wram, NULL otherwise). */
+int smz_fixed_key_taken(int i, const uint8_t *flags, size_t flags_len, const uint8_t *wram, size_t wram_len);
+
 #endif

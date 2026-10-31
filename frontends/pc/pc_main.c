@@ -1157,7 +1157,8 @@ static void play(int slot, int game_save_only)
     free(rom);
     if (!ok) { note("the emulator could not load the ROM"); return; }
 
-    int states = json_flag(run.settings, "saveStates", 0) && !online_slot_kind(slot + 1) && run.game != 3;   /* ladder runs and finished runs never allow states */
+    /* runs that send a time online (the ladders, the daily challenge) and finished runs never allow states, whatever their options */
+    int states = json_flag(run.settings, "saveStates", 0) && !online_slot_kind(slot + 1) && !strstr(run.settings, "\"challenge\":true") && run.game != 3;
     int qslot = 0;
     size_t sl;
     uint8_t *sram = emu_sram(&sl);
@@ -1199,6 +1200,7 @@ static void play(int slot, int game_save_only)
     /* reachable checks are marked only when the run asks for it (runs made before the option: only the Cozy ones) */
     int reach = strstr(run.settings, "\"showReachable\"") ? json_flag(run.settings, "showReachable", 0) : !strcmp(run.name, "Cozy run");
     if (strstr(run.settings, "\"challenge\":true")) reach = 0;   /* a daily challenge: collected or not, nothing more */
+    dungeon_set_fixed_keys(strstr(run.settings, "\"showFixedKeys\"") ? json_flag(run.settings, "showFixedKeys", 0) : !strcmp(run.name, "Cozy run"));
     if (reach && strstr(run.settings, "\"helpMode\":\"all\"")) {
         LogicJob lj = {&logic, run.settings, -1};
         run_big(logic_thread, &lj);
@@ -1802,6 +1804,7 @@ static void window_main(int start_slot)
     gfx_set_preview_loader(load_preview);
     ui.flags = 1;
     ui.rings = 1;
+    ui.orbs = 1;
     install_bundled_sprites();
     refill_sprites();
     refill_slots();
@@ -1975,6 +1978,26 @@ static void window_main(int start_slot)
         int ww, wh;
         SDL_GetRendererOutputSize(ren, &ww, &wh);
         float ox, oy;
+        static SmzUi prev_ui;          /* the last frame's screen, kept to fade out when the next one comes */
+        static SDL_Texture *gone;
+        static Uint32 gone_at;
+        static int prev_screen = -1;
+        if ((int)ui.screen != prev_screen) {
+            if (prev_screen >= 0 && !settings_active() && !welcome_active()) {
+                if (gone) SDL_DestroyTexture(gone);
+                gone = SDL_CreateTexture(ren, SDL_PIXELFORMAT_RGBA8888, SDL_TEXTUREACCESS_TARGET, ww, wh);
+                if (gone) {
+                    SDL_SetRenderTarget(ren, gone);
+                    SDL_SetRenderDrawColor(ren, 0, 0, 0, 0);
+                    SDL_RenderClear(ren);
+                    gfx_ui(&prev_ui, ww, wh, &ox, &oy);
+                    SDL_SetRenderTarget(ren, NULL);
+                    SDL_SetTextureBlendMode(gone, SDL_BLENDMODE_BLEND);
+                    gone_at = SDL_GetTicks();
+                }
+            }
+            prev_screen = (int)ui.screen;
+        }
         float k = gfx_ui(&ui, ww, wh, &ox, &oy);
         if (ui.screen == UI_SLOTS_SCREEN && !settings_active() && !welcome_active()) {
             if (!base_ok()) gfx_text(ww / 2.0f, wh - 28 * k / 2 - 8, 11 * k, C(0xE9, 0xA2, 0x3B), 1, "Select: find your ROM files (or drop them here)");
@@ -1990,7 +2013,14 @@ static void window_main(int start_slot)
             int flags = welcome_active() | settings_active() << 1;
             if ((int)ui.screen != last_screen || flags != last_flags) { if (last_screen >= 0) fx_screen_changed(); last_screen = (int)ui.screen; last_flags = flags; }
             fx_draw(ww, wh);
+            Uint32 since_gone = SDL_GetTicks() - gone_at;
+            if (gone && since_gone < 200) {   /* the screen that left fades out over the cover */
+                float a = 1 - since_gone / 200.0f;
+                SDL_SetTextureAlphaMod(gone, (Uint8)(255 * a * a));
+                SDL_RenderCopy(ren, gone, NULL, NULL);
+            }
         }
+        memcpy(&prev_ui, &ui, sizeof ui);
         if (SDL_GetTicks() < g_note_until && !welcome_active()) {
             gfx_rect(0, 0, (float)ww, 34 * k / 2 + 8, (SDL_Color){0, 0, 0, 200});
             gfx_text(ww / 2.0f, 6, 13 * k, C(0xE8, 0xEC, 0xF2), 1, g_note);
