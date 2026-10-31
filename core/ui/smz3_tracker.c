@@ -66,7 +66,7 @@ int smz_crystal_mask(const uint8_t *wram, size_t wram_len, const uint8_t *sram, 
     /* bit 0 of $7EF37A is crystal 6, then 1, 5, 7, 2, 4, 3 */
     static const int crystal_of_bit[7] = {6, 1, 5, 7, 2, 4, 3};
     unsigned bits;
-    if (game == 2) { if (sram_len < 0x37B) return 0; bits = sram[0x37A]; }
+    if (game == 2 || game == 3) { if (sram_len < 0x37B) return 0; bits = sram[0x37A]; }   /* parked while Super Metroid (or its credits) runs */
     else { if (wram_len < 0xF37B) return 0; bits = wram[0xF37A]; }
     int mask = 0;
     for (int b = 0; b < 7; b++) if (bits & (1u << b)) mask |= 1 << (crystal_of_bit[b] - 1);
@@ -148,8 +148,14 @@ void smz_tracker_tick(SmzTracker *t, const uint8_t *wram, size_t wram_len, const
     t->game = s.finished || t->goal_met ? SMZ3_GAME_CREDITS : s.game; t->started = started;   /* game 3 tells the hosts the run is over */
     t->zelda_cleared = s.zelda_cleared; t->zelda_total = s.zelda_total;
     t->metroid_cleared = s.metroid_cleared; t->metroid_total = s.metroid_total;
-    t->boss_mask = started ? smz_boss_mask(wram, wram_len, sram, sram_len, s.game) : 0;
-    t->crystal_mask = started ? smz_crystal_mask(wram, wram_len, sram, sram_len, s.game) : 0;
+    if (!started) t->boss_mask = t->crystal_mask = 0;
+    else if (s.game == SMZ3_GAME_ZELDA || s.game == SMZ3_GAME_METROID) {
+        t->boss_mask = smz_boss_mask(wram, wram_len, sram, sram_len, s.game);
+        t->crystal_mask = smz_crystal_mask(wram, wram_len, sram, sram_len, s.game);
+    } else {   /* the credits: both games are parked in the save RAM, and nothing is lost at the end */
+        t->boss_mask |= smz_boss_mask(wram, wram_len, sram, sram_len, s.game);
+        t->crystal_mask |= smz_crystal_mask(wram, wram_len, sram, sram_len, s.game);
+    }
     if (started && t->running && !was_over) t->pending_ms += (int64_t)dt_ms * (speed > 0 ? speed : 1);
     t->elapsed_ms = started ? t->base_ms + t->pending_ms : 0;
 }

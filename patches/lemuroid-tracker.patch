@@ -2018,7 +2018,7 @@ index 7985ccc..df2281c 100644
  
      suspend fun hdMode() = booleanPreference(R.string.pref_key_hd_mode, false)
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/BaseGameActivity.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/BaseGameActivity.kt
-index 6d06420..00d1381 100644
+index 6d06420..2034db0 100644
 --- a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/BaseGameActivity.kt
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/BaseGameActivity.kt
 @@ -21,6 +21,7 @@ import com.swordfish.lemuroid.app.shared.ImmersiveActivity
@@ -2029,12 +2029,11 @@ index 6d06420..00d1381 100644
  import com.swordfish.lemuroid.app.shared.input.InputDeviceManager
  import com.swordfish.lemuroid.app.shared.rumble.RumbleManager
  import com.swordfish.lemuroid.app.shared.settings.ControllerConfigsManager
-@@ -87,13 +88,20 @@ abstract class BaseGameActivity : ImmersiveActivity() {
+@@ -87,13 +88,19 @@ abstract class BaseGameActivity : ImmersiveActivity() {
      private lateinit var baseGameScreenViewModel: BaseGameScreenViewModel
  
      private val startGameTime = System.currentTimeMillis()
 +    private var dailyOverlay: com.swordfish.lemuroid.app.shared.game.viewmodel.Smz3DailyOverlay? = null
-+    private var completeLine: android.widget.TextView? = null
      private var finishTriggered = false
  
      override fun onCreate(savedInstanceState: Bundle?) {
@@ -2046,11 +2045,11 @@ index 6d06420..00d1381 100644
 +        com.swordfish.lemuroid.app.shared.game.viewmodel.Smz3Tracker.onRunComplete = { name, ms, zelda, metroid, ladder ->
 +            runOnUiThread { showRunComplete(name, ms, zelda, metroid, ladder) }
 +        }
-+        com.swordfish.lemuroid.app.shared.game.viewmodel.Smz3Tracker.onDailyResult = { line -> runOnUiThread { completeLine?.text = line } }
++        com.swordfish.lemuroid.app.shared.game.viewmodel.Smz3Tracker.onDailyResult = { line -> com.swordfish.lemuroid.app.shared.game.viewmodel.Smz3Finish.card?.ladder = line }
          systemCoreConfig = intent.getSerializableExtra(EXTRA_SYSTEM_CORE_CONFIG) as SystemCoreConfig
          system = GameSystem.findById(game.systemId)
  
-@@ -126,6 +134,7 @@ abstract class BaseGameActivity : ImmersiveActivity() {
+@@ -126,6 +133,7 @@ abstract class BaseGameActivity : ImmersiveActivity() {
                  }
              }
          }
@@ -2058,7 +2057,7 @@ index 6d06420..00d1381 100644
  
          lifecycleScope.launch {
              baseGameScreenViewModel.loadGame(
-@@ -209,7 +218,7 @@ abstract class BaseGameActivity : ImmersiveActivity() {
+@@ -209,7 +217,7 @@ abstract class BaseGameActivity : ImmersiveActivity() {
                      GameMenuContract.EXTRA_AUDIO_ENABLED,
                      baseGameScreenViewModel.retroGameView.retroGameView?.audioEnabled,
                  )
@@ -2067,7 +2066,7 @@ index 6d06420..00d1381 100644
                  this.putExtra(
                      GameMenuContract.EXTRA_FAST_FORWARD,
                      (baseGameScreenViewModel.retroGameView.retroGameView?.frameSpeed ?: 1) > 1,
-@@ -244,7 +253,7 @@ abstract class BaseGameActivity : ImmersiveActivity() {
+@@ -244,7 +252,7 @@ abstract class BaseGameActivity : ImmersiveActivity() {
                              it.currentTiltConfiguration,
                              it.tiltConfigurations,
                          )
@@ -2076,39 +2075,52 @@ index 6d06420..00d1381 100644
                      is GameViewModelSideEffects.UiEffect.SuccessfulFinish -> performSuccessfulActivityFinish()
                      is GameViewModelSideEffects.UiEffect.FailureFinish -> performErrorFinish(it.message)
                      is GameViewModelSideEffects.UiEffect.SaveQuickSave -> performSaveQuickSave()
-@@ -262,6 +271,62 @@ abstract class BaseGameActivity : ImmersiveActivity() {
+@@ -262,6 +270,75 @@ abstract class BaseGameActivity : ImmersiveActivity() {
          baseGameScreenViewModel.loadQuickSave()
      }
  
 +    private var cornerNote: android.widget.TextView? = null
 +
 +    /** Small white text in the bottom right corner that fades out: replaces the system toasts (saves, slots...). */
-+    /** The run-complete card: the final time with hundredths (the in-game timer shows whole seconds). */
++    private var finishDialog: android.app.Dialog? = null
++
++    /** The run-complete card (Smz3Finish): the celebration up here, the details and the buttons on the second screen. */
 +    private fun showRunComplete(name: String, ms: Long, zelda: String, metroid: String, ladder: String) {
 +        if (isFinishing) return
-+        val s = ms / 1000
-+        val time = String.format(java.util.Locale.US, "%d:%02d:%02d.%02d", s / 3600, s / 60 % 60, s % 60, ms % 1000 / 10)
-+        val box = android.widget.LinearLayout(this).apply {
-+            orientation = android.widget.LinearLayout.VERTICAL
-+            gravity = android.view.Gravity.CENTER_HORIZONTAL
-+            setPadding(48, 40, 48, 24)
-+            setBackgroundColor(android.graphics.Color.rgb(0x10, 0x16, 0x1F))
++        val fin = com.swordfish.lemuroid.app.shared.game.viewmodel.Smz3Finish
++        fun pair(v: String) = v.split("/").let { (it.getOrNull(0)?.toIntOrNull() ?: 0) to (it.getOrNull(1)?.toIntOrNull() ?: 0) }
++        val (zc, zt) = pair(zelda)
++        val (mc, mt) = pair(metroid)
++        val daily = name.startsWith("Daily ")
++        fin.start(com.swordfish.lemuroid.app.shared.game.viewmodel.Smz3Finish.Card(if (daily) "CHALLENGE COMPLETE" else "RUN COMPLETE", name, ladder, daily || ladder.startsWith("Sent"), ms, zc, zt, mc, mt))
++        fin.onMenu = { runOnUiThread { finishDialog?.dismiss(); baseGameScreenViewModel.requestFinish() } }
++        fin.onCredits = { runOnUiThread { finishDialog?.dismiss(); finishDialog = null; if (!com.swordfish.lemuroid.app.shared.game.viewmodel.Smz3Tracker.onSecondScreen) showCreditsExit() } }
++        val face = runCatching { android.graphics.Typeface.createFromAsset(assets, "smz3/menu_font.ttf") }.getOrDefault(android.graphics.Typeface.DEFAULT_BOLD)
++        finishDialog = android.app.Dialog(this, android.R.style.Theme_Translucent_NoTitleBar_Fullscreen).apply {
++            setContentView(com.swordfish.lemuroid.app.shared.game.viewmodel.Smz3FinishTopView(this@BaseGameActivity, face))
++            setCancelable(false)
++            setOnKeyListener { _, code, e ->
++                if (e.action != android.view.KeyEvent.ACTION_UP) return@setOnKeyListener true
++                val yes = code == android.view.KeyEvent.KEYCODE_BUTTON_A || code == android.view.KeyEvent.KEYCODE_ENTER || code == android.view.KeyEvent.KEYCODE_DPAD_CENTER
++                val no = code == android.view.KeyEvent.KEYCODE_BUTTON_B || code == android.view.KeyEvent.KEYCODE_BACK || code == android.view.KeyEvent.KEYCODE_ESCAPE
++                if ((yes || no) && !fin.skip()) { if (yes) fin.menu() else fin.credits() }
++                true
++            }
++            show()
 +        }
-+        fun line(text: String, sp: Float, color: Int, bold: Boolean = false) = box.addView(android.widget.TextView(this).apply {
-+            this.text = text; textSize = sp; setTextColor(color); gravity = android.view.Gravity.CENTER
-+            if (bold) setTypeface(typeface, android.graphics.Typeface.BOLD)
-+            setPadding(0, 6, 0, 6)
-+        })
-+        line(if (name.startsWith("Daily ")) "CHALLENGE COMPLETE" else "RUN COMPLETE", 18f, android.graphics.Color.rgb(0xF2, 0xA3, 0x3A), true)
-+        line(time, 44f, android.graphics.Color.rgb(0xE8, 0xEC, 0xF2), true)
-+        line("$name    Zelda $zelda    Metroid $metroid", 14f, android.graphics.Color.rgb(0x87, 0x93, 0xA6))
-+        line(ladder, 14f, if (ladder.startsWith("Sent") || name.startsWith("Daily ")) android.graphics.Color.rgb(0x4F, 0xC3, 0xF7) else android.graphics.Color.rgb(0x87, 0x93, 0xA6))
-+        completeLine = box.getChildAt(box.childCount - 1) as android.widget.TextView   // the server's answer to a daily finish replaces it
-+        android.app.AlertDialog.Builder(this)
-+            .setView(box)
-+            .setPositiveButton("Main menu") { _, _ -> baseGameScreenViewModel.requestFinish() }
-+            .setNegativeButton("Watch the credits", null)
-+            .show()
++    }
++
++    /** Without a second screen, the way out during the credits sits in the corner of this one. */
++    private fun showCreditsExit() {
++        val pad = (10 * resources.displayMetrics.density).toInt()
++        addContentView(
++            android.widget.TextView(this).apply {
++                text = "Back to menu"; textSize = 15f; setPadding(pad * 2, pad, pad * 2, pad)
++                setTextColor(android.graphics.Color.rgb(0x10, 0x16, 0x1F)); setBackgroundColor(android.graphics.Color.rgb(0xF2, 0xA3, 0x3A))
++                setOnClickListener { baseGameScreenViewModel.requestFinish() }
++            },
++            android.widget.FrameLayout.LayoutParams(android.view.ViewGroup.LayoutParams.WRAP_CONTENT, android.view.ViewGroup.LayoutParams.WRAP_CONTENT, android.view.Gravity.BOTTOM or android.view.Gravity.END).apply { setMargins(pad, pad, pad, pad) },
++        )
 +    }
 +
 +    private fun showCornerNote(message: String) {
@@ -2139,12 +2151,16 @@ index 6d06420..00d1381 100644
      private fun performToggleFastForward() {
          baseGameScreenViewModel.toggleFastForward()
      }
-@@ -351,6 +416,10 @@ abstract class BaseGameActivity : ImmersiveActivity() {
+@@ -351,6 +428,14 @@ abstract class BaseGameActivity : ImmersiveActivity() {
      }
  
      override fun onDestroy() {
 +        com.swordfish.lemuroid.app.shared.game.viewmodel.Smz3Idle.hideBlack()
 +        com.swordfish.lemuroid.app.shared.game.viewmodel.Smz3Tracker.onRunComplete = null
++        com.swordfish.lemuroid.app.shared.game.viewmodel.Smz3Finish.clear()
++        com.swordfish.lemuroid.app.shared.game.viewmodel.Smz3Finish.onMenu = null
++        com.swordfish.lemuroid.app.shared.game.viewmodel.Smz3Finish.onCredits = null
++        finishDialog?.dismiss()
 +        com.swordfish.lemuroid.app.shared.game.viewmodel.Smz3Tracker.onDailyResult = null
 +        dailyOverlay?.stop()
          if (!isChangingConfigurations) {
@@ -2339,7 +2355,7 @@ index 1eea23b..ef34a6a 100644
      fun saveQuickSave() {
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Bosses.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Bosses.kt
 new file mode 100644
-index 0000000..d973310
+index 0000000..1a5680e
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Bosses.kt
 @@ -0,0 +1,62 @@
@@ -2398,8 +2414,8 @@ index 0000000..d973310
 +
 +    /** Bit n-1 set when crystal n is collected. */
 +    fun crystalMask(wram: ByteArray, sram: ByteArray, game: Int): Int {
-+        // Zelda's memory lives in the work RAM while it runs and in the save RAM ($A06000) while Super Metroid does
-+        val bits = if (game == 2) { if (sram.size < 0x37B) return 0; sram[0x37A].toInt() and 0xFF } else { if (wram.size < 0xF37B) return 0; wram[0xF37A].toInt() and 0xFF }
++        // Zelda's memory lives in the work RAM while it runs and in the save RAM ($A06000) while Super Metroid (or the credits) does
++        val bits = if (game == 2 || game == 3) { if (sram.size < 0x37B) return 0; sram[0x37A].toInt() and 0xFF } else { if (wram.size < 0xF37B) return 0; wram[0xF37A].toInt() and 0xFF }
 +        var mask = 0
 +        for (b in 0 until 7) if (bits and (1 shl b) != 0) mask = mask or (1 shl (crystalOfBit[b] - 1))
 +        return mask
@@ -3207,10 +3223,10 @@ index 0000000..eaebc9d
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Hotkeys.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Hotkeys.kt
 new file mode 100644
-index 0000000..0e5166b
+index 0000000..c8bcf4d
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Hotkeys.kt
-@@ -0,0 +1,175 @@
+@@ -0,0 +1,171 @@
 +package com.swordfish.lemuroid.app.shared.game.viewmodel
 +
 +import android.content.Context
@@ -3318,16 +3334,12 @@ index 0000000..0e5166b
 +        else -> "Original 4:3"
 +    }
 +
-+    /** Save states are a per-run option ("Save states" in the QoL tab), off unless the run was created with it on, never on an online ladder run and never once the run is finished. */
++    /** Save states are a per-run option ("Save states" in the QoL tab), off unless the run was created with it on, and never on an online ladder run. */
 +    fun saveStatesAllowed(context: Context): Boolean {
 +        if (noAutosave(context)) return false
 +        val run = RunStore.activeSlot(context)?.let { RunStore.load(context, it) } ?: return true
-+        if (runFinished(context)) return false   // a finished run is not played again
 +        return runCatching { org.json.JSONObject(run.settings).optBoolean("saveStates", false) }.getOrDefault(false)
 +    }
-+
-+    fun runFinished(context: Context): Boolean =
-+        RunStore.activeSlot(context)?.let { RunStore.load(context, it) }?.let { it.completedAt != 0L || it.game == 3 } ?: false
 +
 +    /** A daily challenge run (its settings have "challenge":true): no fast forward. */
 +    fun challengeRun(context: Context): Boolean {
@@ -3348,7 +3360,7 @@ index 0000000..0e5166b
 +        timber.log.Timber.i("SMZ3 hotkey ${action.name} slot=${slot(context)}")
 +        val h = host ?: return
 +        if ((action == Smz3HotkeyAction.SAVE_STATE || action == Smz3HotkeyAction.LOAD_STATE) && !saveStatesAllowed(context)) {
-+            h.hotkeyToast(if (runFinished(context)) "The run is finished" else "Save states are off in this run")
++            h.hotkeyToast("Save states are off in this run")
 +            return
 +        }
 +        when (action) {
@@ -4570,10 +4582,10 @@ index 0000000..3ec4c14
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Presentation.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Presentation.kt
 new file mode 100644
-index 0000000..9855d9a
+index 0000000..4191eeb
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Presentation.kt
-@@ -0,0 +1,966 @@
+@@ -0,0 +1,973 @@
 +package com.swordfish.lemuroid.app.shared.game.viewmodel
 +
 +import android.app.Presentation
@@ -4581,6 +4593,7 @@ index 0000000..9855d9a
 +import android.graphics.BitmapFactory
 +import android.content.res.ColorStateList
 +import android.graphics.Color
++import android.graphics.Typeface
 +import android.graphics.drawable.BitmapDrawable
 +import android.os.Bundle
 +import android.view.Display
@@ -4612,6 +4625,7 @@ index 0000000..9855d9a
 +    private var theme = Smz3Theme.ZELDA
 +    private var selectedTab = 0
 +    private lateinit var root: LinearLayout
++    private lateinit var finishPanel: Smz3FinishPanel
 +    private lateinit var tabRow: LinearLayout
 +    private val themedText = mutableListOf<Pair<TextView, Role>>()
 +    private val themedBars = mutableListOf<ProgressBar>()
@@ -4660,7 +4674,11 @@ index 0000000..9855d9a
 +        root.addView(dailyStrip, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 +        root.addView(tabRow, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
 +        root.addView(content, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, 0, 1f))
-+        setContentView(root)
++        finishPanel = Smz3FinishPanel(context, runCatching { Typeface.createFromAsset(context.assets, "smz3/menu_font.ttf") }.getOrDefault(Typeface.DEFAULT_BOLD))
++        setContentView(FrameLayout(context).apply {
++            addView(root, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
++            addView(finishPanel, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
++        })
 +        select(0)
 +        applyTheme(theme)
 +        window?.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(Color.BLACK))
@@ -5454,6 +5472,7 @@ index 0000000..9855d9a
 +    }
 +
 +    fun render(snapshot: Smz3Snapshot) {
++        if (::finishPanel.isInitialized) finishPanel.invalidate()
 +        // A debug_game file in the app files folder (containing 1 or 2) forces the theme, for previews.
 +        val forced = runCatching { java.io.File(context.filesDir, "debug_game").readText().trim().toInt() }.getOrNull()
 +        val s = if (forced != null) snapshot.copy(started = true, game = forced) else snapshot
@@ -5730,10 +5749,10 @@ index 0000000..378f91a
 +}
 diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Tracker.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Tracker.kt
 new file mode 100644
-index 0000000..3c003cf
+index 0000000..bc51c2d
 --- /dev/null
 +++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Tracker.kt
-@@ -0,0 +1,412 @@
+@@ -0,0 +1,420 @@
 +package com.swordfish.lemuroid.app.shared.game.viewmodel
 +
 +import android.app.Presentation
@@ -6060,6 +6079,11 @@ index 0000000..3c003cf
 +                            Thread { OnlineLadder.ensureToken(c, slot) }.start()
 +                        }
 +                    }
++                    // test hook: a debug_finish file in the app's external files folder shows the run-complete card once
++                    context.getExternalFilesDir(null)?.let { java.io.File(it, "debug_finish") }?.takeIf { it.exists() }?.let {
++                        it.delete()
++                        RunStore.load(context, slot)?.let { r -> onRunComplete?.invoke(r.name, r.playTimeMs, "${s[2]}/${s[3]}", "${s[4]}/${s[5]}", "Offline run") }
++                    }
 +                    val finishing = s[0] == 3 && !finishedSaved
 +                    if (--saveCountdown <= 0 || finishing) {
 +                        saveCountdown = 10
@@ -6094,13 +6118,16 @@ index 0000000..3c003cf
 +                                    completedAt = if (finished) System.currentTimeMillis() else run.completedAt,
 +                                    lastPlayedAt = System.currentTimeMillis(),
 +                                    playTimeMs = if (run.completedAt != 0L) run.playTimeMs else totalMs,
-+                                    game = if (started) s[0] else run.game,
-+                                    zeldaCleared = if (started) s[2] else run.zeldaCleared,
++                                    // a finished run played again keeps its final result; only the first finish counts
++                                    game = if (run.completedAt != 0L) 3 else if (started) s[0] else run.game,
++                                    zeldaCleared = if (started && run.completedAt == 0L) s[2] else run.zeldaCleared,
 +                                    zeldaTotal = s[3],
-+                                    metroidCleared = if (started) s[4] else run.metroidCleared,
++                                    metroidCleared = if (started && run.completedAt == 0L) s[4] else run.metroidCleared,
 +                                    metroidTotal = s[5],
-+                                    bossMask = if (started) snapshot.bossMask else run.bossMask,
-+                                    crystalMask = if (started) snapshot.crystalMask else run.crystalMask,
++                                    // in the credits both games are parked in the save RAM and nothing is lost, so the masks only add up; so
++                                    // do a finished run's when it is played again (an earlier build read them wrong in the credits)
++                                    bossMask = if (!started) run.bossMask else if (run.completedAt == 0L && s[0] != 3) snapshot.bossMask else run.bossMask or snapshot.bossMask,
++                                    crystalMask = if (!started) run.crystalMask else if (run.completedAt == 0L && s[0] != 3) snapshot.crystalMask else run.crystalMask or snapshot.crystalMask,
 +                                    saveMs = pendingSave?.get(0) ?: run.saveMs,
 +                                    saveZelda = pendingSave?.get(1)?.toInt() ?: run.saveZelda,
 +                                    saveMetroid = pendingSave?.get(2)?.toInt() ?: run.saveMetroid,
@@ -9130,6 +9157,414 @@ index 0000000..cd98374
 +        val id = boundTo(context, code) ?: return false
 +        consumed.add(code)
 +        if (event.repeatCount == 0) request(id)
++        return true
++    }
++}
+diff --git a/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Finish.kt b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Finish.kt
+new file mode 100644
+index 0000000..19326e5
+--- /dev/null
++++ b/lemuroid-app/src/main/java/com/swordfish/lemuroid/app/shared/game/viewmodel/Smz3Finish.kt
+@@ -0,0 +1,402 @@
++package com.swordfish.lemuroid.app.shared.game.viewmodel
++
++import android.annotation.SuppressLint
++import android.content.Context
++import android.graphics.Canvas
++import android.graphics.Color
++import android.graphics.Paint
++import android.graphics.Path
++import android.graphics.RectF
++import android.graphics.Typeface
++import android.media.AudioAttributes
++import android.media.AudioFormat
++import android.media.AudioTrack
++import android.os.SystemClock
++import android.view.MotionEvent
++import android.view.View
++import kotlin.math.PI
++import kotlin.math.abs
++import kotlin.math.cos
++import kotlin.math.exp
++import kotlin.math.max
++import kotlin.math.min
++import kotlin.math.pow
++import kotlin.math.roundToInt
++import kotlin.math.sin
++import kotlin.random.Random
++
++/**
++ * The run's end, on both screens: the top one gets the celebration (flash, rays, confetti, the title letter by letter and
++ * the final time counting up to a fanfare), the bottom one the run's details one per second and the buttons. After
++ * "Watch the credits" the bottom screen keeps a Back to menu button while the credits roll.
++ */
++object Smz3Finish {
++    class Card(val title: String, val name: String, @Volatile var ladder: String, val ladderBlue: Boolean, val ms: Long, val zelda: Int, val zeldaTotal: Int, val metroid: Int, val metroidTotal: Int)
++
++    const val T_CARD = 0.10f
++    const val T_TITLE = 0.35f
++    const val T_COUNT = 0.70f
++    const val T_LAND = 2.10f
++    const val T_ROWS = 1.0f   // the bottom screen's first row; one more each second
++    const val ROWS = 4
++    const val T_BUTTONS = T_ROWS + ROWS
++
++    @Volatile var card: Card? = null
++    @Volatile private var startedAt = 0L
++    /** While the card is up; false once it is closed for the credits. */
++    @Volatile var open = false
++    /** Main menu: set by the game activity. */
++    @Volatile var onMenu: (() -> Unit)? = null
++    /** Closes the top card for the credits: set by the game activity. */
++    @Volatile var onCredits: (() -> Unit)? = null
++
++    fun start(c: Card) { card = c; startedAt = SystemClock.uptimeMillis(); open = true }
++
++    fun clear() { card = null; open = false }
++
++    fun time(): Float = (SystemClock.uptimeMillis() - startedAt) / 1000f
++
++    /** A press before the buttons are out only ends the animation: returns true then. */
++    fun skip(): Boolean {
++        if (time() >= T_BUTTONS) return false
++        startedAt = SystemClock.uptimeMillis() - (T_BUTTONS * 1000).toLong()
++        skipped = true
++        return true
++    }
++    @Volatile var skipped = false
++
++    fun menu() { onMenu?.invoke() }
++
++    fun credits() { open = false; onCredits?.invoke() }
++
++    // ---- sounds, made on the fly like the PC build's
++
++    private const val RATE = 44100
++    private fun note(out: FloatArray, start: Int, hz: Float, ms: Float, vol: Float) {
++        val n = (RATE * ms / 1000).toInt()
++        for (i in 0 until n) {
++            if (start + i >= out.size) break
++            val t = i.toFloat() / RATE
++            val env = min(1f, i / (RATE * 0.004f)) * exp(-t * 5000 / ms)
++            out[start + i] += vol * env * (sin(2 * PI * hz * t).toFloat() + 0.18f * sin(4 * PI * hz * t).toFloat())
++        }
++    }
++
++    private fun play(mix: FloatArray) {
++        Thread {
++            runCatching {
++                val pcm = ShortArray(mix.size) { (max(-1f, min(1f, mix[it])) * 32767).toInt().toShort() }
++                val track = AudioTrack.Builder()
++                    .setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_GAME).setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build())
++                    .setAudioFormat(AudioFormat.Builder().setEncoding(AudioFormat.ENCODING_PCM_16BIT).setSampleRate(RATE).setChannelMask(AudioFormat.CHANNEL_OUT_MONO).build())
++                    .setTransferMode(AudioTrack.MODE_STATIC).setBufferSizeInBytes(pcm.size * 2).build()
++                track.write(pcm, 0, pcm.size)
++                track.play()
++                Thread.sleep(pcm.size * 1000L / RATE + 100)
++                track.release()
++            }
++        }.start()
++    }
++
++    fun tick() = play(FloatArray(RATE / 10).also { note(it, 0, 1568f, 60f, 0.08f); note(it, RATE * 30 / 1000, 2093f, 60f, 0.08f) })
++
++    fun row() = play(FloatArray(RATE / 6).also { note(it, 0, 659f, 90f, 0.12f); note(it, RATE * 45 / 1000, 988f, 90f, 0.12f) })
++
++    /** A rising arpeggio that lands on a held major chord. */
++    fun fanfare() = play(FloatArray(RATE * 13 / 10).also { m ->
++        floatArrayOf(523f, 659f, 784f, 1047f).forEachIndexed { i, hz -> note(m, RATE * 70 * i / 1000, hz, 160f, 0.10f) }
++        floatArrayOf(523f, 659f, 784f, 1047f, 1319f).forEach { note(m, RATE * 300 / 1000, it, 900f, 0.055f) }
++    })
++
++    // ---- shared drawing
++
++    val GOLD = Color.rgb(0xF2, 0xA3, 0x3A)
++    val PALE_GOLD = Color.rgb(0xFF, 0xE0, 0x7A)
++    val CARD = Color.rgb(0x10, 0x16, 0x1F)
++    val TEXT = Color.rgb(0xE8, 0xEC, 0xF2)
++    val DIM = Color.rgb(0x87, 0x93, 0xA6)
++    val BLUE = Color.rgb(0x4F, 0xC3, 0xF7)
++    val GREEN = Color.rgb(0x5B, 0xD4, 0x6A)
++    val ORANGE = Color.rgb(0xFF, 0x8A, 0x3D)
++    val TRACK = Color.rgb(0x1D, 0x24, 0x30)
++    private val CONFETTI = intArrayOf(GOLD, PALE_GOLD, GREEN, ORANGE, BLUE, Color.rgb(0xFF, 0x6A, 0xD5))
++
++    fun clamp01(v: Float) = if (v < 0f) 0f else if (v > 1f) 1f else v
++    fun easeOut(p: Float) = clamp01(p).let { 1 - (1 - it).pow(3) }
++    fun backOut(p: Float) = clamp01(p).let { val c = 1.9f; 1 + (c + 1) * (it - 1).pow(3) + c * (it - 1).pow(2) }
++    fun alpha(c: Int, a: Float) = Color.argb((255 * clamp01(a)).toInt(), Color.red(c), Color.green(c), Color.blue(c))
++
++    fun clock(ms: Long): String {
++        val s = ms / 1000
++        return String.format(java.util.Locale.US, "%d:%02d:%02d.%02d", s / 3600, s / 60 % 60, s % 60, ms % 1000 / 10)
++    }
++
++    fun pct(a: Int, b: Int) = if (b > 0) (100.0 * a / b).roundToInt() else 0
++
++    class Confetti {
++        private class P(var x: Float, var y: Float, var vx: Float, var vy: Float, var rot: Float, val vrot: Float, val size: Float, val flutter: Float, val color: Int)
++        private val parts = ArrayList<P>()
++        private val path = Path()
++        private val paint = Paint(Paint.ANTI_ALIAS_FLAG)
++
++        fun burst(x: Float, y: Float, n: Int, speed: Float) = repeat(n) {
++            val a = -PI.toFloat() / 2 + (Random.nextFloat() - 0.5f) * 2.6f
++            val v = speed * (0.45f + 0.55f * Random.nextFloat())
++            parts += P(x, y, cos(a) * v, sin(a) * v, Random.nextFloat() * 6.3f, (Random.nextFloat() - 0.5f) * 14, 0.6f + 0.6f * Random.nextFloat(), Random.nextFloat() * 6.3f, CONFETTI.random())
++        }
++
++        fun rain(w: Float, u: Float) {
++            parts += P(Random.nextFloat() * w, -20 * u, (Random.nextFloat() - 0.5f) * 40 * u, 60 * u + Random.nextFloat() * 80 * u, Random.nextFloat() * 6.3f, (Random.nextFloat() - 0.5f) * 8, 0.5f + 0.5f * Random.nextFloat(), Random.nextFloat() * 6.3f, CONFETTI.random())
++        }
++
++        fun draw(c: Canvas, dt: Float, h: Float, u: Float) {
++            val it = parts.iterator()
++            while (it.hasNext()) {
++                val p = it.next()
++                p.vy = min(p.vy + 520 * u * dt, 170 * u)   // paper falls slowly once it has opened
++                p.vx *= 1 - 1.6f * dt
++                p.x += (p.vx + sin(p.flutter + p.y / (40 * u)) * 30 * u) * dt
++                p.y += p.vy * dt
++                p.rot += p.vrot * dt
++                if (p.y > h + 30 * u) { it.remove(); continue }
++                val w = 9 * u * p.size
++                val hh = 5 * u * p.size * abs(cos(p.rot * 1.7f)) + u   // the spin shows its edge
++                c.save(); c.translate(p.x, p.y); c.rotate(p.rot * 57.3f)
++                paint.color = p.color
++                c.drawRect(-w, -hh, w, hh, paint)
++                c.restore()
++            }
++        }
++    }
++
++    fun rays(c: Canvas, paint: Paint, cx: Float, cy: Float, len: Float, t: Float, a: Float) {
++        val path = Path()
++        for (i in 0 until 14) {
++            val a0 = t * 0.12f + i * 2 * PI.toFloat() / 14
++            val a1 = a0 + PI.toFloat() / 14 * 0.55f
++            path.reset(); path.moveTo(cx, cy); path.lineTo(cx + cos(a0) * len, cy + sin(a0) * len); path.lineTo(cx + cos(a1) * len, cy + sin(a1) * len); path.close()
++            paint.shader = android.graphics.RadialGradient(cx, cy, len, alpha(GOLD, 0.27f * a), Color.TRANSPARENT, android.graphics.Shader.TileMode.CLAMP)
++            c.drawPath(path, paint)
++        }
++        paint.shader = null
++    }
++}
++
++/** The top screen's card. Taps or pad presses go through [Smz3Finish]: the first one ends the animation. */
++@SuppressLint("ViewConstructor")
++class Smz3FinishTopView(context: Context, private val face: Typeface) : View(context) {
++    private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { typeface = face }
++    private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
++    private val confetti = Smz3Finish.Confetti()
++    private var last = 0f
++    private var landed = false
++    private var ticks = 0
++    private val menuBox = RectF()
++    private val creditsBox = RectF()
++
++    private fun text(c: Canvas, s: String, x: Float, y: Float, px: Float, color: Int, align: Paint.Align = Paint.Align.CENTER) {
++        paint.textSize = px; paint.color = color; paint.textAlign = align
++        c.drawText(s, x, y + px * 0.8f, paint)
++    }
++
++    override fun onDraw(c: Canvas) {
++        val card = Smz3Finish.card ?: return
++        val t = Smz3Finish.time()
++        val dt = (t - last).coerceIn(0f, 0.05f)
++        last = t
++        val w = width.toFloat(); val h = height.toFloat(); val u = min(h / 560f, w / 900f); val mx = w / 2
++        val cw = 700 * u; val ch = 330 * u
++        val pop = Smz3Finish.backOut((t - Smz3Finish.T_CARD) / 0.45f)
++        val cy0 = (h - ch) / 2; val cy = cy0 + (1 - pop) * 60 * u
++        val inA = Smz3Finish.clamp01((t - Smz3Finish.T_CARD) / 0.3f)
++
++        c.drawColor(Color.argb((185 * Smz3Finish.clamp01(t / 0.3f)).toInt(), 0, 0, 0))
++        Smz3Finish.rays(c, fill, mx, cy0 + ch / 2, w, t, inA * (0.7f + 0.3f * sin(t * 2.2f)))
++        if (t >= Smz3Finish.T_TITLE && t < Smz3Finish.T_LAND && Random.nextFloat() < 0.25f) confetti.rain(w, u)
++        if (t >= Smz3Finish.T_LAND && Random.nextFloat() < 0.4f) confetti.rain(w, u)
++        if (t >= Smz3Finish.T_LAND && !landed) {
++            landed = true
++            if (!Smz3Finish.skipped) Smz3Finish.fanfare()
++            confetti.burst(mx - 365 * u, cy + 150 * u, 60, 900 * u)
++            confetti.burst(mx + 365 * u, cy + 150 * u, 60, 900 * u)
++        }
++        confetti.draw(c, dt, h, u)   // behind the card, so the numbers stay readable
++
++        val glow = 0.5f + 0.5f * sin(t * 3.4f)
++        val sc = 0.86f + 0.14f * pop
++        val bw = cw * sc; val bh = ch * sc; val x = mx - bw / 2; val y = cy + (ch - bh) / 2
++        fill.color = Smz3Finish.alpha(Smz3Finish.GOLD, (80 + 110 * glow) / 255f * inA)
++        c.drawRect(x - 4 * u, y - 4 * u, x + bw + 4 * u, y + bh + 4 * u, fill)
++        fill.color = Smz3Finish.alpha(Smz3Finish.CARD, inA)
++        c.drawRect(x, y, x + bw, y + bh, fill)
++        fill.color = Smz3Finish.alpha(Smz3Finish.PALE_GOLD, inA)
++        c.drawRect(x, y, x + bw, y + 3 * u, fill)
++
++        // the title, letter by letter
++        val tpx = 36 * u
++        paint.textSize = tpx
++        var lx = mx - paint.measureText(card.title) / 2
++        card.title.forEachIndexed { i, ch1 ->
++            paint.textSize = tpx
++            val lw = paint.measureText(ch1.toString())
++            val lp = Smz3Finish.clamp01((t - Smz3Finish.T_TITLE - i * 0.035f) / 0.22f)
++            if (lp > 0 && ch1 != ' ') {
++                val ls = 1 + 0.9f * (1 - Smz3Finish.backOut(lp))
++                text(c, ch1.toString(), lx + lw / 2, cy + 30 * u - (ls - 1) * tpx / 2, tpx * ls, Smz3Finish.alpha(Smz3Finish.GOLD, lp))
++            }
++            lx += lw
++        }
++
++        // the final time counting up, then a punch, a ring and the fanfare
++        val cp = Smz3Finish.easeOut((t - Smz3Finish.T_COUNT) / (Smz3Finish.T_LAND - Smz3Finish.T_COUNT))
++        if (t >= Smz3Finish.T_COUNT && t < Smz3Finish.T_LAND && ((t - Smz3Finish.T_COUNT) / 0.11f).toInt() > ticks) { ticks = ((t - Smz3Finish.T_COUNT) / 0.11f).toInt(); Smz3Finish.tick() }
++        val punch = if (t >= Smz3Finish.T_LAND) 1 + 0.18f * exp(-(t - Smz3Finish.T_LAND) * 7) else 1f
++        if (t >= Smz3Finish.T_COUNT) {
++            val ms = if (t >= Smz3Finish.T_LAND) card.ms else (card.ms * cp).toLong()
++            text(c, Smz3Finish.clock(ms), mx, cy + 90 * u - (punch - 1) * 40 * u, 84 * u * punch, Smz3Finish.alpha(Smz3Finish.TEXT, (t - Smz3Finish.T_COUNT) / 0.2f))
++        }
++        if (t >= Smz3Finish.T_LAND && t < Smz3Finish.T_LAND + 0.7f) {
++            val rp = (t - Smz3Finish.T_LAND) / 0.7f
++            fill.style = Paint.Style.STROKE; fill.strokeWidth = 6 * u * (1 - rp) + u; fill.color = Smz3Finish.alpha(Smz3Finish.PALE_GOLD, 0.8f * (1 - rp))
++            c.drawCircle(mx, cy + 134 * u, 60 * u + 300 * u * Smz3Finish.easeOut(rp), fill)
++            fill.style = Paint.Style.FILL
++        }
++        if (t >= Smz3Finish.T_LAND) {
++            val a = (t - Smz3Finish.T_LAND) / 0.4f
++            text(c, card.name, mx, cy + 196 * u, 20 * u, Smz3Finish.alpha(Smz3Finish.DIM, a))
++            text(c, card.ladder, mx, cy + 232 * u, 20 * u, Smz3Finish.alpha(if (card.ladderBlue) Smz3Finish.BLUE else Smz3Finish.DIM, a))
++        }
++        if (t >= Smz3Finish.T_BUTTONS) {
++            val a = Smz3Finish.easeOut((t - Smz3Finish.T_BUTTONS) / 0.3f)
++            val by = cy + ch - 56 * u
++            button(c, menuBox, mx - 250 * u, by, 230 * u, "A", "Main menu", true, a, u)
++            button(c, creditsBox, mx + 20 * u, by, 230 * u, "B", "Watch the credits", false, a, u)
++        }
++        postInvalidateOnAnimation()
++
++        if (t < 0.35f) c.drawColor(Color.argb((150 * (1 - t / 0.35f)).toInt(), 255, 250, 235))
++    }
++
++    private fun button(c: Canvas, box: RectF, x: Float, y: Float, w: Float, key: String, label: String, primary: Boolean, a: Float, u: Float) {
++        box.set(x, y, x + w, y + 40 * u)
++        fill.color = Smz3Finish.alpha(if (primary) Smz3Finish.GOLD else Smz3Finish.TRACK, a)
++        c.drawRoundRect(box, 6 * u, 6 * u, fill)
++        fill.color = Smz3Finish.alpha(if (primary) Smz3Finish.CARD else Smz3Finish.TEXT, a)
++        c.drawCircle(x + 22 * u, y + 20 * u, 12 * u, fill)
++        text(c, key, x + 22 * u, y + 11 * u, 16 * u, Smz3Finish.alpha(if (primary) Smz3Finish.GOLD else Smz3Finish.TRACK, a))
++        text(c, label, x + 42 * u, y + 10 * u, 19 * u, Smz3Finish.alpha(if (primary) Smz3Finish.CARD else Smz3Finish.TEXT, a), Paint.Align.LEFT)
++    }
++
++    @SuppressLint("ClickableViewAccessibility")
++    override fun onTouchEvent(e: MotionEvent): Boolean {
++        if (e.action != MotionEvent.ACTION_UP) return true
++        if (Smz3Finish.skip()) return true
++        if (menuBox.contains(e.x, e.y)) Smz3Finish.menu() else if (creditsBox.contains(e.x, e.y)) Smz3Finish.credits()
++        return true
++    }
++}
++
++/**
++ * The bottom screen's part: over the tracker while the card is up, the run's details one per second (time, completion,
++ * each world) and the two buttons; during the credits only a Back to menu bar at the bottom.
++ */
++@SuppressLint("ViewConstructor")
++class Smz3FinishPanel(context: Context, private val face: Typeface) : View(context) {
++    private val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply { typeface = face }
++    private val fill = Paint(Paint.ANTI_ALIAS_FLAG)
++    private val menuBox = RectF()
++    private val creditsBox = RectF()
++    private val backBox = RectF()
++    private var rowsSaid = 0
++    private var shownFor: Smz3Finish.Card? = null
++
++    private fun text(c: Canvas, s: String, x: Float, y: Float, px: Float, color: Int, align: Paint.Align = Paint.Align.LEFT) {
++        paint.textSize = px; paint.color = color; paint.textAlign = align
++        c.drawText(s, x, y + px * 0.8f, paint)
++    }
++
++    private fun credits() = Smz3Tracker.currentGame == 3 && !Smz3Finish.open
++
++    override fun onDraw(c: Canvas) {
++        val w = width.toFloat(); val h = height.toFloat(); val u = w / 1240f
++        if (credits()) {
++            val bh = 92 * u
++            fill.color = Color.argb(235, 0x10, 0x16, 0x1F)
++            c.drawRect(0f, h - bh, w, h, fill)
++            fill.color = Smz3Finish.GOLD
++            c.drawRect(0f, h - bh, w, h - bh + 3 * u, fill)
++            backBox.set(w / 2 - 220 * u, h - bh + 16 * u, w / 2 + 220 * u, h - 14 * u)
++            c.drawRoundRect(backBox, 8 * u, 8 * u, fill)
++            text(c, "Back to menu", w / 2, backBox.top + 12 * u, 34 * u, Smz3Finish.CARD, Paint.Align.CENTER)
++            postInvalidateDelayed(500)
++            return
++        }
++        val card = Smz3Finish.card ?: return
++        if (shownFor !== card) { shownFor = card; rowsSaid = 0 }
++        val t = Smz3Finish.time()
++        fill.color = Color.argb((255 * Smz3Finish.clamp01(t / 0.4f)).toInt(), 0x0A, 0x0E, 0x15)
++        c.drawRect(0f, 0f, w, h, fill)
++        Smz3Finish.rays(c, fill, w / 2, -40 * u, h * 1.4f, t, 0.5f * Smz3Finish.clamp01(t / 0.6f))
++
++        text(c, card.title, w / 2, 34 * u, 34 * u, Smz3Finish.alpha(Smz3Finish.GOLD, t / 0.4f), Paint.Align.CENTER)
++        val lx = 120 * u; val rx = w - 120 * u
++        for (r in 0 until Smz3Finish.ROWS) {
++            val rt = t - Smz3Finish.T_ROWS - r
++            if (rt < 0) continue
++            if (r >= rowsSaid) { rowsSaid = r + 1; if (!Smz3Finish.skipped) Smz3Finish.row() }
++            val rp = Smz3Finish.easeOut(rt / 0.35f); val grow = Smz3Finish.easeOut(rt / 0.7f)
++            val y = 120 * u + r * 170 * u + (1 - rp) * 24 * u
++            val dim = Smz3Finish.alpha(Smz3Finish.DIM, rp)
++            when (r) {
++                0 -> {
++                    text(c, "TIME", lx, y, 28 * u, dim)
++                    text(c, Smz3Finish.clock((card.ms * grow).toLong()), rx, y - 20 * u, 72 * u, Smz3Finish.alpha(Smz3Finish.TEXT, rp), Paint.Align.RIGHT)
++                }
++                1 -> {
++                    val all = Smz3Finish.pct(card.zelda + card.metroid, card.zeldaTotal + card.metroidTotal)
++                    text(c, "COMPLETION", lx, y, 28 * u, dim)
++                    text(c, "${(all * grow).roundToInt()}%", rx, y - 20 * u, 72 * u, Smz3Finish.alpha(Smz3Finish.PALE_GOLD, rp), Paint.Align.RIGHT)
++                }
++                else -> {
++                    val zelda = r == 2
++                    val got = if (zelda) card.zelda else card.metroid; val of = if (zelda) card.zeldaTotal else card.metroidTotal
++                    text(c, if (zelda) "ZELDA" else "METROID", lx, y, 28 * u, dim)
++                    text(c, "$got/$of   ${Smz3Finish.pct(got, of)}%", rx, y - 4 * u, 40 * u, Smz3Finish.alpha(Smz3Finish.TEXT, rp), Paint.Align.RIGHT)
++                    val by = y + 58 * u
++                    fill.color = Smz3Finish.alpha(Smz3Finish.TRACK, rp)
++                    c.drawRoundRect(lx, by, rx, by + 18 * u, 9 * u, 9 * u, fill)
++                    fill.color = Smz3Finish.alpha(if (zelda) Smz3Finish.GREEN else Smz3Finish.ORANGE, rp)
++                    val f = if (of > 0) got.toFloat() / of else 0f
++                    if (f > 0) c.drawRoundRect(lx, by, lx + (rx - lx) * f * grow, by + 18 * u, 9 * u, 9 * u, fill)
++                }
++            }
++        }
++        if (t >= Smz3Finish.T_BUTTONS) {
++            val a = Smz3Finish.easeOut((t - Smz3Finish.T_BUTTONS) / 0.3f)
++            val by = h - 130 * u + (1 - a) * 16 * u
++            menuBox.set(lx, by, w / 2 - 20 * u, by + 96 * u)
++            creditsBox.set(w / 2 + 20 * u, by, rx, by + 96 * u)
++            fill.color = Smz3Finish.alpha(Smz3Finish.GOLD, a)
++            c.drawRoundRect(menuBox, 10 * u, 10 * u, fill)
++            fill.color = Smz3Finish.alpha(Smz3Finish.TRACK, a)
++            c.drawRoundRect(creditsBox, 10 * u, 10 * u, fill)
++            text(c, "Main menu", menuBox.centerX(), by + 26 * u, 36 * u, Smz3Finish.alpha(Smz3Finish.CARD, a), Paint.Align.CENTER)
++            text(c, "Watch the credits", creditsBox.centerX(), by + 26 * u, 36 * u, Smz3Finish.alpha(Smz3Finish.TEXT, a), Paint.Align.CENTER)
++        }
++        postInvalidateOnAnimation()
++    }
++
++    @SuppressLint("ClickableViewAccessibility")
++    override fun onTouchEvent(e: MotionEvent): Boolean {
++        if (credits()) {   // only the bar takes touches; the tracker above it keeps working
++            if (!backBox.contains(e.x, e.y)) return false
++            if (e.action == MotionEvent.ACTION_UP) Smz3Finish.menu()
++            return true
++        }
++        if (Smz3Finish.card == null) return false
++        if (e.action != MotionEvent.ACTION_UP) return true
++        if (Smz3Finish.skip()) return true
++        if (menuBox.contains(e.x, e.y)) Smz3Finish.menu() else if (creditsBox.contains(e.x, e.y)) Smz3Finish.credits()
 +        return true
 +    }
 +}

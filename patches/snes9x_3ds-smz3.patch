@@ -46,8 +46,20 @@ index 970484a..b92dad2 100644
          // (e.g. sdmc:/3ds/snes9x_3ds/backgrounds/game_screen/Super Mario World.png)
          snprintf(output, bufferSize, "%s/%s/%s%s", settings3DS.RootDir, targetDir, basename, extension);
      } 
+diff --git a/source/3dsgpu.h b/source/3dsgpu.h
+index 591688c..0eb3100 100644
+--- a/source/3dsgpu.h
++++ b/source/3dsgpu.h
+@@ -118,6 +118,7 @@ typedef enum
+     UI_RA_INDICATOR_TEXT,    // RA indicators: progress value + overflow count
+     UI_RA_PROGRESS_BADGE,    // RA progress indicator: 64x64 badge
+     UI_RA_CHALLENGE_BADGE,   // RA challenge indicator: atlas of 64x64 badges
++    UI_SMZ3_CARD,            // SMZ3 run-complete card, drawn in software each frame
+     UI_SCANLINE,
+ 
+     TEX_COUNT,
 diff --git a/source/3dsimpl.cpp b/source/3dsimpl.cpp
-index d4fca8e..a8ea809 100644
+index d4fca8e..2146759 100644
 --- a/source/3dsimpl.cpp
 +++ b/source/3dsimpl.cpp
 @@ -8,6 +8,7 @@
@@ -58,7 +70,23 @@ index d4fca8e..a8ea809 100644
  #include <dirent.h>
  
  #include "memmap.h"
-@@ -983,6 +984,7 @@ void impl3dsRunOneFrame(bool firstFrame, bool skipDrawingFrame)
+@@ -796,6 +797,7 @@ static void impl3dsSceneRenderEye(bool firstFrame, bool paused, float pauseProgr
+ 		notif3dsDrawRich();
+ 		notif3dsDrawIndicators();
+ 		notif3dsDraw(UI_NOTIF_FPS);   // last: overlays the toast corner rather than moving it
++		smz3CardDraw(xOffset);
+ 	}
+ }
+ 
+@@ -920,6 +922,7 @@ void impl3dsRunOneFrame(bool firstFrame, bool skipDrawingFrame)
+ 
+ 	notif3dsTick();
+ 	notif3dsSync();
++	smz3CardSync();
+ 
+ 	// Draw the previous frame before resetting its layer list and PPU.
+ 	gpu3dsFrameBegin(screenshot.dirty ? C3D_FRAME_SYNCDRAW : 0, pendingSnesDraw);
+@@ -983,6 +986,7 @@ void impl3dsRunOneFrame(bool firstFrame, bool skipDrawingFrame)
  //---------------------------------------------------------
  bool impl3dsSaveStateSlot(int slotNumber)
  {
@@ -66,7 +94,7 @@ index d4fca8e..a8ea809 100644
      char path[PATH_MAX], ext[16];
      snprintf(ext, sizeof(ext), ".%d.frz", slotNumber);
      file3dsGetRelatedPath(Memory.ROMFilename, path, sizeof(path), ext, "savestates");
-@@ -1000,7 +1002,7 @@ bool impl3dsSaveStateSlot(int slotNumber)
+@@ -1000,7 +1004,7 @@ bool impl3dsSaveStateSlot(int slotNumber)
  
  bool impl3dsSaveStateAuto()
  {
@@ -75,7 +103,7 @@ index d4fca8e..a8ea809 100644
          return true;
  
      char path[PATH_MAX];
-@@ -1032,6 +1034,7 @@ bool impl3dsSaveState(const char* filename)
+@@ -1032,6 +1036,7 @@ bool impl3dsSaveState(const char* filename)
  //---------------------------------------------------------
  bool impl3dsLoadStateSlot(int slotNumber)
  {
@@ -83,7 +111,7 @@ index d4fca8e..a8ea809 100644
      char path[PATH_MAX], ext[16];
      snprintf(ext, sizeof(ext), ".%d.frz", slotNumber);
      file3dsGetRelatedPath(Memory.ROMFilename, path, sizeof(path), ext, "savestates");
-@@ -1071,6 +1074,7 @@ bool impl3dsLoadState(const char* filename)
+@@ -1071,6 +1076,7 @@ bool impl3dsLoadState(const char* filename)
  	if (success)
  	{
  		gpu3dsInitializeMode7Vertexes();
@@ -92,7 +120,7 @@ index d4fca8e..a8ea809 100644
  	return success;
  }
 diff --git a/source/3dsinput.cpp b/source/3dsinput.cpp
-index c8b5241..4b6972d 100644
+index c8b5241..c7f824c 100644
 --- a/source/3dsinput.cpp
 +++ b/source/3dsinput.cpp
 @@ -9,6 +9,7 @@
@@ -119,12 +147,15 @@ index c8b5241..4b6972d 100644
      input3dsSetTurboMode(turboModeToggle || fastForwardHeld, isInGame);
  }
  
-@@ -78,6 +81,18 @@ u32 input3dsScanInputForEmulation()
+@@ -76,8 +79,21 @@ u32 input3dsScanInputForEmulation()
+     }
+     
      u32 keysDown = (~lastKeysHeld) & currKeysHeld;
++    u32 pressed = currKeysHeld;   // before SMZ3 takes keys from the game, so a held key is not pressed again next frame
      bool isInGame = GPU3DS.emulatorState == EMUSTATE_EMULATE;
  
 +    if (isInGame && smz3TrackerTouch(keysDown, currKeysHeld)) keysDown &= ~KEY_TOUCH;   // an SMZ3 run's tracker takes the touch screen
-+    if (isInGame) {   // the SMZ3 run-complete card takes A and B; its A opens the menu, which goes on to the run list
++    if (isInGame) {   // the SMZ3 run-complete card takes A and B (its A opens the menu, which goes on to the run list), the shortcuts their buttons
 +        static u32 cardKeys = 0;
 +        bool openMenu;
 +        u32 took = smz3TrackerKeys(keysDown, &openMenu);
@@ -138,7 +169,7 @@ index c8b5241..4b6972d 100644
      if (keysDown & KEY_TOUCH || 
          (!settings3DS.UseGlobalEmuControlKeys && settings3DS.ButtonHotkeys[HOTKEY_OPEN_MENU].IsHeld(keysDown)) ||
          (settings3DS.UseGlobalEmuControlKeys && settings3DS.GlobalButtonHotkeys[HOTKEY_OPEN_MENU].IsHeld(keysDown))
-@@ -134,7 +149,7 @@ u32 input3dsScanInputForEmulation()
+@@ -134,14 +150,14 @@ u32 input3dsScanInputForEmulation()
              (!settings3DS.UseGlobalEmuControlKeys && settings3DS.ButtonHotkeys[HOTKEY_FAST_FORWARD_TOGGLE].IsHeld(keysDown)) ||
              (settings3DS.UseGlobalEmuControlKeys && settings3DS.GlobalButtonHotkeys[HOTKEY_FAST_FORWARD_TOGGLE].IsHeld(keysDown));
  
@@ -147,8 +178,16 @@ index c8b5241..4b6972d 100644
              turboModeToggle = !turboModeToggle;
          }
      }
+     input3dsRefreshTurboMode(isInGame);
+ 
+ 
+-    lastKeysHeld = currKeysHeld;
++    lastKeysHeld = pressed;
+     return keysDown;
+ 
+ }
 diff --git a/source/3dsmain.cpp b/source/3dsmain.cpp
-index 3692a54..1d418f1 100644
+index 3692a54..5586a50 100644
 --- a/source/3dsmain.cpp
 +++ b/source/3dsmain.cpp
 @@ -32,6 +32,7 @@
@@ -190,7 +229,25 @@ index 3692a54..1d418f1 100644
          if (ra3dsIsAvailable())
              ra3dsAppendMenuEntry(items);
  
-@@ -1608,6 +1626,10 @@ bool emulatorLoadRom()
+@@ -1163,6 +1181,17 @@ void makeControlsMenu(std::vector<SMenuItem>& items, std::vector<SMenuTab>& menu
+ 
+     AddMenuDisabledOption(items, ""_s);
+ 
++    if (smz3IsRun()) {
++        AddMenuHeader1(items, "SMZ3 ITEM SHORTCUTS"_s);
++        items.emplace_back(nullptr, MenuItemType::Textarea, "  (the same in every run; not passed to the game)"_s, ""_s);
++        for (int i = 0; i < smz3ShortcutKeyCount(); ++i) {
++            AddMenuPicker(items, "  "_s + smz3ShortcutKeyName(i), "Equips the slot's item, turns the beam on or off, or picks the weapon (again: back to the beam)."_s,
++                makeOptionsFor3DSButtonMapping(), smz3ShortcutKey(i), DIALOG_TYPE_INFO, true,
++                [i](int val) { smz3SetShortcutKey(i, (unsigned)val); });
++        }
++        AddMenuDisabledOption(items, ""_s);
++    }
++
+     AddMenuHeader1(items, "BUTTON CONFIGURATION"_s);
+     AddMenuCheckbox(items, "  Apply button mappings to all games"_s, settings3DS.UseGlobalButtonMappings,
+                 []( int val )
+@@ -1608,6 +1637,10 @@ bool emulatorLoadRom()
  
      char romFileNameFullPath[PATH_MAX];
      snprintf(romFileNameFullPath, sizeof(romFileNameFullPath), "%s%s", file3dsGetCurrentDir(), romFileName);
@@ -201,7 +258,7 @@ index 3692a54..1d418f1 100644
  
      // Block the audio mixing thread from touching APU/memory state while
      // Memory.LoadROM tears down and rebuilds SNES9x globals AND while
-@@ -1788,6 +1810,7 @@ void updateFileMenuTab(const char *selectedItemName, bool showCachingIndicator,
+@@ -1788,6 +1821,7 @@ void updateFileMenuTab(const char *selectedItemName, bool showCachingIndicator,
      fileMenuTab.SubTitle.assign(file3dsGetCurrentDir());
  
      file3dsGetFiles(entries, menuTabs, showCachingIndicator);
@@ -209,7 +266,7 @@ index 3692a54..1d418f1 100644
      fileMenuTab.SubTitleRight = file3dsIsCurrentDirLoadedFromCache()
          ? std::string(1, UI_ICON_CHECKMARK) + " Cached"
          : std::string();
-@@ -2082,6 +2105,27 @@ void onDirectoryEntrySelected(
+@@ -2082,6 +2116,27 @@ void onDirectoryEntrySelected(
      std::vector<SMenuItem>& cheatMenu,
      const DirectoryEntry*& entry
  ) {
@@ -237,7 +294,7 @@ index 3692a54..1d418f1 100644
      if (entry->Type == FileEntryType::File) 
      {
          snprintf(romFileName, sizeof(romFileName), "%s", entry->Filename);
-@@ -2103,7 +2147,7 @@ void onDirectoryEntrySelected(
+@@ -2103,7 +2158,7 @@ void onDirectoryEntrySelected(
              menu3dsRunBadgeCache(dialogTab, currentMenuTab, menuTabs, romFileName);
  
              // Restore after RA identification; pause the mixer while state changes.
@@ -246,7 +303,7 @@ index 3692a54..1d418f1 100644
                  snd3dsDrainMixing();
                  impl3dsLoadStateAuto();
                  snd3dsResumeMixing();
-@@ -2161,6 +2205,12 @@ void showMenu() {
+@@ -2161,6 +2216,12 @@ void showMenu() {
      // Avoid flashing the untouched pre-pause buffer on resume.
      GPU3DS.gameScreenBufferDesync = true;
  
@@ -259,7 +316,7 @@ index 3692a54..1d418f1 100644
      while (aptMainLoop() && GPU3DS.emulatorState == EMUSTATE_PAUSEMENU) {
          int result = menu3dsMenuSelectItem(dialogTab, isDialog, currentMenuTab, menuTabs);
  
-@@ -2508,6 +2558,7 @@ void emulatorLoop()
+@@ -2508,6 +2569,7 @@ void emulatorLoop()
          t3dsStartTimer(TIMER_RUN_ONE_FRAME);
          impl3dsRunOneFrame(firstFrame, skipDrawing);
          t3dsStopTimer(TIMER_RUN_ONE_FRAME);
@@ -267,6 +324,18 @@ index 3692a54..1d418f1 100644
  
  
          long actualTicksThisFrame = (long)(svcGetSystemTick() - startFrameTick);
+diff --git a/source/3dsutils.cpp b/source/3dsutils.cpp
+index 9688a80..c195f76 100644
+--- a/source/3dsutils.cpp
++++ b/source/3dsutils.cpp
+@@ -176,6 +176,7 @@ const char* utils3dsTextureIDToString(SGPU_TEXTURE_ID id) {
+         case UI_RA_INDICATOR_TEXT:      return "ra indicator text";
+         case UI_RA_PROGRESS_BADGE:      return "ra progress badge";
+         case UI_RA_CHALLENGE_BADGE:     return "ra challenge badge";
++        case UI_SMZ3_CARD:              return "smz3 card";
+         case UI_SCANLINE:               return "scanline";
+         default:                        return "invalid";
+     }
 diff --git a/source/smz3online.cpp b/source/smz3online.cpp
 new file mode 100644
 index 0000000..e9073dc
@@ -908,10 +977,10 @@ index 0000000..322435e
 +#endif
 diff --git a/source/smz3run.cpp b/source/smz3run.cpp
 new file mode 100644
-index 0000000..7887d21
+index 0000000..3c172fe
 --- /dev/null
 +++ b/source/smz3run.cpp
-@@ -0,0 +1,2517 @@
+@@ -0,0 +1,2985 @@
 +// SMZ3 runs: the shared C menu (core/ui) drawn on the second screen, and offline generation (core/gen).
 +#include <3ds.h>
 +#include <dirent.h>
@@ -945,6 +1014,8 @@ index 0000000..7887d21
 +#include "memmap.h"
 +#include "3dsgpu.h"
 +#include "3dsimpl.h"
++#include "3dsimpl_gpu.h"
++#include "3dssound.h"
 +#include "3dssettings.h"
 +#include "3dsui.h"
 +#include "3dsfiles.h"
@@ -956,7 +1027,6 @@ index 0000000..7887d21
 +#define SPRITE_DIR SMZ_DIR "/sprites"
 +
 +static bool gChallenge = false;   // the run being played is a daily challenge: no fast forward
-+static bool gFinished = false;   // the run being played has ended (now or before): no save states, nothing sent again
 +static int gPlaySlot = -1;   // slot of the run being played
 +static bool gRunStates, gNextStates, gNextLoadState;   // the run being played (the next one) keeps an auto state; the next one starts from it
 +
@@ -1761,13 +1831,10 @@ index 0000000..7887d21
 +                bool states = loaded && strstr(r.settings, "\"saveStates\":true") && smzOnlineSlotKind(slot) < 1 && slot != SMZ_DAILY_SLOT;
 +                if (states) file3dsGetRelatedPath(r.rom_path, state, sizeof state, ".auto.frz", "savestates");
 +                bool hasState = states && access(state, F_OK) == 0;
-+                if (loaded && r.game == 3) {   // a finished run is not played again
-+                    ui_busy(&ui, "Finished: it can't be played again"); drawUi(&ui); svcSleepThread(2500000000LL); ui_idle(&ui);
-+                } else if (act == ACT_CONTINUE && hasState && r.save_ms > 0 && r.play_ms - r.save_ms > 10000) {
++                if (act == ACT_CONTINUE && hasState && r.save_ms > 0 && r.play_ms - r.save_ms > 10000) {
 +                    ui_load_choice(&ui, slot, r.save_ms, r.save_zelda, r.save_metroid, r.play_ms, r.zelda_cleared, r.metroid_cleared, r.zelda_total, r.metroid_total);
 +                } else if (loaded) {
 +                    makeDungeonMaps(&ui);
-+                    gFinished = false;
 +                    gNextStates = states;
 +                    gNextLoadState = hasState && act != ACT_LOAD_SAVE;
 +                    // The run's screen shape picks the scaling: wide fills the 400x240 screen, pixel is 8:7, original is 4:3.
@@ -2168,7 +2235,8 @@ index 0000000..7887d21
 +    snprintf(out, cap, "%lld:%02lld:%02lld", s / 3600, s / 60 % 60, s % 60);
 +}
 +
-+static int64_t runMs() { return trk.base_ms + trk.pending_ms; }
++static int64_t finalMs;   // a run finished before keeps its final time
++static int64_t runMs() { return finishedBefore ? finalMs : trk.base_ms + trk.pending_ms; }
 +
 +// The clock the RUN tab shows: a daily challenge runs on the real clock from the game's start.
 +static int64_t shownClockMs()
@@ -2334,6 +2402,9 @@ index 0000000..7887d21
 +static int scShown[2] = {1, 1};   // the slot/beam row and the weapon row; saved after the slots
 +static int scPick = -1;   // the slot whose item picker is open, -1 none
 +static int scRowY[2] = {-1, -1};   // where each row was drawn, -1 hidden
++// Pad buttons bound to the shortcuts, saved after the rows: the five ALttP slots, then the beams and weapons in id order.
++#define SC_KEYS (SC_SLOTS + SC_COUNT - SC_ZELDA_COUNT)
++static unsigned scKeys[SC_KEYS];
 +
 +static void scLoad()
 +{
@@ -2343,6 +2414,7 @@ index 0000000..7887d21
 +    if (FILE *f = fopen(SC_FILE, "r")) {
 +        for (int i = 0; i < SC_SLOTS; i++) if (fscanf(f, "%d", &scSlots[i]) != 1 || scSlots[i] < -1 || scSlots[i] >= SC_ZELDA_COUNT) scSlots[i] = -1;
 +        for (int i = 0; i < 2; i++) if (fscanf(f, "%d", &scShown[i]) != 1) scShown[i] = 1;
++        for (int i = 0; i < SC_KEYS; i++) if (fscanf(f, "%u", &scKeys[i]) != 1) scKeys[i] = 0;
 +        fclose(f);
 +    }
 +}
@@ -2353,6 +2425,7 @@ index 0000000..7887d21
 +    if (FILE *f = fopen(SC_FILE, "w")) {
 +        for (int i = 0; i < SC_SLOTS; i++) fprintf(f, "%d\n", scSlots[i]);
 +        for (int i = 0; i < 2; i++) fprintf(f, "%d\n", scShown[i]);
++        for (int i = 0; i < SC_KEYS; i++) fprintf(f, "%u\n", scKeys[i]);
 +        fclose(f);
 +    }
 +}
@@ -2366,6 +2439,18 @@ index 0000000..7887d21
 +    int n = smz_shortcut_pokes(id, Memory.RAM, 0x20000, Memory.SRAM, 0x20000, pk, 4);
 +    for (int i = 0; i < n; i++) if (pk[i].offset < 0x20000) Memory.RAM[pk[i].offset] = pk[i].value;
 +}
++
++int smz3ShortcutKeyCount(void) { return SC_KEYS; }
++
++const char *smz3ShortcutKeyName(int i)
++{
++    static char s[24];
++    if (i < SC_SLOTS) { snprintf(s, sizeof s, "Zelda slot %d", i + 1); return s; }
++    return smz_shortcuts[SC_ZELDA_COUNT + i - SC_SLOTS].name;
++}
++
++unsigned smz3ShortcutKey(int i) { scLoad(); return scKeys[i]; }
++void smz3SetShortcutKey(int i, unsigned keys) { scLoad(); scKeys[i] = keys; scSave(); }
 +
 +bool smz3ShortcutRowShown(int row) { scLoad(); return scShown[row] != 0; }
 +void smz3SetShortcutRowShown(int row, bool shown) { scLoad(); scShown[row] = shown; scSave(); dirty = true; }
@@ -3016,24 +3101,444 @@ index 0000000..7887d21
 +
 +static void clampScroll(int t);
 +
-+// The run-complete card: the final time, where it went, and A for the run list or B to watch the credits.
-+static void drawFinishCard()
++// ---- the run-complete card (frontends/pc/pc_finish.c): fanfare on the game screen, the details on this one. Times are
++// seconds from the card's first frame; a press before the buttons only jumps to them.
++
++#define T_CARD 0.10f
++#define T_TITLE 0.35f
++#define T_COUNT 0.70f
++#define T_LAND 2.10f
++#define T_ROWS 1.00f   // the bottom screen's details, one per second from here
++#define CARD_ROWS 4
++#define T_BUTTONS 5.00f
++#define PARTS 160
++#define CV_W 400
++#define CV_H 240
++
++static const int CONFETTI[] = {0xF2A33A, 0xFFE07A, 0x5BD46A, 0xFF8A3D, 0x4FC3F7, 0xFF6AD5};
++
++struct Part { float x, y, vx, vy, rot, vrot, size, flutter; int color; bool on; };
++static Part part[PARTS];
++static u64 cardStart;
++static int64_t cardMs;
++static float cardLastT;
++static int cardTicks, cardRows;
++static bool cardLanded, cardBurst;
++
++static float clamp01(float v) { return v < 0 ? 0 : v > 1 ? 1 : v; }
++static float easeOut(float p) { p = clamp01(p); return 1 - (1 - p) * (1 - p) * (1 - p); }
++static float backOut(float p) { p = clamp01(p); float c = 1.9f; return 1 + (c + 1) * powf(p - 1, 3) + c * powf(p - 1, 2); }
++static float frand() { return (float)rand() / RAND_MAX; }
++static float cardT() { return (osGetTime() - cardStart) / 1000.0f; }
++
++static void cardBegin()
 +{
-+    int x0 = 24, y0 = 60, x1 = 296, y1 = 190;
-+    fill(x0 - 2, y0 - 2, x1 + 2, y1 + 2, theme.accent);
-+    fill(x0, y0, x1, y1, theme.bg);
-+    text(x0, y0 + 8, theme.accent, daily ? "CHALLENGE COMPLETE" : "RUN COMPLETE", HALIGN_CENTER, x1);
-+    int64_t ms = daily && dailyDoneMs > 1 ? dailyDoneMs : runMs();
-+    char s[160];
-+    snprintf(s, sizeof s, "%lld:%02lld:%02lld.%02lld", (long long)(ms / 3600000), (long long)(ms / 60000 % 60), (long long)(ms / 1000 % 60), (long long)(ms % 1000 / 10));
-+    int w = ui3dsGetStringWidth(s, 0, 0xffff, 26);
-+    bigText((x0 + x1 - w) / 2, y0 + 28, 26, theme.text, s);
++    cardState = 1;
++    cardStart = osGetTime();
++    cardMs = daily && dailyDoneMs > 1 ? dailyDoneMs : runMs();
++    cardLastT = 0; cardTicks = cardRows = 0; cardLanded = cardBurst = false;
++    memset(part, 0, sizeof part);
++    dirty = true;
++}
++
++// A press before the buttons: straight to the end, without the sounds on the way.
++static bool cardSkip()
++{
++    if (cardT() >= T_BUTTONS) return false;
++    cardStart = osGetTime() - (u64)(T_BUTTONS * 1000);
++    cardTicks = 1000; cardRows = CARD_ROWS; cardLanded = cardBurst = true;
++    dirty = true;
++    return true;
++}
++
++static void fmtTime(int64_t ms, char *out, size_t cap)
++{
++    long long s = ms / 1000;
++    snprintf(out, cap, "%lld:%02lld:%02lld.%02lld", s / 3600, s / 60 % 60, s % 60, (long long)(ms % 1000 / 10));
++}
++
++static int pct(unsigned a, unsigned b) { return b ? (int)(100.0 * a / b + 0.5) : 0; }
++
++// sounds on ndsp channels 1 to 3 (the SNES plays on 0), one each so the rows don't cut the fanfare, synthesized once
++enum { SFX_TICK, SFX_ROW, SFX_FANFARE, SFX_COUNT };
++#define SFX_RATE 22050
++static ndspWaveBuf sfxBuf[SFX_COUNT];
++static bool sfxReady;
++
++static void sfxNote(s16 *out, int n, float at, float len, float hz, float vol)
++{
++    int i0 = (int)(at * SFX_RATE), i1 = (int)((at + len) * SFX_RATE);
++    for (int i = i0 < 0 ? 0 : i0; i < i1 && i < n; i++) {
++        float t = (float)(i - i0) / SFX_RATE, env = fminf(1, t * 200) * expf(-t * 3.2f / len);
++        float v = out[i] + 32767 * vol * env * (sinf(2 * (float)M_PI * hz * t) + 0.3f * sinf(4 * (float)M_PI * hz * t));
++        out[i] = (s16)(v > 32767 ? 32767 : v < -32767 ? -32767 : v);
++    }
++}
++
++static void sfxInit()
++{
++    if (sfxReady || snd3DS.audioType != 2) return;
++    static const float LEN[SFX_COUNT] = {0.03f, 0.16f, 2.0f};
++    for (int k = 0; k < SFX_COUNT; k++) {
++        int n = (int)(LEN[k] * SFX_RATE);
++        s16 *p = (s16 *)linearAlloc(n * 2);
++        if (!p) return;
++        memset(p, 0, n * 2);
++        if (k == SFX_TICK) sfxNote(p, n, 0, 0.03f, 1500, 0.10f);
++        if (k == SFX_ROW) { sfxNote(p, n, 0, 0.08f, 880, 0.14f); sfxNote(p, n, 0.07f, 0.09f, 1320, 0.14f); }
++        if (k == SFX_FANFARE) {   // C5 E5 G5 C6, then the chord held
++            static const float ARP[] = {523.25f, 659.25f, 783.99f, 1046.5f}, CHORD[] = {261.63f, 329.63f, 392.0f, 523.25f, 659.25f};
++            for (int i = 0; i < 4; i++) sfxNote(p, n, i * 0.07f, 0.25f, ARP[i], 0.12f);
++            for (float hz : CHORD) sfxNote(p, n, 0.30f, 1.6f, hz, 0.07f);
++        }
++        DSP_FlushDataCache(p, n * 2);
++        memset(&sfxBuf[k], 0, sizeof sfxBuf[k]);
++        sfxBuf[k].data_vaddr = p;
++        sfxBuf[k].nsamples = n;
++    }
++    for (int k = 0; k < SFX_COUNT; k++) {
++        float mix[12] = {1, 1};
++        ndspChnReset(1 + k);
++        ndspChnSetInterp(1 + k, NDSP_INTERP_LINEAR);
++        ndspChnSetRate(1 + k, SFX_RATE);
++        ndspChnSetFormat(1 + k, NDSP_FORMAT_MONO_PCM16);
++        ndspChnSetMix(1 + k, mix);
++    }
++    sfxReady = true;
++}
++
++static void sfxPlay(int k)
++{
++    sfxInit();
++    if (!sfxReady) return;
++    ndspChnWaveBufClear(1 + k);
++    sfxBuf[k].status = NDSP_WBUF_FREE;
++    ndspChnWaveBufAdd(1 + k, &sfxBuf[k]);
++}
++
++// The sounds follow the timeline, once a frame.
++static void cardSounds()
++{
++    float t = cardT();
++    if (t >= T_COUNT && t < T_LAND && (int)((t - T_COUNT) / 0.11f) > cardTicks) { cardTicks = (int)((t - T_COUNT) / 0.11f); sfxPlay(SFX_TICK); }
++    if (t >= T_LAND && !cardLanded) { cardLanded = true; sfxPlay(SFX_FANFARE); }
++    if (t >= T_ROWS + cardRows && cardRows < CARD_ROWS) { cardRows++; sfxPlay(SFX_ROW); }
++}
++
++// the game screen's layer: drawn in RGBA8, uploaded as RGBA4 and blended over the game
++static u8 cv[CV_H][CV_W][4];
++static int cvW = CV_W;
++
++static void cvPut(int x, int y, int rgb, int a)
++{
++    if (x < 0 || y < 0 || x >= cvW || y >= CV_H || a <= 0) return;
++    u8 *d = cv[y][x];
++    if (a > 255) a = 255;
++    int da = d[3] * (255 - a) / 255, oa = a + da;
++    if (!oa) return;
++    d[0] = (u8)((((rgb >> 16) & 255) * a + d[0] * da) / oa);
++    d[1] = (u8)((((rgb >> 8) & 255) * a + d[1] * da) / oa);
++    d[2] = (u8)(((rgb & 255) * a + d[2] * da) / oa);
++    d[3] = (u8)oa;
++}
++
++static void cvRect(float x0, float y0, float x1, float y1, int rgb, int a)
++{
++    for (int y = (int)fmaxf(0, y0); y < (int)fminf(CV_H, y1); y++)
++        for (int x = (int)fmaxf(0, x0); x < (int)fminf(cvW, x1); x++) cvPut(x, y, rgb, a);
++}
++
++static void cvQuad(const float *xy, int rgb, int a)   // convex, corners in order
++{
++    float x0 = xy[0], x1 = xy[0], y0 = xy[1], y1 = xy[1];
++    for (int k = 1; k < 4; k++) { x0 = fminf(x0, xy[k * 2]); x1 = fmaxf(x1, xy[k * 2]); y0 = fminf(y0, xy[k * 2 + 1]); y1 = fmaxf(y1, xy[k * 2 + 1]); }
++    for (int y = (int)y0; y <= (int)y1; y++)
++        for (int x = (int)x0; x <= (int)x1; x++) {
++            int pos = 0, neg = 0;
++            for (int k = 0; k < 4; k++) {
++                const float *p = xy + k * 2, *q = xy + (k + 1) % 4 * 2;
++                float c = (q[0] - p[0]) * (y + 0.5f - p[1]) - (q[1] - p[1]) * (x + 0.5f - p[0]);
++                if (c > 0) pos++; else if (c < 0) neg++;
++            }
++            if (!pos || !neg) cvPut(x, y, rgb, a);
++        }
++}
++
++static void cvRing(float cx, float cy, float r, float th, int rgb, int a)
++{
++    for (int y = (int)(cy - r - 1); y <= (int)(cy + r + 1); y++)
++        for (int x = (int)(cx - r - 1); x <= (int)(cx + r + 1); x++) {
++            float d = sqrtf((x + 0.5f - cx) * (x + 0.5f - cx) + (y + 0.5f - cy) * (y + 0.5f - cy));
++            if (d <= r && d >= r - th) cvPut(x, y, rgb, a);
++        }
++}
++
++static void cvDisc(float cx, float cy, float r, int rgb, int a) { cvRing(cx, cy, r, r, rgb, a); }
++
++// Text through the UI's font (13 to 32 px high). align 0 left, 1 centre, 2 right of x. Returns its width.
++static int cvText(float x, float y, int h, int rgb, int a, const char *s, int align = 0)
++{
++    enum { BW = 512 };
++    static u16 buf[BW * 32];
++    if (h > 32) h = 32;
++    memset(buf, 0, BW * h * 2);
++    int w = ui3dsDrawStringToTexture(buf, s, 0, 0, BW, h, (u32)rgb << 8, h);
++    int ox = (int)(x - (align == 1 ? w / 2 : align == 2 ? w : 0)), oy = (int)y;
++    for (int yy = 0; yy < h; yy++)
++        for (int xx = 0; xx < w; xx++) {
++            int a4 = buf[yy * BW + xx] & 15;
++            if (a4) cvPut(ox + xx, oy + yy, rgb, a4 * 17 * a / 255);
++        }
++    return w;
++}
++
++static void cvButton(float x, float y, const char *key, const char *label, int a)
++{
++    cvDisc(x + 7, y + 7, 7.5f, 0x2A3442, a);
++    cvText(x + 7, y + 1, 13, 0xFFE07A, a, key, 1);
++    cvText(x + 18, y + 1, 13, 0xE8ECF2, a, label);
++}
++
++static void burst(float x, float y, int n, float speed)
++{
++    for (int i = 0; i < PARTS && n > 0; i++) {
++        if (part[i].on) continue;
++        float a = -(float)M_PI / 2 + (frand() - 0.5f) * 2.6f, v = speed * (0.45f + 0.55f * frand());
++        part[i] = {x, y, cosf(a) * v, sinf(a) * v, frand() * 6.3f, (frand() - 0.5f) * 14, 0.6f + 0.6f * frand(), frand() * 6.3f, rand() % 6, true};
++        n--;
++    }
++}
++
++static void rain()
++{
++    for (int i = 0; i < PARTS; i++) {
++        if (part[i].on) continue;
++        part[i] = {frand() * cvW, -8, (frand() - 0.5f) * 14, 20 + frand() * 27, frand() * 6.3f, (frand() - 0.5f) * 8, 0.5f + 0.5f * frand(), frand() * 6.3f, rand() % 6, true};
++        return;
++    }
++}
++
++static void drawParts(float dt)
++{
++    for (Part &p : part) {
++        if (!p.on) continue;
++        p.vy += 173 * dt;
++        p.vx *= 1 - 1.6f * dt;
++        if (p.vy > 57) p.vy = 57;   // paper falls slowly once it has opened
++        p.x += (p.vx + sinf(p.flutter + p.y / 13) * 10) * dt;
++        p.y += p.vy * dt;
++        p.rot += p.vrot * dt;
++        if (p.y > CV_H + 10) { p.on = false; continue; }
++        float w = 3.4f * p.size, h = 1.9f * p.size * fabsf(cosf(p.rot * 1.7f)) + 0.5f;   // the spin shows its edge
++        float c = cosf(p.rot), s = sinf(p.rot), xy[8];
++        const float cx[4] = {-w, w, w, -w}, cy[4] = {-h, -h, h, h};
++        for (int k = 0; k < 4; k++) { xy[k * 2] = p.x + cx[k] * c - cy[k] * s; xy[k * 2 + 1] = p.y + cx[k] * s + cy[k] * c; }
++        cvQuad(xy, CONFETTI[p.color], 255);
++    }
++}
++
++// 14 slow rays around (cx, cy), fading outward; the angle and distance of each pixel are worked out once
++static void drawRays(float cx, float cy, float t, float a)
++{
++    enum { N = 14, STEPS = 1024 };
++    static u16 ang[CV_H][CV_W];
++    static u16 dist[CV_H][CV_W];
++    static float atX = -1, atY = -1;
++    if (atX != cx || atY != cy) {
++        atX = cx; atY = cy;
++        for (int y = 0; y < CV_H; y++)
++            for (int x = 0; x < CV_W; x++) {
++                float dx = x + 0.5f - cx, dy = y + 0.5f - cy, an = atan2f(dy, dx);
++                ang[y][x] = (u16)((int)((an < 0 ? an + 2 * (float)M_PI : an) / (2 * (float)M_PI) * STEPS) % STEPS);
++                dist[y][x] = (u16)fminf(65535, sqrtf(dx * dx + dy * dy));
++            }
++    }
++    static u8 lit[STEPS];
++    float turn = t * 0.12f / (2 * (float)M_PI) * STEPS, per = (float)STEPS / N, wide = per / 2 * 0.55f;
++    for (int i = 0; i < STEPS; i++) { float p = fmodf(i - turn + STEPS * 4, per); lit[i] = p < wide; }
++    int a0 = (int)(70 * a);
++    for (int y = 0; y < CV_H; y++)
++        for (int x = 0; x < cvW; x++)
++            if (lit[ang[y][x]] && dist[y][x] < CV_W) cvPut(x, y, 0xF2A33A, a0 * (CV_W - dist[y][x]) / CV_W);
++}
++
++static void cardLadder(char *out, size_t cap)
++{
 +    const char *where = "Played offline: not on a ladder";
 +    char res[160];
 +    if (daily) where = smzDailyResult(res, sizeof res) ? res : "Sending the time ...";
 +    else if (curSlot >= 0 && smzOnlineSlotKind(curSlot)) where = "The time goes to the ladder";
-+    textWrap(x0 + 10, y0 + 62, x1 - x0 - 20, theme.dim, where, 2);
-+    text(x0, y1 - 22, theme.text, "A Main menu    B Watch the credits", HALIGN_CENTER, x1);
++    snprintf(out, cap, "%s", where);
++}
++
++static void cardRender()
++{
++    float t = cardT(), dt = fminf(0.05f, fmaxf(0, t - cardLastT));
++    cardLastT = t;
++    cvW = settings3DS.GameScreenWidth < CV_W ? settings3DS.GameScreenWidth : CV_W;
++    memset(cv, 0, sizeof cv);
++    float mx = cvW / 2.0f, cw = 300, ch = 150, cy0 = (CV_H - ch) / 2;
++    float pop = backOut((t - T_CARD) / 0.45f), cy = cy0 + (1 - pop) * 20, in = clamp01((t - T_CARD) / 0.3f);
++
++    cvRect(0, 0, cvW, CV_H, 0x000000, (int)(185 * clamp01(t / 0.3f)));
++    if (t >= T_CARD) drawRays(mx, cy0 + 40, t, in * (0.7f + 0.3f * sinf(t * 2.2f)));
++    if (t >= T_TITLE && t < T_LAND && frand() < 0.25f) rain();
++    if (t >= T_LAND && frand() < 0.4f) rain();
++    drawParts(dt);   // behind the card, so the numbers stay readable
++
++    // the card, dropping in with a little overshoot
++    float glow = 0.5f + 0.5f * sinf(t * 3.4f), sc = 0.86f + 0.14f * pop, w = cw * sc, h = ch * sc, x = mx - w / 2, y = cy + (ch - h) / 2;
++    if (in > 0) {
++        cvRect(x - 2, y - 2, x + w + 2, y + h + 2, 0xF2A33A, (int)((80 + 110 * glow) * in));
++        cvRect(x, y, x + w, y + h, 0x10161F, (int)(255 * in));
++        cvRect(x, y, x + w, y + 1, 0xFFE07A, (int)(255 * in));
++    }
++
++    // the title, letter by letter
++    const char *title = daily ? "CHALLENGE COMPLETE" : "RUN COMPLETE";
++    int th = 17, tw = ui3dsGetStringWidth(title, 0, 0xffff, th);
++    float tx = mx - tw / 2.0f;
++    for (int i = 0; title[i]; i++) {
++        char one[2] = {title[i], 0};
++        float lp = clamp01((t - T_TITLE - i * 0.035f) / 0.22f), ls = 1 + 0.9f * (1 - backOut(lp));
++        int lx = i ? ui3dsGetStringWidth(title, 0, i - 1, th) : 0, lw = ui3dsGetStringWidth(one, 0, 0xffff, th), lh = (int)(th * ls + 0.5f);
++        if (lp > 0 && title[i] != ' ') cvText(tx + lx + lw / 2.0f, cy + 10 - (lh - th) / 2.0f, lh, 0xF2A33A, (int)(255 * lp), one, 1);
++    }
++
++    // the final time counting up, then a punch, a ring and the fanfare when it lands
++    if (t >= T_LAND && !cardBurst) { cardBurst = true; burst(mx - 122, cy + 50, 60, 300); burst(mx + 122, cy + 50, 60, 300); }
++    char ts[40];
++    fmtTime(t >= T_LAND ? cardMs : (int64_t)(cardMs * easeOut((t - T_COUNT) / (T_LAND - T_COUNT))), ts, sizeof ts);
++    float punch = t >= T_LAND ? 1 + 0.18f * expf(-(t - T_LAND) * 7) : 1;
++    int nh = (int)(26 * punch + 0.5f);
++    if (t >= T_COUNT) cvText(mx, cy + 36 - (nh - 26) / 2.0f, nh, 0xE8ECF2, (int)(255 * clamp01((t - T_COUNT) / 0.2f)), ts, 1);
++    if (t >= T_LAND && t < T_LAND + 0.7f) {
++        float rp = (t - T_LAND) / 0.7f;
++        cvRing(mx, cy + 49, 20 + 100 * easeOut(rp), 2 * (1 - rp) + 1, 0xFFE07A, (int)(200 * (1 - rp)));
++    }
++    if (t >= T_LAND) {
++        int a = (int)(255 * clamp01((t - T_LAND) / 0.4f));
++        char lad[160];
++        cardLadder(lad, sizeof lad);
++        cvText(mx, cy + 70, 13, 0x8793A6, a, runName, 1);
++        cvText(mx, cy + 88, 13, daily || (curSlot >= 0 && smzOnlineSlotKind(curSlot)) ? 0x4FC3F7 : 0x8793A6, a, lad, 1);
++    }
++    if (t >= T_BUTTONS) {
++        int a = (int)(255 * clamp01((t - T_BUTTONS) / 0.3f));
++        float by = cy + ch - 26 + (1 - easeOut((t - T_BUTTONS) / 0.3f)) * 4;
++        int w1 = 18 + ui3dsGetStringWidth("Main menu"), w2 = 18 + ui3dsGetStringWidth("Watch the credits"), bx = (int)(mx - (w1 + 24 + w2) / 2.0f);
++        cvButton(bx, by, "A", "Main menu", a);
++        cvButton(bx + w1 + 24, by, "B", "Watch the credits", a);
++    }
++    if (t < 0.35f) cvRect(0, 0, cvW, CV_H, 0xFFFAEB, (int)(150 * (1 - t / 0.35f)));
++}
++
++static bool cardTexReady, cardTexFailed;
++static u16 *cardUpload;
++
++void smz3CardSync(void)
++{
++    if (cardState != 1 || !smz3IsRun() || cardTexFailed) return;
++    static int frame;
++    if (++frame & 1 && cardTexReady) return;   // the layer moves at 30 fps
++    SGPUTexture *texture = &GPU3DS.textures[UI_SMZ3_CARD];
++    if (!cardTexReady) {
++        cardUpload = (u16 *)linearAlloc(512 * 256 * 2);
++        if (!cardUpload || !C3D_TexInitVRAM(&texture->tex, 512, 256, GPU_RGBA4)) { cardTexFailed = true; return; }
++        texture->id = UI_SMZ3_CARD;
++        C3D_TexSetFilter(&texture->tex, GPU_NEAREST, GPU_NEAREST);
++        texture->scale[3] = 1.0f / texture->tex.width;
++        texture->scale[2] = 1.0f / texture->tex.height;
++        texture->scale[1] = texture->scale[0] = 0;
++        cardTexReady = true;
++    }
++    cardRender();
++    for (int y = 0; y < CV_H; y++) {
++        u16 *d = cardUpload + y * 512;
++        for (int x = 0; x < CV_W; x++) { const u8 *s = cv[y][x]; d[x] = (u16)((s[0] >> 4) << 12 | (s[1] >> 4) << 8 | (s[2] >> 4) << 4 | s[3] >> 4); }
++    }
++    C3D_Tex *tex = &texture->tex;
++    GSPGPU_FlushDataCache(cardUpload, tex->size);
++    C3D_SyncDisplayTransfer((u32 *)cardUpload, GX_BUFFER_DIM(tex->width, tex->height), (u32 *)tex->data, GX_BUFFER_DIM(tex->width, tex->height),
++        GX_TRANSFER_OUT_TILED(1) | GX_TRANSFER_FLIP_VERT(1) | GX_TRANSFER_IN_FORMAT(tex->fmt) | GX_TRANSFER_OUT_FORMAT(tex->fmt));
++}
++
++void smz3CardDraw(float xOffset)
++{
++    if (cardState != 1 || !cardTexReady || !smz3IsRun()) return;
++    float x0 = (settings3DS.GameScreenWidth - cvW) / 2.0f + xOffset;
++    gpu3dsAddSimpleQuadVertexes(x0, 0, x0 + cvW, CV_H, 0, 0, cvW, CV_H, 0, 0xFFFFFFFF);
++    SVertexList *list = &GPU3DS.vertices[VBO_SCREEN];
++    GPU3DS.currentRenderState.textureBind = UI_SMZ3_CARD;
++    GPU3DS.currentRenderState.textureEnv = TEX_ENV_MODULATE_COLOR;
++    GPU3DS.currentRenderState.alphaBlending = ALPHA_BLENDING_ENABLED;
++    gpu3dsDraw(list, NULL, list->count);
++}
++
++// this screen while the card is up: the details one by one, then the two ways on
++#define CARD_BTN_Y 196
++static int fadeTo(int rgb, float a, int bg = 0x0B0F15)
++{
++    a = clamp01(a);
++    int r = (int)(((bg >> 16) & 255) + (((rgb >> 16) & 255) - ((bg >> 16) & 255)) * a), g = (int)(((bg >> 8) & 255) + (((rgb >> 8) & 255) - ((bg >> 8) & 255)) * a);
++    int b = (int)((bg & 255) + ((rgb & 255) - (bg & 255)) * a);
++    return r << 16 | g << 8 | b;
++}
++
++static void drawCardDetails()
++{
++    float t = cardT();
++    fill(0, 0, 320, 240, 0x0B0F15);
++    const char *title = daily ? "CHALLENGE COMPLETE" : "RUN COMPLETE";
++    int tw = ui3dsGetStringWidth(title, 0, 0xffff, 20);
++    bigText((320 - tw) / 2, 8, 20, 0xF2A33A, title);
++    fill(40, 33, 280, 34, 0x2A3442);
++    unsigned all = trk.zelda_cleared + trk.metroid_cleared, allTotal = trk.zelda_total + trk.metroid_total;
++    for (int r = 0; r < CARD_ROWS; r++) {
++        float rt = t - T_ROWS - r, rp = easeOut(rt / 0.35f), fillP = easeOut(rt / 0.7f);
++        if (rt < 0) continue;
++        int y = 44 + r * 36 + (int)((1 - rp) * 10), dim = fadeTo(0x8793A6, rp), txt = fadeTo(0xE8ECF2, rp);
++        char v[64];
++        if (r == 0) {
++            text(16, y + 5, dim, "TIME");
++            fmtTime(cardMs, v, sizeof v);
++            int w = ui3dsGetStringWidth(v, 0, 0xffff, 20);
++            bigText(304 - w, y, 20, txt, v);
++        } else if (r == 1) {
++            text(16, y + 5, dim, "COMPLETION");
++            snprintf(v, sizeof v, "%d%%", (int)(pct(all, allTotal) * fillP + 0.5f));
++            int w = ui3dsGetStringWidth(v, 0, 0xffff, 20);
++            bigText(304 - w, y, 20, fadeTo(0xFFE07A, rp), v);
++        } else {
++            unsigned got = r == 2 ? trk.zelda_cleared : trk.metroid_cleared, of = r == 2 ? trk.zelda_total : trk.metroid_total;
++            text(16, y, dim, r == 2 ? "ZELDA" : "METROID");
++            snprintf(v, sizeof v, "%u/%u   %d%%", got, of, pct(got, of));
++            text(304, y, txt, v, HALIGN_RIGHT);
++            fill(16, y + 17, 304, y + 23, fadeTo(0x1D2430, rp));
++            int bw = (int)(288 * fillP * (of ? (float)got / of : 0));
++            if (bw > 0) fill(16, y + 17, 16 + bw, y + 23, fadeTo(r == 2 ? 0x5BD46A : 0xFF8A3D, rp));
++        }
++    }
++    if (t >= T_BUTTONS) {
++        float bp = easeOut((t - T_BUTTONS) / 0.3f);
++        int y = CARD_BTN_Y + (int)((1 - bp) * 6);
++        fill(12, y, 156, y + 32, fadeTo(0xF2A33A, bp));
++        text(12, y + 9, fadeTo(0x10161F, bp, fadeTo(0xF2A33A, bp)), "Main menu", HALIGN_CENTER, 156);
++        fill(164, y, 308, y + 32, fadeTo(0x1D2430, bp));
++        fill(164, y, 308, y + 1, fadeTo(0x4A5568, bp));
++        text(164, y + 9, fadeTo(0xE8ECF2, bp), "Watch the credits", HALIGN_CENTER, 308);
++    }
++}
++
++// In the credits a way out stays on this screen, so a run never leaves the player stuck there.
++#define CREDITS_BAR_Y 208
++static bool creditsBar() { return trk.game == 3 && cardState != 1; }
++
++static void drawCreditsBar()
++{
++    fill(0, CREDITS_BAR_Y, 320, 240, 0x10161F);
++    fill(0, CREDITS_BAR_Y, 320, CREDITS_BAR_Y + 2, 0xF2A33A);
++    text(0, CREDITS_BAR_Y + 10, 0xFFE07A, "Back to menu", HALIGN_CENTER, 320);
 +}
 +
 +static void trackerDraw()
@@ -3058,7 +3563,8 @@ index 0000000..7887d21
 +    }
 +    clampScroll(tab);
 +    setClip(0, 0, 320, 240);
-+    if (cardState == 1) drawFinishCard();
++    if (cardState == 1) drawCardDetails();
++    else if (creditsBar()) drawCreditsBar();
 +    impl3dsFlushScreen(settings3DS.SecondScreen, false, false);
 +    gfxScreenSwapBuffers(settings3DS.SecondScreen, false);
 +    dirty = false;
@@ -3163,6 +3669,15 @@ index 0000000..7887d21
 +        touchPosition t;
 +        hidTouchRead(&t);
 +        if (keysDown & KEY_TOUCH) {
++            if (cardState == 1) {   // the card: a tap before its buttons only jumps to them
++                touching = false;
++                if (cardSkip() || t.py < CARD_BTN_Y || t.py >= CARD_BTN_Y + 32) return true;
++                cardState = 2;
++                dirty = true;
++                if (t.px < 160) { wantRunList = true; return false; }   // the touch opens the menu, which goes on to the run list
++                return true;
++            }
++            if (creditsBar() && t.py >= CREDITS_BAR_Y) { wantRunList = true; touching = false; return false; }
 +            int ty = topOfTabs();
 +            if (t.px >= 320 - PAUSE_W && t.py >= ty && t.py < ty + TAB_H) return false;   // the pause button: the emulator's menu
 +            touching = !tabTouch(t.px, t.py);
@@ -3230,7 +3745,8 @@ index 0000000..7887d21
 +        snprintf(runName, sizeof runName, "%s", r0.name);
 +        smz_goal_from_settings(r0.settings, &trk.goal);   // a daily challenge ends at its goal
 +        gChallenge = strstr(r0.settings, "\"challenge\":true") != NULL;
-+        gFinished = finishedBefore = r0.game == 3;
++        finishedBefore = r0.game == 3;
++        finalMs = r0.play_ms;
 +        cardState = 0;
 +        discoveredOnly = strstr(r0.settings, "\"mapMode\":\"discovered\"") != NULL;
 +        fixedKeys = strstr(r0.settings, "\"showFixedKeys\"") ? strstr(r0.settings, "\"showFixedKeys\":true") != NULL : !strcmp(r0.name, "Cozy run");
@@ -3269,10 +3785,10 @@ index 0000000..7887d21
 +    smz_tracker_tick(&trk, Memory.RAM, 0x20000, Memory.SRAM, 0x20000, dt, 1);
 +    if (trk.started) smz_disc_update(&disc, Memory.RAM, 0x20000, (int)trk.game);
 +    dungeonReadLive();
-+    if (trk.game == 3) { gFinished = true; if (!cardState && !finishedBefore) cardState = 1; }
++    if (trk.game == 3 && !cardState && !finishedBefore) cardBegin();
 +    if (daily && trk.started && smz_daily_note_began(&dr, smzDailyNowMs())) smzDailySave(&dr);   // the clock starts with the game, as in the ladder
-+    int online = curSlot >= 0 ? smzOnlineSlotKind(curSlot) : 0;
-+    if ((online || daily) && trk.started && smz_proof_note(&proof, trk.cleared, SMZ_TRK_MAX_LOCS, trk.base_ms + trk.pending_ms)) proofDirty = 1;
++    int online = curSlot >= 0 && !finishedBefore ? smzOnlineSlotKind(curSlot) : 0;   // a finished run played again sends nothing
++    if ((online || (daily && !finishedBefore)) && trk.started && smz_proof_note(&proof, trk.cleared, SMZ_TRK_MAX_LOCS, trk.base_ms + trk.pending_ms)) proofDirty = 1;
 +    // debug aid: sdmc:/SMZ3/debug_token.txt asks for the run's token even before the game has started
 +    if (online) if (FILE *df = fopen(SMZ_DIR "/debug_token.txt", "r")) { fclose(df); remove(SMZ_DIR "/debug_token.txt"); smzOnlineEnsureToken(curSlot); }
 +    if (online && trk.started && trk.running && nowMs >= nextToken) { nextToken = nowMs + 60000; smzOnlineEnsureToken(curSlot); }
@@ -3280,7 +3796,12 @@ index 0000000..7887d21
 +        char rp[96];
 +        SmzRun r1;
 +        snprintf(rp, sizeof rp, RUN_DIR "/slot%d.run", curSlot);
-+        if (smz_run_load(rp, &r1) == 0 && trk.started) {
++        bool have = smz_run_load(rp, &r1) == 0 && trk.started;
++        if (have && finishedBefore) {   // it keeps its result; its rewards only add up
++            r1.boss_mask |= trk.boss_mask; r1.crystal_mask |= trk.crystal_mask;
++            r1.last_played = (int64_t)time(NULL) * 1000;
++            smz_run_save(rp, &r1);
++        } else if (have) {
 +            r1.play_ms = trk.base_ms + trk.pending_ms;
 +            r1.last_played = (int64_t)time(NULL) * 1000;
 +            r1.game = (int)trk.game;
@@ -3319,7 +3840,7 @@ index 0000000..7887d21
 +            if (dr.began_at && !fresh.began_at) { fresh.began_at = dr.began_at; smzDailySave(&fresh); }   // set while the hints were on their way
 +            dr = fresh;
 +        }
-+        if (trk.game != 3 && dr.next_hint_at > 0 && now >= dr.next_hint_at && now >= nextHintAsk) { nextHintAsk = now + 15000; smzDailyRequestHints(&dr); }
++        if (trk.game != 3 && !finishedBefore && dr.next_hint_at > 0 && now >= dr.next_hint_at && now >= nextHintAsk) { nextHintAsk = now + 15000; smzDailyRequestHints(&dr); }
 +    }
 +    // debug aid: with sdmc:/SMZ3/debug_panel.txt present, where Samus and Link are goes to debug_state.txt, which is how a
 +    // blind input route can be followed on an emulator whose picture is garbled
@@ -3353,7 +3874,21 @@ index 0000000..7887d21
 +unsigned smz3TrackerKeys(unsigned keysDown, bool *openMenu)
 +{
 +    *openMenu = false;
-+    if (!smz3IsRun() || cardState != 1 || !(keysDown & (KEY_A | KEY_B))) return 0;
++    if (!smz3IsRun()) return 0;
++    if (cardState != 1) {
++        scLoad();
++        unsigned took = 0;
++        for (int i = 0; i < SC_KEYS; i++) {
++            if (!scKeys[i] || !(keysDown & scKeys[i])) continue;
++            int id = i < SC_SLOTS ? scSlots[i] : SC_ZELDA_COUNT + i - SC_SLOTS;
++            if (id >= 0) scUse(id);
++            took |= scKeys[i];
++        }
++        if (took) dirty = true;
++        return took;
++    }
++    if (!(keysDown & (KEY_A | KEY_B))) return 0;
++    if (cardSkip()) return KEY_A | KEY_B;
 +    if (keysDown & KEY_A) { wantRunList = *openMenu = true; }
 +    cardState = 2;
 +    dirty = true;
@@ -3377,7 +3912,8 @@ index 0000000..7887d21
 +    if (settings3DS.TurboMode && now - lastFrameMs < 3000) { turboWallMs += now - lastFrameMs; turboEmuMs += 1000 / 60.0988; }
 +    lastFrameMs = now;
 +    if (tick || curSlot != gPlaySlot) { trackerUpdate(); debugTouches(); dirty = true; }
-+    if (dirty && (tick || sinceDraw >= 3)) { trackerDraw(); sinceDraw = 0; }   // a drag redraws at most every third frame
++    if (cardState == 1) { cardSounds(); if (cardT() < T_BUTTONS + 0.4f && sinceDraw >= 2) dirty = true; }   // the details move at 30 fps
++    if (dirty && (tick || sinceDraw >= 3 || cardState == 1)) { trackerDraw(); sinceDraw = 0; }   // a drag redraws at most every third frame
 +}
 +
 +// ---- helps of the run being played (the pause menu asks for them)
@@ -3390,13 +3926,14 @@ index 0000000..7887d21
 +// The run chosen in the menu is loaded: its flags take over. True when it starts from its auto state.
 +bool smz3RunStarted(void)
 +{
++    curSlot = -2;   // the tracker starts over, also when the same run is chosen again
 +    gRunStates = gNextStates;
 +    return gNextLoadState && smz3AutoStates();
 +}
 +
 +// Monthly and weekly runs allow no save states of any kind.
 +bool smz3NoFastForward(void) { return smz3IsRun() && gChallenge; }
-+bool smz3NoStates(void) { return smz3IsRun() && (gChallenge || gFinished || (gPlaySlot >= 0 && smzOnlineSlotKind(gPlaySlot) >= 1)); }
++bool smz3NoStates(void) { return smz3IsRun() && (gChallenge || (gPlaySlot >= 0 && smzOnlineSlotKind(gPlaySlot) >= 1)); }
 +
 +// Gives the next hint (a help is spent in the limited mode). The text is for a dialog.
 +void smz3AskHelp(char *out, size_t cap)
@@ -3431,10 +3968,10 @@ index 0000000..7887d21
 +}
 diff --git a/source/smz3run.h b/source/smz3run.h
 new file mode 100644
-index 0000000..5257d48
+index 0000000..dc59a02
 --- /dev/null
 +++ b/source/smz3run.h
-@@ -0,0 +1,41 @@
+@@ -0,0 +1,50 @@
 +#ifndef SMZ3RUN_H
 +#define SMZ3RUN_H
 +
@@ -3451,9 +3988,13 @@ index 0000000..5257d48
 +// open the emulator's menu; false for other games and for the tracker's pause button.
 +bool smz3TrackerTouch(unsigned keysDown, unsigned keysHeld);
 +
-+// While the run-complete card is up, A (to the run list) and B (close it) are the card's: returns the keys taken from the
-+// game (0 otherwise). After A, openMenu is set: the emulator opens its menu and smz3TakeRunListRequest() is true once.
++// While the run-complete card is up, A (to the run list) and B (close it) are the card's; otherwise the buttons bound to
++// the item shortcuts use them. Returns the keys taken from the game (0 otherwise). After A on the card, openMenu is set:
++// the emulator opens its menu and smz3TakeRunListRequest() is true once.
 +unsigned smz3TrackerKeys(unsigned keysDown, bool *openMenu);
++// The run-complete card on the game screen: drawn into its texture before the frame, then over the game in each eye.
++void smz3CardSync(void);
++void smz3CardDraw(float xOffset);
 +bool smz3TakeRunListRequest(void);
 +
 +// A save state was loaded: the tracker's recent lists drop what it undid.
@@ -3474,5 +4015,10 @@ index 0000000..5257d48
 +// The tracker's shortcut rows: 0 the ALttP slots or the beams, 1 the Super Metroid weapons.
 +bool smz3ShortcutRowShown(int row);
 +void smz3SetShortcutRowShown(int row, bool shown);
++// Pad buttons bound to the item shortcuts, the same for every run: the five ALttP slots, then each beam and weapon.
++int smz3ShortcutKeyCount(void);
++const char *smz3ShortcutKeyName(int i);
++unsigned smz3ShortcutKey(int i);
++void smz3SetShortcutKey(int i, unsigned keys);
 +
 +#endif

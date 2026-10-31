@@ -35,13 +35,20 @@ void sfx_play(SfxKind kind)
         [SFX_OPEN] = {{523, 659, 784}, 140, 38, 0.10f},
         [SFX_CLOSE] = {{784, 659, 523}, 140, 38, 0.10f},
         [SFX_CONFIRM] = {{523, 784, 1047}, 220, 55, 0.12f},
+        [SFX_TICK] = {{1568, 2093, 0}, 60, 30, 0.08f},
     };
-    enum { LEN = RATE / 2 };
+    enum { LEN = RATE * 13 / 10 };
     static float mix[LEN];
     static Sint16 pcm[LEN];
     SDL_memset(mix, 0, sizeof mix);
     int len = 0;
-    for (int i = 0; i < 3 && S[kind].hz[i] > 0; i++) {
+    if (kind == SFX_FANFARE) {   /* the run's end: a rising arpeggio that lands on a held major chord */
+        static const float RISE[] = {523, 659, 784, 1047}, CHORD[] = {523, 659, 784, 1047, 1319};
+        for (int i = 0; i < 4; i++) note(mix, LEN, RATE * 70 * i / 1000, RISE[i], 160, 0.10f);
+        for (int i = 0; i < 5; i++) note(mix, LEN, RATE * 300 / 1000, CHORD[i], 900, 0.055f);
+        len = LEN;
+    }
+    for (int i = 0; kind != SFX_FANFARE && i < 3 && S[kind].hz[i] > 0; i++) {
         int at = (int)(RATE * S[kind].gap * i / 1000);
         note(mix, LEN, at, S[kind].hz[i], S[kind].ms, S[kind].vol);
         int end = at + (int)(RATE * S[kind].ms / 1000);

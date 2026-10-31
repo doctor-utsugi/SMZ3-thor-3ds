@@ -21,6 +21,7 @@
 #include "pc_music.h"
 #include "pc_pad.h"
 #include "pc_settings.h"
+#include "pc_finish.h"
 #include "pc_shortcuts.h"
 #include "pc_welcome.h"
 #include "smz3_dungeonmaps.h"
@@ -1130,6 +1131,11 @@ static void overlay(const SmzTracker *t, const SmzRun *r, int tab, int scroll, i
 
 static void snapshot_run(SmzRun *r, SmzTracker *t, int finished)
 {
+    r->last_played = (int64_t)time(NULL) * 1000;
+    if (r->game == 3) {   /* a finished run played again keeps its final result; its rewards only add up (an earlier build read them in the credits) */
+        if (t->started && t->game != 3) { r->boss_mask |= t->boss_mask; r->crystal_mask |= t->crystal_mask; }
+        return;
+    }
     if (!finished) r->play_ms = t->base_ms + t->pending_ms;
     if (t->started) {
         r->game = (int)t->game;
@@ -1138,7 +1144,6 @@ static void snapshot_run(SmzRun *r, SmzTracker *t, int finished)
     }
     r->zelda_total = (int)t->zelda_total; r->metroid_total = (int)t->metroid_total;
     r->save_ms = t->save_ms; r->save_zelda = t->save_zelda; r->save_metroid = t->save_metroid;
-    r->last_played = (int64_t)time(NULL) * 1000;
 }
 
 /* mode 0: the autosave state (or the game save when there is none), 1: the game save only */
@@ -1158,7 +1163,7 @@ static void play(int slot, int game_save_only)
     if (!ok) { note("the emulator could not load the ROM"); return; }
 
     /* runs that send a time online (the ladders, the daily challenge) and finished runs never allow states, whatever their options */
-    int states = json_flag(run.settings, "saveStates", 0) && !online_slot_kind(slot + 1) && !strstr(run.settings, "\"challenge\":true") && run.game != 3;
+    int states = json_flag(run.settings, "saveStates", 0) && !online_slot_kind(slot + 1) && !strstr(run.settings, "\"challenge\":true");
     int qslot = 0;
     size_t sl;
     uint8_t *sram = emu_sram(&sl);
@@ -1235,7 +1240,7 @@ static void play(int slot, int game_save_only)
     int tw = 0, th = 0, tex_mode = 0, tab = getenv("SMZ3_TAB") ? atoi(getenv("SMZ3_TAB")) % ntabs : TAB_RUN, scroll = 0, show = getenv("SMZ3_TAB") != NULL, pause_on_overlay = 1, leaving = 0, running = 1, finished = 0, fast = 0;
     int done_popup = 0, finished_before = run.game == 3;   /* the run-complete card, shown once when the run ends in this session */
     int64_t final_ms = 0;
-    if (getenv("SMZ3_DONE")) { done_popup = 1; final_ms = atoll(getenv("SMZ3_DONE")); }   /* test hook: the run-complete card */
+    if (getenv("SMZ3_DONE")) { done_popup = 1; finished = 1; final_ms = atoll(getenv("SMZ3_DONE")); }   /* test hook: the run-complete card */
     int vpanel = getenv("SMZ3_VIDEO") != NULL, vrow = 0, vchanges = 0;   /* the video panel over the game: open, row, changes made (for its sound) */
     Uint32 exit_at = 0;   /* when the player chose to leave: the screen closes before the run list comes back */
     if (getenv("SMZ3_LEAVE")) exit_at = SDL_GetTicks() + (Uint32)atoi(getenv("SMZ3_LEAVE"));   /* test hook: leave after n ms */
@@ -1264,6 +1269,7 @@ static void play(int slot, int game_save_only)
             else if (e.type == SDL_KEYDOWN && !e.key.repeat) {
                 SDL_Keycode k = e.key.keysym.sym;
                 if (exit_at) continue;
+                if (done_popup && (k == SDLK_RETURN || k == SDLK_SPACE || k == SDLK_ESCAPE) && finish_skip()) continue;   /* the first press only ends the animation */
                 if (done_popup) { if (k == SDLK_RETURN || k == SDLK_SPACE) { done_popup = 0; exit_at = SDL_GetTicks(); } else if (k == SDLK_ESCAPE) done_popup = 0; continue; }   /* main menu, or stay for the credits */
                 if (fail_popup) { if (k == SDLK_RETURN || k == SDLK_SPACE) fail_popup = 0; else if (k == SDLK_ESCAPE) { fail_popup = 0; exit_at = SDL_GetTicks(); } continue; }
                 if (vpanel) {
@@ -1280,7 +1286,7 @@ static void play(int slot, int game_save_only)
                 else if (states && !show && k == SDLK_F5) quick_state(slot, qslot, 1);
                 else if (states && !show && k == SDLK_F7) { if (quick_state(slot, qslot, 0)) trk.state_loaded = 3; }
                 else if (states && !show && (k == SDLK_F6 || k == SDLK_F8)) { qslot = (qslot + (k == SDLK_F8 ? 1 : QSLOTS - 1)) % QSLOTS; char m[32]; snprintf(m, sizeof m, "State slot %d", qslot + 1); note(m); }
-                else if (k == SDLK_ESCAPE) { if (show) show = 0; else leaving = 1; }
+                else if (k == SDLK_ESCAPE) { if (show) show = 0; else if (finished) exit_at = SDL_GetTicks(); else leaving = 1; }   /* a finished run has nothing to save */
                 else if (k == SDLK_F11) SDL_SetWindowFullscreen(win, SDL_GetWindowFlags(win) & SDL_WINDOW_FULLSCREEN_DESKTOP ? 0 : SDL_WINDOW_FULLSCREEN_DESKTOP);
                 else if (show && tab == TAB_MAP && k == SDLK_d) dungeon_toggle(&dv, lp);
                 else if (show && tab == TAB_MAP && dungeon_showing(&dv, lp) && (k == SDLK_LEFT || k == SDLK_RIGHT || k == SDLK_UP || k == SDLK_DOWN || k == SDLK_h)) {
@@ -1303,6 +1309,7 @@ static void play(int slot, int game_save_only)
             } else if (pcode >= 0) {
                 int b = pcode;
                 if (exit_at) continue;
+                if (done_popup && (b == SDL_CONTROLLER_BUTTON_A || b == SDL_CONTROLLER_BUTTON_B) && finish_skip()) continue;
                 if (done_popup) { if (b == SDL_CONTROLLER_BUTTON_A) { done_popup = 0; exit_at = SDL_GetTicks(); } else if (b == SDL_CONTROLLER_BUTTON_B) done_popup = 0; continue; }
                 if (fail_popup) { if (b == SDL_CONTROLLER_BUTTON_A) fail_popup = 0; else if (b == SDL_CONTROLLER_BUTTON_B) { fail_popup = 0; exit_at = SDL_GetTicks(); } continue; }
                 if (vpanel) {
@@ -1326,7 +1333,7 @@ static void play(int slot, int game_save_only)
                     else { qslot = (qslot + (qn ? 1 : QSLOTS - 1)) % QSLOTS; char m[32]; snprintf(m, sizeof m, "State slot %d", qslot + 1); note(m); }
                 }
                 else if (b == pad_code(PA_TRACKER)) show = !show;
-                else if (b == pad_code(PA_LEAVE)) leaving = 1;
+                else if (b == pad_code(PA_LEAVE)) { if (finished) exit_at = SDL_GetTicks(); else leaving = 1; }
                 else if (show && b == SDL_CONTROLLER_BUTTON_RIGHTSHOULDER) tab = (tab + 1) % ntabs;
                 else if (show && b == SDL_CONTROLLER_BUTTON_LEFTSHOULDER) tab = (tab + ntabs - 1) % ntabs;
                 else if (show && b == SDL_CONTROLLER_BUTTON_DPAD_DOWN && tab != TAB_MAP) scroll++;
@@ -1573,19 +1580,7 @@ static void play(int slot, int game_save_only)
             help_bar(0, wh - 44 * u, (float)ww, 44 * u, VB, 3);
         }
         if (done_popup) {   /* the run-complete card: the final time with hundredths */
-            float u = wh / 720.0f, cw = 620 * u, ch = 330 * u, cx = (ww - cw) / 2, cy = (wh - ch) / 2;
-            static Uint32 shown_at;
-            if (done_popup == 1) { shown_at = SDL_GetTicks(); done_popup = 2; }
-            float a = fminf(1, (SDL_GetTicks() - shown_at) / 300.0f), glow = 0.5f + 0.5f * sinf(SDL_GetTicks() / 1000.0f * 3.4f);
-            gfx_rect(0, 0, (float)ww, (float)wh, (SDL_Color){0, 0, 0, (Uint8)(170 * a)});
-            gfx_rect(cx - 3 * u, cy - 3 * u, cw + 6 * u, ch + 6 * u, (SDL_Color){0xF2, 0xA3, 0x3A, (Uint8)((90 + 90 * glow) * a)});
-            gfx_rect(cx, cy, cw, ch, (SDL_Color){0x10, 0x16, 0x1F, (Uint8)(255 * a)});
-            gfx_text(ww / 2.0f, cy + 28 * u, 26 * u, C(0xF2, 0xA3, 0x3A), 1, daily ? "CHALLENGE COMPLETE" : "RUN COMPLETE");
-            char ts[40], line[96];
-            fmt_time_cs(final_ms, ts, sizeof ts);
-            gfx_text(ww / 2.0f, cy + 74 * u, 72 * u, C(0xE8, 0xEC, 0xF2), 1, ts);
-            snprintf(line, sizeof line, "%s    Zelda %u/%u    Metroid %u/%u", run.name, trk.zelda_cleared, trk.zelda_total, trk.metroid_cleared, trk.metroid_total);
-            gfx_text(ww / 2.0f, cy + 172 * u, 20 * u, C(0x87, 0x93, 0xA6), 1, line);
+            if (done_popup == 1) { finish_start(); done_popup = 2; }
             const char *lad = !online_slot_kind(slot + 1) ? "Offline run" : is_default ? "Sent to the online ladder" : "Changed rules: not on the ladder";
             char res[160];
             if (daily) {   /* the server's answer once it comes back */
@@ -1595,9 +1590,19 @@ static void play(int slot, int game_save_only)
                 snprintf(res, sizeof res, "%s", smz_daily_clock_from(&dr) + final_ms > dr.closes_at && !strncmp(last, "Send", 4) ? "After the window closed: on the late list, no prize" : last);
                 lad = res;
             }
-            gfx_text(ww / 2.0f, cy + 204 * u, 20 * u, daily || (online_slot_kind(slot + 1) && is_default) ? C(0x4F, 0xC3, 0xF7) : C(0x87, 0x93, 0xA6), 1, lad);
-            static const HelpItem OK[] = {{"A", "Enter", "Main menu"}, {"B", "Esc", "Watch the credits"}};
-            help_prompt(ww / 2.0f, cy + ch - 70 * u, 36 * u, OK, 2);
+            FinishCard fc = {daily ? "CHALLENGE COMPLETE" : "RUN COMPLETE", run.name, lad,
+                             daily || (online_slot_kind(slot + 1) && is_default) ? C(0x4F, 0xC3, 0xF7) : C(0x87, 0x93, 0xA6),
+                             final_ms, trk.zelda_cleared, trk.zelda_total, trk.metroid_cleared, trk.metroid_total};
+            finish_draw(&fc, ww, wh);
+        }
+        if (finished && !done_popup && !exit_at && !show) {   /* the credits: the way out stays on screen */
+            float u = wh / 720.0f;
+            const char *nm = pad_code_name(pad_code(PA_LEAVE));
+            const char *icon = !strcmp(nm, "Back") ? "SELECT" : !strcmp(nm, "Start") ? "START" : !strcmp(nm, "LB") ? "L" : !strcmp(nm, "RB") ? "R" : nm;
+            HelpItem back[] = {{icon, "Esc", "Back to menu"}};
+            gfx_rect(ww / 2.0f - 142 * u, wh - 62 * u, 284 * u, 46 * u, (SDL_Color){0x10, 0x16, 0x1F, 210});
+            gfx_rect(ww / 2.0f - 142 * u, wh - 62 * u, 284 * u, 3 * u, (SDL_Color){0xF2, 0xA3, 0x3A, 255});
+            help_prompt(ww / 2.0f, wh - 54 * u, 30 * u, back, 1);
         }
         if (fail_popup) {
             float u = wh / 720.0f;

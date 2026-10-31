@@ -757,7 +757,7 @@ void ui_input(SmzUi *u, UiButton b)
         else if (b == BTN_B) u->screen = UI_SLOTS_SCREEN;
         else if (b == BTN_A) {
             if (u->menu_cursor) { u->screen = UI_CONFIRM; u->confirm_cursor = 0; }   /* Cancel is the default */
-            else if (u->slots[u->active_slot].game != 3) { u->action = ACT_CONTINUE; u->action_slot = u->active_slot; u->screen = UI_SLOTS_SCREEN; }   /* a finished run is not played again */
+            else { u->action = ACT_CONTINUE; u->action_slot = u->active_slot; u->screen = UI_SLOTS_SCREEN; }
         }
         break;
     case UI_CONFIRM:
@@ -966,11 +966,17 @@ static void slot_rich(SmzUi *u, int i, int y, int w)
         for (int d = 0, div = digits == 3 ? 100 : digits == 2 ? 10 : 1; d < digits; d++, div /= 10) { big_digit(u, x, y + 9, pct / div % 10, 5, color); x += 18; }
         text(u, x, y + 24, C_DIM, 0, "%");
     }
-    snprintf(s, sizeof s, "%.20s", t->name);
+    int fin = t->game == 3;
+    snprintf(s, sizeof s, fin ? "%.11s" : "%.20s", t->name);
     text(u, 88, y + 2, C_TEXT, 0, s);
     long long sec = t->play_ms / 1000;
     snprintf(s, sizeof s, "%lld:%02lld:%02lld", sec / 3600, sec / 60 % 60, sec % 60);
-    text(u, 8 + w - 8, y + 2, C_DIM, 2, s);
+    text(u, 8 + w - 8, y + 2, fin ? C_GOLD : C_DIM, 2, s);
+    if (fin) {   /* the final time, under a gold tag */
+        int tx = 8 + w - 8 - (int)strlen(s) * 7 - 70;
+        rect(u, tx, y + 1, 62, 11, C_GOLD);
+        text(u, tx + 31, y + 2, C_BG, 1, "FINISHED");
+    }
     /* Link with the seven crystals, Samus with the four bosses; what is missing is dark (the pictures are dimmed) */
     put(u, 2, 88, y + 15, 10, 14, C_TEXT, 0, "link/Original");     /* the games' own standing sprites (tools/gen_original_icons.py) */
     for (int n = 1; n <= 7; n++) gem(u, 106 + (n - 1) * 14, y + 17, t->crystal_mask >> (n - 1) & 1, n == 5 || n == 6);
@@ -1224,7 +1230,7 @@ void ui_draw(SmzUi *u)
         hit(u, H_MENU, 0, 8, 70, UI_W - 16, 30);
         hit(u, H_MENU, 1, 8, 106, UI_W - 16, 30);
         rect(u, 8, 70, UI_W - 16, 30, u->menu_cursor == 0 ? C_SEL : C_PANEL);
-        text(u, 16, 78, u->slots[u->active_slot].game == 3 ? C_DIM : C_TEXT, 0, u->slots[u->active_slot].game == 3 ? "Finished: it can't be played again" : "Continue");
+        text(u, 16, 78, C_TEXT, 0, "Continue");
         rect(u, 8, 106, UI_W - 16, 30, u->menu_cursor == 1 ? C_SEL : C_PANEL);
         text(u, 16, 114, C_WARN, 0, "Delete");
         legend(u, "B Back");
